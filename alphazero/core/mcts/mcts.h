@@ -175,6 +175,34 @@ private:
     std::mt19937 rng_;
     
     /**
+     * Compute a hash value for a state tensor.
+     * Uses the FNV-1a algorithm for efficient hashing.
+     * 
+     * @param state_tensor The state tensor to hash
+     * @param current_player The current player (to differentiate same board, different player)
+     * @return Hash value for the state
+     */
+    uint64_t compute_state_hash(const std::vector<float>& state_tensor, int current_player) const {
+        const uint64_t FNV_PRIME = 1099511628211ULL;
+        const uint64_t FNV_OFFSET = 14695981039346656037ULL;
+        
+        uint64_t hash = FNV_OFFSET;
+        for (size_t i = 0; i < state_tensor.size(); ++i) {
+            // Convert float to byte representation for more stable hashing
+            uint8_t byte_val = static_cast<uint8_t>(
+                static_cast<int>(state_tensor[i] * 255.0f) & 0xFF);
+            hash ^= byte_val;
+            hash *= FNV_PRIME;
+        }
+        
+        // Add the current player to the hash to distinguish same board with different players
+        hash ^= static_cast<uint64_t>(current_player);
+        hash *= FNV_PRIME;
+        
+        return hash;
+    }
+    
+    /**
      * Perform a single MCTS simulation.
      * 
      * @param state_tensor Tensor representation of the current game state

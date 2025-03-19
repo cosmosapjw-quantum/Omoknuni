@@ -5,6 +5,7 @@
 #include <random>
 #include <chrono>
 #include <iostream>
+#include <unordered_set>
 
 namespace alphazero {
 
@@ -319,34 +320,29 @@ float MCTS::simulate(
         // Update node
         node = child;
         
-        // Check transposition table if enabled - we'll disable this for now to fix the infinite loop
-        if (false && use_transposition_table_ && transposition_table_) {
+        // Check transposition table if enabled
+        if (use_transposition_table_ && transposition_table_) {
             std::cout << "simulate: Checking transposition table" << std::endl;
+            
             // Calculate a hash for the current state
-            uint64_t hash = 0;
-            for (size_t i = 0; i < current_state.size(); ++i) {
-                // Combine hash using FNV-1a hash algorithm
-                hash ^= static_cast<uint64_t>(
-                    *reinterpret_cast<const unsigned char*>(&current_state[i]));
-                hash *= 1099511628211ULL; // FNV prime
-            }
+            uint64_t hash = compute_state_hash(current_state, current_player);
             
-            // Check if this state is already in our current path to avoid cycles
-            bool cycle_detected = false;
+            // Create a path hash set to check for cycles efficiently
+            std::unordered_set<MCTSNode*> path_nodes;
             for (const auto& [path_node, _] : path) {
-                if (path_node == transposition_table_->lookup(hash)) {
-                    std::cout << "simulate: Cycle detected, skipping transposition table lookup" << std::endl;
-                    cycle_detected = true;
-                    break;
-                }
+                path_nodes.insert(path_node);
             }
             
-            if (!cycle_detected) {
-                MCTSNode* transposition_node = transposition_table_->lookup(hash);
-                if (transposition_node) {
-                    std::cout << "simulate: Found transposition node" << std::endl;
+            // Look up in transposition table
+            MCTSNode* transposition_node = transposition_table_->lookup(hash);
+            if (transposition_node) {
+                // Check if this node is already in our path (cycle detection)
+                if (path_nodes.find(transposition_node) == path_nodes.end()) {
+                    std::cout << "simulate: Found transposition node not in current path" << std::endl;
                     node = transposition_node;
                     path.back().first = node; // Replace the last node in path
+                } else {
+                    std::cout << "simulate: Cycle detected, skipping transposition table lookup" << std::endl;
                 }
             }
         }
@@ -386,14 +382,11 @@ float MCTS::simulate(
         // Store in transposition table if enabled
         if (use_transposition_table_ && transposition_table_) {
             std::cout << "simulate: Storing in transposition table..." << std::endl;
-            // Calculate a hash for the current state using the same method as lookup
-            uint64_t hash = 0;
-            for (size_t i = 0; i < current_state.size(); ++i) {
-                // Combine hash using FNV-1a hash algorithm
-                hash ^= static_cast<uint64_t>(
-                    *reinterpret_cast<const unsigned char*>(&current_state[i]));
-                hash *= 1099511628211ULL; // FNV prime
-            }
+            
+            // Calculate a hash for the current state using our helper function
+            uint64_t hash = compute_state_hash(current_state, current_player);
+            
+            // Store the node in the transposition table
             transposition_table_->store(hash, node);
         }
         

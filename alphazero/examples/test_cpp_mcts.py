@@ -39,7 +39,7 @@ def print_board(board):
 
 def performance_test(board_size=5, num_simulations=20, use_cuda=False, num_threads=1):
     """
-    Compare the performance of Python MCTS and C++ MCTS.
+    Compare the performance of Python MCTS and C++ MCTS with and without transposition table.
     
     Args:
         board_size: Size of the board
@@ -82,9 +82,10 @@ def performance_test(board_size=5, num_simulations=20, use_cuda=False, num_threa
         temperature=1.0
     )
     
-    # Create C++ MCTS
+    # Try to create C++ MCTS implementations
     try:
-        cpp_mcts = CppMCTSWrapper(
+        # Without transposition table
+        cpp_mcts_without_tt = CppMCTSWrapper(
             game=game.clone(),
             evaluator=network.predict,
             c_puct=1.5,
@@ -92,10 +93,25 @@ def performance_test(board_size=5, num_simulations=20, use_cuda=False, num_threa
             dirichlet_alpha=0.3,
             dirichlet_noise_weight=0.25,
             temperature=1.0,
-            use_transposition_table=False,  # Disable transposition table to avoid infinite loops
+            use_transposition_table=False,
             transposition_table_size=100000,
             num_threads=num_threads
         )
+        
+        # With transposition table
+        cpp_mcts_with_tt = CppMCTSWrapper(
+            game=game.clone(),
+            evaluator=network.predict,
+            c_puct=1.5,
+            num_simulations=num_simulations,
+            dirichlet_alpha=0.3,
+            dirichlet_noise_weight=0.25,
+            temperature=1.0,
+            use_transposition_table=True,
+            transposition_table_size=100000,
+            num_threads=num_threads
+        )
+        
         cpp_available = True
     except ImportError:
         print("C++ MCTS not available. Only testing Python MCTS.")
@@ -122,35 +138,52 @@ def performance_test(board_size=5, num_simulations=20, use_cuda=False, num_threa
         row, col = divmod(move, board_size)
         print(f"  ({row}, {col}): {prob:.3f}")
     
-    # Test C++ MCTS if available
+    # Test C++ MCTS without transposition table
     if cpp_available:
-        print("\nRunning C++ MCTS...")
+        print("\nRunning C++ MCTS without transposition table...")
         start_time = time.time()
-        cpp_probs = cpp_mcts.search()
-        cpp_time = time.time() - start_time
-        cpp_move = cpp_mcts.select_move()
+        cpp_probs_without_tt = cpp_mcts_without_tt.search()
+        cpp_time_without_tt = time.time() - start_time
+        cpp_move_without_tt = cpp_mcts_without_tt.select_move()
         
-        print(f"C++ MCTS took {cpp_time:.3f} seconds ({num_simulations / cpp_time:.1f} simulations/second)")
-        print(f"Speedup: {python_time / cpp_time:.2f}x")
+        print(f"C++ MCTS without TT took {cpp_time_without_tt:.3f} seconds "
+              f"({num_simulations / cpp_time_without_tt:.1f} simulations/second)")
+        print(f"Speedup vs Python: {python_time / cpp_time_without_tt:.2f}x")
         
-        # Print top 5 moves from C++ MCTS
-        print("Top 5 moves from C++ MCTS:")
-        top_moves = sorted(cpp_probs.items(), key=lambda x: x[1], reverse=True)[:5]
+        # Print top 5 moves from C++ MCTS without TT
+        print("Top 5 moves from C++ MCTS without TT:")
+        top_moves = sorted(cpp_probs_without_tt.items(), key=lambda x: x[1], reverse=True)[:5]
         for move, prob in top_moves:
             row, col = divmod(move, board_size)
             print(f"  ({row}, {col}): {prob:.3f}")
         
-        # Compare the moves
-        py_row, py_col = divmod(python_move, board_size)
-        cpp_row, cpp_col = divmod(cpp_move, board_size)
-        print(f"\nPython MCTS selected move: ({py_row}, {py_col})")
-        print(f"C++ MCTS selected move: ({cpp_row}, {cpp_col})")
+        # Test C++ MCTS with transposition table
+        print("\nRunning C++ MCTS with transposition table...")
+        start_time = time.time()
+        cpp_probs_with_tt = cpp_mcts_with_tt.search()
+        cpp_time_with_tt = time.time() - start_time
+        cpp_move_with_tt = cpp_mcts_with_tt.select_move()
         
-        # Check if the moves match
-        if python_move == cpp_move:
-            print("The moves match!")
-        else:
-            print("The moves are different.")
+        print(f"C++ MCTS with TT took {cpp_time_with_tt:.3f} seconds "
+              f"({num_simulations / cpp_time_with_tt:.1f} simulations/second)")
+        print(f"Speedup vs without TT: {cpp_time_without_tt / cpp_time_with_tt:.2f}x")
+        print(f"Speedup vs Python: {python_time / cpp_time_with_tt:.2f}x")
+        
+        # Print top 5 moves from C++ MCTS with TT
+        print("Top 5 moves from C++ MCTS with TT:")
+        top_moves = sorted(cpp_probs_with_tt.items(), key=lambda x: x[1], reverse=True)[:5]
+        for move, prob in top_moves:
+            row, col = divmod(move, board_size)
+            print(f"  ({row}, {col}): {prob:.3f}")
+        
+        # Compare all the moves
+        py_row, py_col = divmod(python_move, board_size)
+        cpp_row_without_tt, cpp_col_without_tt = divmod(cpp_move_without_tt, board_size)
+        cpp_row_with_tt, cpp_col_with_tt = divmod(cpp_move_with_tt, board_size)
+        
+        print(f"\nPython MCTS selected move: ({py_row}, {py_col})")
+        print(f"C++ MCTS without TT selected move: ({cpp_row_without_tt}, {cpp_col_without_tt})")
+        print(f"C++ MCTS with TT selected move: ({cpp_row_with_tt}, {cpp_col_with_tt})")
 
 
 def parse_args():
