@@ -10,6 +10,7 @@
 
 #include "mcts_node.h"
 #include "transposition_table.h"
+#include "zobrist_hash.h"
 #include "../utils/thread_pool.h"
 
 namespace alphazero {
@@ -60,6 +61,13 @@ public:
      * @return Number of simulations
      */
     int get_num_simulations() const { return num_simulations_; }
+    
+    /**
+     * Get the exploration constant for UCB.
+     * 
+     * @return Exploration constant
+     */
+    float get_c_puct() const { return c_puct_; }
     
     /**
      * Set the exploration constant for UCB.
@@ -148,6 +156,13 @@ public:
      */
     size_t get_tree_size() const;
     
+    /**
+     * Get the number of threads used for parallel search.
+     * 
+     * @return Number of threads
+     */
+    int get_num_threads() const { return num_threads_; }
+    
 private:
     // Root node of the search tree
     std::unique_ptr<MCTSNode> root_;
@@ -164,6 +179,9 @@ private:
     std::unique_ptr<TranspositionTable> transposition_table_;
     bool use_transposition_table_;
     
+    // Zobrist hash for efficient state hashing
+    std::unique_ptr<ZobristHash> zobrist_hash_;
+    
     // Thread pool for parallel simulations
     std::unique_ptr<ThreadPool> thread_pool_;
     int num_threads_;
@@ -176,18 +194,48 @@ private:
     
     /**
      * Compute a hash value for a state tensor.
-     * Uses the FNV-1a algorithm for efficient hashing.
+     * Uses Zobrist hashing for efficient board state hashing.
      * 
      * @param state_tensor The state tensor to hash
      * @param current_player The current player (to differentiate same board, different player)
      * @return Hash value for the state
      */
     uint64_t compute_state_hash(const std::vector<float>& state_tensor, int current_player) const {
+        if (state_tensor.empty()) {
+            return 0;
+        }
+        
+        // Try to extract stored hash from the state tensor first if it exists
+        // Detect if the tensor has extra elements for storing the hash
+        int board_size = static_cast<int>(std::sqrt(state_tensor.size()));
+        if (board_size * board_size < static_cast<int>(state_tensor.size()) && 
+            static_cast<int>(state_tensor.size()) >= board_size * board_size + sizeof(uint64_t) / sizeof(float)) {
+            
+            // Extra space might contain hash value
+            uint64_t hash = 0;
+            const float* ptr = state_tensor.data() + board_size * board_size;
+            memcpy(&hash, ptr, sizeof(hash));
+            
+            // If the hash is valid (non-zero), return it directly
+            if (hash != 0) {
+                return hash;
+            }
+        }
+        
+        // If no stored hash or invalid hash, compute it using Zobrist if available
+        if (zobrist_hash_) {
+            return zobrist_hash_->compute_hash(state_tensor, current_player);
+        }
+        
+        // Fallback to FNV-1a algorithm if Zobrist hash is not available
         const uint64_t FNV_PRIME = 1099511628211ULL;
         const uint64_t FNV_OFFSET = 14695981039346656037ULL;
         
         uint64_t hash = FNV_OFFSET;
-        for (size_t i = 0; i < state_tensor.size(); ++i) {
+        
+        // Only hash the board part, not any extra metadata
+        size_t board_elements = board_size * board_size;
+        for (size_t i = 0; i < std::min(state_tensor.size(), board_elements); ++i) {
             // Convert float to byte representation for more stable hashing
             uint8_t byte_val = static_cast<uint8_t>(
                 static_cast<int>(state_tensor[i] * 255.0f) & 0xFF);

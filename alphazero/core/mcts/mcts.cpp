@@ -34,6 +34,10 @@ MCTS::MCTS(int num_simulations,
         transposition_table_ = std::make_unique<LRUTranspositionTable>(transposition_table_size);
     }
     
+    // Initialize Zobrist hash - assume 15x15 board size for Gomoku as default
+    // This will be adjusted based on actual board sizes during search
+    zobrist_hash_ = std::make_unique<ZobristHash>(15, 2);
+    
     // Create thread pool if using multiple threads
     if (num_threads_ > 1) {
         thread_pool_ = std::make_unique<ThreadPool>(num_threads_);
@@ -75,17 +79,25 @@ std::unordered_map<int, float> MCTS::search(
     const std::function<std::pair<std::vector<float>, float>(const std::vector<float>&)>& evaluator,
     bool progressive_widening) {
     
-    std::cout << "MCTS::search called with " << legal_moves.size() << " legal moves" << std::endl;
+    // Make sure Zobrist hash is initialized with the correct board size
+    if (zobrist_hash_ && state_tensor.size() > 0) {
+        // Check if we need to initialize the Zobrist hash with correct board size
+        int board_size = static_cast<int>(std::sqrt(state_tensor.size()));
+        // Only consider the actual board elements, not any attached metadata
+        size_t board_elements = board_size * board_size;
+        if (board_elements <= state_tensor.size() && 
+            board_size != zobrist_hash_->get_board_size()) {
+            // Reinitialize with the new board size
+            zobrist_hash_ = std::make_unique<ZobristHash>(board_size, 2);
+        }
+    }
     
     // If root is not expanded, evaluate and expand it
     if (!root_->is_expanded()) {
-        std::cout << "Root not expanded, evaluating..." << std::endl;
         auto [policy, value] = evaluator(state_tensor);
-        std::cout << "Evaluation completed, policy size: " << policy.size() << ", value: " << value << std::endl;
         
         // Apply progressive widening if needed
         if (progressive_widening && legal_moves.size() > 50) {
-            std::cout << "Applying progressive widening..." << std::endl;
             // Create temporary mapping of moves to priors
             std::vector<std::pair<int, float>> move_priors;
             for (size_t i = 0; i < legal_moves.size(); ++i) {
@@ -117,25 +129,19 @@ std::unordered_map<int, float> MCTS::search(
                 }
             }
             
-            std::cout << "Expanding root with " << top_moves.size() << " top moves..." << std::endl;
             // Expand root with top moves
             expand_root(top_moves, top_priors);
         } else {
-            std::cout << "Expanding root with all " << legal_moves.size() << " legal moves..." << std::endl;
             // Expand root with all legal moves
             expand_root(legal_moves, policy);
         }
         
-        std::cout << "Adding Dirichlet noise..." << std::endl;
         // Add Dirichlet noise to root children
         add_dirichlet_noise(legal_moves);
     }
     
-    std::cout << "Root expanded, running simulations..." << std::endl;
-    
     // Run simulations
     if (num_threads_ > 1 && thread_pool_) {
-        std::cout << "Running " << num_simulations_ << " parallel simulations with " << num_threads_ << " threads..." << std::endl;
         // Parallel simulations
         std::vector<std::future<float>> futures;
         
@@ -143,39 +149,29 @@ std::unordered_map<int, float> MCTS::search(
         auto state_tensor_copy = state_tensor;
         
         for (int i = 0; i < num_simulations_; ++i) {
-            std::cout << "Queuing simulation " << i+1 << "/" << num_simulations_ << "..." << std::endl;
             // Use capture by value for thread safety
             // Make a separate copy of the state tensor for each thread to avoid data races
             std::vector<float> thread_state = state_tensor_copy;
             futures.push_back(thread_pool_->enqueue([this, thread_state, evaluator]() {
                 std::vector<std::pair<MCTSNode*, int>> path;
-                std::cout << "Thread starting simulation..." << std::endl;
-                auto result = this->simulate(thread_state, evaluator, path);
-                std::cout << "Thread completed simulation with result " << result << std::endl;
-                return result;
+                return this->simulate(thread_state, evaluator, path);
             }));
         }
         
         // Wait for all simulations to complete
-        std::cout << "Waiting for all simulations to complete..." << std::endl;
-        for (int i = 0; i < futures.size(); ++i) {
-            std::cout << "Waiting for simulation " << i+1 << "/" << futures.size() << "..." << std::endl;
+        for (auto& future : futures) {
             try {
-                futures[i].wait();
-                std::cout << "Simulation " << i+1 << " completed" << std::endl;
+                future.wait();
             } catch (const std::exception& e) {
                 // Log the error and continue
-                std::cerr << "Error in simulation " << i+1 << ": " << e.what() << std::endl;
+                std::cerr << "Error in simulation: " << e.what() << std::endl;
             }
         }
     } else {
-        std::cout << "Running " << num_simulations_ << " sequential simulations..." << std::endl;
         // Sequential simulations
         for (int i = 0; i < num_simulations_; ++i) {
-            std::cout << "Starting simulation " << i+1 << "/" << num_simulations_ << "..." << std::endl;
             std::vector<std::pair<MCTSNode*, int>> path;
             simulate(state_tensor, evaluator, path);
-            std::cout << "Simulation " << i+1 << " completed" << std::endl;
         }
     }
     
@@ -270,12 +266,10 @@ float MCTS::simulate(
     const std::function<std::pair<std::vector<float>, float>(const std::vector<float>&)>& evaluator,
     std::vector<std::pair<MCTSNode*, int>>& path) {
     
-    std::cout << "simulate: Starting simulation" << std::endl;
-    
     // Start with the root node
     MCTSNode* node = root_.get();
     if (!node) {
-        std::cout << "simulate: ERROR - root node is null!" << std::endl;
+        std::cerr << "simulate: ERROR - root node is null!" << std::endl;
         return 0.0f;
     }
     
@@ -285,35 +279,26 @@ float MCTS::simulate(
     path.clear();
     path.push_back({node, -1});
     
-    std::cout << "simulate: Starting selection phase" << std::endl;
-    
     // Selection: Traverse the tree to a leaf node
     const int MAX_DEPTH = 100; // Add a maximum depth to prevent infinite loops
     int depth = 0;
     while (node->is_expanded() && depth < MAX_DEPTH) {
         depth++;
         // Select the best child according to UCB
-        std::cout << "simulate: Selecting best child..." << std::endl;
         auto [move, child] = node->select_child(c_puct_);
         if (!child) {
-            std::cout << "simulate: No child selected, breaking" << std::endl;
             break;
         }
         
-        std::cout << "simulate: Selected move " << move << std::endl;
-        
         // Apply virtual loss if using multiple threads
         if (num_threads_ > 1) {
-            std::cout << "simulate: Adding virtual loss" << std::endl;
             child->add_virtual_loss(virtual_loss_weight_);
         }
         
         // Apply the move to the current state
-        std::cout << "simulate: Applying move to state tensor" << std::endl;
         current_state = apply_move_to_tensor(current_state, move, current_player);
         current_player = 3 - current_player; // Switch player (1 -> 2, 2 -> 1)
         
-        std::cout << "simulate: Adding node and move to path" << std::endl;
         // Add node and move to the path
         path.push_back({child, move});
         
@@ -322,7 +307,6 @@ float MCTS::simulate(
         
         // Check transposition table if enabled
         if (use_transposition_table_ && transposition_table_) {
-            std::cout << "simulate: Checking transposition table" << std::endl;
             
             // Calculate a hash for the current state
             uint64_t hash = compute_state_hash(current_state, current_player);
@@ -338,51 +322,36 @@ float MCTS::simulate(
             if (transposition_node) {
                 // Check if this node is already in our path (cycle detection)
                 if (path_nodes.find(transposition_node) == path_nodes.end()) {
-                    std::cout << "simulate: Found transposition node not in current path" << std::endl;
                     node = transposition_node;
                     path.back().first = node; // Replace the last node in path
-                } else {
-                    std::cout << "simulate: Cycle detected, skipping transposition table lookup" << std::endl;
                 }
             }
         }
     }
     
-    std::cout << "simulate: Selection phase complete" << std::endl;
-    
     // Evaluation: If we're not at a terminal state, evaluate and expand the node
-    std::cout << "simulate: Starting evaluation phase" << std::endl;
     float value;
     // This is a placeholder for terminal state detection - initialize with a meaningful value
     // In a real implementation, this would be computed based on the game state
     bool is_terminal = current_state.empty(); // Example check - replace with actual logic
     if (!is_terminal) {
-        std::cout << "simulate: Not a terminal state, evaluating..." << std::endl;
         // Evaluate the current state
-        std::cout << "simulate: Calling evaluator function..." << std::endl;
         auto [policy, state_value] = evaluator(current_state);
-        std::cout << "simulate: Evaluator returned policy size: " << policy.size() 
-                  << ", value: " << state_value << std::endl;
         
         // Get legal moves
         // This is a placeholder - the actual legal move generation would depend on the game state
-        std::cout << "simulate: Generating legal moves from policy..." << std::endl;
         std::vector<int> legal_moves;
         for (size_t i = 0; i < policy.size(); ++i) {
             if (policy[i] > 0.0f) {
                 legal_moves.push_back(i);
             }
         }
-        std::cout << "simulate: Generated " << legal_moves.size() << " legal moves" << std::endl;
         
         // Expand the node with legal moves and prior probabilities
-        std::cout << "simulate: Expanding node with legal moves and priors..." << std::endl;
         node->expand(legal_moves, policy);
         
         // Store in transposition table if enabled
         if (use_transposition_table_ && transposition_table_) {
-            std::cout << "simulate: Storing in transposition table..." << std::endl;
-            
             // Calculate a hash for the current state using our helper function
             uint64_t hash = compute_state_hash(current_state, current_player);
             
@@ -392,9 +361,7 @@ float MCTS::simulate(
         
         // Use the evaluated value
         value = state_value;
-        std::cout << "simulate: Using evaluated value: " << value << std::endl;
     } else {
-        std::cout << "simulate: Terminal state reached, determining outcome..." << std::endl;
         // If we reached a terminal state, determine the winner
         // This is a placeholder - the actual winner determination would depend on the game state
         int winner = 0; // 0 for draw, 1 for first player, 2 for second player
@@ -402,24 +369,18 @@ float MCTS::simulate(
         if (winner == 0) {
             // Draw
             value = 0.0f;
-            std::cout << "simulate: Game is a draw, value=0" << std::endl;
         } else if (winner == current_player) {
             // Current player wins
             value = 1.0f;
-            std::cout << "simulate: Current player wins, value=1" << std::endl;
         } else {
             // Current player loses
             value = -1.0f;
-            std::cout << "simulate: Current player loses, value=-1" << std::endl;
         }
     }
     
     // Backup: Update the values of all nodes in the path
-    std::cout << "simulate: Starting backup phase with value " << value << std::endl;
     node->backup(value);
-    std::cout << "simulate: Backup complete" << std::endl;
     
-    std::cout << "simulate: Simulation complete, returning value " << value << std::endl;
     return value;
 }
 
@@ -435,20 +396,59 @@ std::vector<float> MCTS::apply_move_to_tensor(
     
     // Ensure move index is valid
     if (move >= 0 && move < static_cast<int>(new_state.size())) {
-        // For debugging, print the move we're applying
-        std::cout << "apply_move_to_tensor: Applying move " << move 
-                  << " for player " << player << std::endl;
+        // Get the old piece value before applying the move
+        float old_piece_value = new_state[move];
+        int old_piece = (old_piece_value == 0.0f) ? 0 : 
+                        (old_piece_value > 0.0f) ? 1 : 2;
         
         // Apply the move: we'll set it regardless of whether the position is empty
         // to ensure the state is being modified
         new_state[move] = (player == 1) ? 1.0f : -1.0f;
         
-        // For more reliable state differentiation, add a small random perturbation
-        // to ensure states are different
-        static std::random_device rd;
-        static std::mt19937 gen(rd());
-        static std::uniform_real_distribution<float> dist(0.001f, 0.002f);
-        new_state.push_back(dist(gen));
+        // If we have a valid Zobrist hash, use incremental update for efficiency
+        if (zobrist_hash_ && state_tensor.size() > 0) {
+            // Check if we need to initialize the Zobrist hash with correct board size
+            int board_size = static_cast<int>(std::sqrt(state_tensor.size()));
+            
+            // If the board size seems to have changed, reinitialize the Zobrist hash
+            if (board_size * board_size != static_cast<int>(state_tensor.size()) || 
+                board_size != zobrist_hash_->get_board_size()) {
+                // Reinitialize with the new board size
+                zobrist_hash_ = std::make_unique<ZobristHash>(board_size, 2);
+            }
+            
+            // Check if there's a hash attached to the state tensor (in extra element)
+            uint64_t hash = 0;
+            if (state_tensor.size() > board_size * board_size) {
+                // Try to extract the hash from the state tensor
+                const float* ptr = state_tensor.data() + board_size * board_size;
+                memcpy(&hash, ptr, sizeof(uint64_t) < sizeof(float) * 
+                       (state_tensor.size() - board_size * board_size) ? 
+                       sizeof(uint64_t) : sizeof(float) * (state_tensor.size() - board_size * board_size));
+            } else {
+                // Compute the hash from scratch if there's no stored hash
+                hash = zobrist_hash_->compute_hash(state_tensor, 3 - player); // 3-player gives previous player
+            }
+            
+            // Apply the move to the hash
+            int new_piece = (player == 1) ? 1 : 2;
+            hash = zobrist_hash_->update_hash(hash, move, old_piece, new_piece);
+            
+            // Toggle player
+            hash = zobrist_hash_->toggle_player(hash, player, 3 - player);
+            
+            // Store the updated hash in the state
+            // Make sure we have enough space to store 64-bit hash
+            new_state.resize(board_size * board_size + sizeof(uint64_t) / sizeof(float) + 1);
+            memcpy(new_state.data() + board_size * board_size, &hash, sizeof(hash));
+        } else {
+            // For more reliable state differentiation when not using Zobrist hash, 
+            // add a small random perturbation to ensure states are different
+            static std::random_device rd;
+            static std::mt19937 gen(rd());
+            static std::uniform_real_distribution<float> dist(0.001f, 0.002f);
+            new_state.push_back(dist(gen));
+        }
     } else {
         std::cout << "apply_move_to_tensor: Invalid move index " << move << std::endl;
     }

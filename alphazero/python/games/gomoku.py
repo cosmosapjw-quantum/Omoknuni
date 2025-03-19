@@ -152,3 +152,14 @@ class GomokuGame(GameWrapper):
             for j in range(self.board_size):
                 print(f" {symbols[board[i][j]]}", end=" ")
             print()
+                
+    def reset(self) -> None:
+        """Reset the game to the initial state"""
+        # Reinitialize the C++ game state
+        self.state = Gamestate(
+            self.board_size, 
+            self.use_renju, 
+            self.use_omok, 
+            0,  # Use default seed
+            self.use_pro_long_opening
+        )

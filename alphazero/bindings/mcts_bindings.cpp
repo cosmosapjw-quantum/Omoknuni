@@ -100,10 +100,7 @@ PYBIND11_MODULE(cpp_mcts, m) {
              py::arg("num_threads") = 1)
     .def("search", [](GomokuMCTS& self, py::array_t<int> board, const std::vector<int>& legal_moves, 
                          const std::function<std::pair<std::vector<float>, float>(const std::vector<int>&)>& evaluator) {
-            std::cout << "C++ search function called" << std::endl;
-            
             // Convert numpy array to vector more safely
-            std::cout << "Converting board array to vector..." << std::endl;
             py::buffer_info buf = board.request();
             
             // Copy data safely
@@ -112,25 +109,32 @@ PYBIND11_MODULE(cpp_mcts, m) {
             for (ssize_t i = 0; i < buf.size; ++i) {
                 board_vec[i] = ptr[i];
             }
-            std::cout << "Board vector created with size " << board_vec.size() << std::endl;
             
             // Convert to float tensor
-            std::cout << "Creating state tensor..." << std::endl;
             std::vector<float> state_tensor(board_vec.size(), 0.0f);
             
-            // Create wrapper around evaluator for debugging
-            std::cout << "Creating evaluator wrapper..." << std::endl;
+            // Convert integer board values to float representation (-1, 0, 1)
+            for (size_t i = 0; i < board_vec.size(); ++i) {
+                if (board_vec[i] == 1) {
+                    state_tensor[i] = 1.0f;  // Player 1
+                } else if (board_vec[i] == 2) {
+                    state_tensor[i] = -1.0f; // Player 2
+                } else {
+                    state_tensor[i] = 0.0f;  // Empty
+                }
+            }
+            
+            // Detect the board size to initialize the Zobrist hash correctly
+            int board_size = static_cast<int>(std::sqrt(board_vec.size()));
+            
+            // Create wrapper around evaluator
             auto debug_evaluator = [&evaluator, &board_vec](const std::vector<float>& ignored) {
-                std::cout << "C++ calling evaluator function..." << std::endl;
                 auto result = evaluator(board_vec);
-                std::cout << "Evaluator function returned" << std::endl;
                 return result;
             };
             
             // Run search
-            std::cout << "Starting MCTS search with " << legal_moves.size() << " legal moves..." << std::endl;
             auto result = self.mcts.search(state_tensor, legal_moves, debug_evaluator);
-            std::cout << "MCTS search completed successfully" << std::endl;
             
             return result;
         })
