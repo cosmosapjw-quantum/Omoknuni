@@ -1,0 +1,5 @@
+pybind11_add_module(gomoku gomoku.cpp)
+target_compile_features(gomoku PRIVATE cxx_std_17)
+
+pybind11_add_module(attack_defense attack_defense.cpp)
+target_compile_features(attack_defense PRIVATE cxx_std_17)

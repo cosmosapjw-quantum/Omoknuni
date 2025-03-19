@@ -1,0 +1,12 @@
+README.md
+setup.py
+alphazero.egg-info/PKG-INFO
+alphazero.egg-info/SOURCES.txt
+alphazero.egg-info/dependency_links.txt
+alphazero.egg-info/requires.txt
+alphazero.egg-info/top_level.txt
+core/game/attack_defense.cpp
+core/game/gomoku.cpp
+core/game/attack_defense.cpp
+core/game/gomoku.cpp
+python/__init__.py
