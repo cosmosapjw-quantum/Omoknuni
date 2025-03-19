@@ -242,16 +242,21 @@ class MCTS:
             legal_moves = self.game.get_legal_moves()
             return {move: 1.0 / len(legal_moves) for move in legal_moves}
         
-        if self.temperature == 0:
-            # In the limit of temperature -> 0, select the move with the most visits
+        if self.temperature < 0.01:
+            # For very small temperature, just select the move with the most visits
             best_move = max(visits.items(), key=lambda x: x[1])[0]
             probs = {move: 1.0 if move == best_move else 0.0 for move in visits}
         else:
-            # Apply the temperature factor
-            # visits ^ (1/temperature) / sum(visits ^ (1/temperature))
-            temp_visits = {move: count ** (1 / self.temperature) for move, count in visits.items()}
-            total_temp_visits = sum(temp_visits.values())
-            probs = {move: count / total_temp_visits for move, count in temp_visits.items()}
+            # Apply the temperature factor with a safer approach
+            try:
+                # visits ^ (1/temperature) / sum(visits ^ (1/temperature))
+                temp_visits = {move: count ** (1 / self.temperature) for move, count in visits.items()}
+                total_temp_visits = sum(temp_visits.values())
+                probs = {move: count / total_temp_visits for move, count in temp_visits.items()}
+            except OverflowError:
+                # If overflow occurs, fall back to a safer approach
+                # Just normalize the raw visit counts
+                probs = {move: count / total_visits for move, count in visits.items()}
         
         return probs
     
