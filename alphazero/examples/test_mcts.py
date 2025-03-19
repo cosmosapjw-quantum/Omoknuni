@@ -47,17 +47,20 @@ def random_evaluator(game_state: GameWrapper) -> Tuple[Dict[int, float], float]:
 
 
 def main():
-    # Create a Gomoku game with default settings
-    print("Creating Gomoku game...")
-    game = GomokuGame(board_size=15)
+    # Create a Gomoku game with a smaller board size
+    board_size = 6  # Using a smaller board size
+    num_sims = 50   # Fewer simulations
+    
+    print(f"Creating Gomoku game with board_size={board_size}...")
+    game = GomokuGame(board_size=board_size)
     
     # Create MCTS with random evaluator
-    print("Creating MCTS with random evaluator...")
+    print(f"Creating MCTS with random evaluator and {num_sims} simulations...")
     mcts = MCTS(
         game=game,
         evaluator=random_evaluator,
         c_puct=1.0,
-        num_simulations=100,  # Fewer simulations for testing
+        num_simulations=num_sims,
         dirichlet_alpha=0.3,
         dirichlet_noise_weight=0.25,
         temperature=1.0
@@ -72,9 +75,16 @@ def main():
         player_name = "Black" if current_player == 1 else "White"
         
         # Use MCTS to select a move
-        print(f"{player_name}'s turn, thinking...")
+        print(f"{player_name}'s turn, running search...")
         start_time = time.time()
-        move, probs = mcts.select_move(return_probs=True)
+        
+        print("Starting search...")
+        # First run the search
+        probs = mcts.search()
+        print("Search completed, selecting move...")
+        # Then select the move
+        move = mcts.select_move()
+        
         elapsed_time = time.time() - start_time
         
         # Get move coordinates

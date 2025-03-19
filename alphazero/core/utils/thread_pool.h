@@ -112,10 +112,12 @@ auto ThreadPool::enqueue(F&& f, Args&&... args)
             (*task)();
             
             // Decrement the active task count and notify if all tasks are done
-            std::lock_guard<std::mutex> lock(done_mutex);
-            active_tasks--;
-            if (active_tasks == 0) {
-                done_condition.notify_all();
+            {
+                std::lock_guard<std::mutex> lock(done_mutex);
+                active_tasks--;
+                if (active_tasks == 0 && tasks.empty()) {
+                    done_condition.notify_all();
+                }
             }
         });
     }

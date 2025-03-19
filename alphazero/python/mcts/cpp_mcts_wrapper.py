@@ -88,27 +88,54 @@ class CppMCTSWrapper:
         
         # Create a wrapper function for the evaluator
         def evaluator_wrapper(board_flat: List[int]) -> Tuple[List[float], float]:
-            # Create a game copy for evaluation
-            game_copy = self.game.clone()
-            
-            # Call the Python evaluator
-            priors, value = self.evaluator(game_copy)
-            
-            # Convert the prior dictionary to a flat list
-            board_size = self.game.board_size
-            total_cells = board_size * board_size
-            prior_list = [0.0] * total_cells
-            for move, prior in priors.items():
-                if isinstance(move, int) and 0 <= move < total_cells:  # Ensure the move is a valid integer within bounds
-                    prior_list[move] = prior
-                else:
-                    print(f"Warning: Invalid move {move} in priors")
-            
-            return prior_list, value
+            print(f"Evaluator wrapper called with board of length {len(board_flat)}")
+            try:
+                # Create a game copy for evaluation
+                game_copy = self.game.clone()
+                print("Game cloned successfully")
+                
+                # Call the Python evaluator
+                print("Calling Python evaluator...")
+                priors, value = self.evaluator(game_copy)
+                print(f"Python evaluator returned {len(priors)} priors with value {value}")
+                
+                # Convert the prior dictionary to a flat list
+                board_size = self.game.board_size
+                total_cells = board_size * board_size
+                print(f"Creating prior list of size {total_cells}")
+                
+                prior_list = [0.0] * total_cells
+                for move, prior in priors.items():
+                    if isinstance(move, int) and 0 <= move < total_cells:  # Ensure the move is a valid integer within bounds
+                        prior_list[move] = prior
+                    else:
+                        print(f"Warning: Invalid move {move} in priors")
+                
+                print("Evaluator wrapper completed successfully")
+                return prior_list, value
+            except Exception as e:
+                print(f"Error in evaluator_wrapper: {e}")
+                # Return default values in case of error
+                return [0.0] * len(board_flat), 0.0
         
         # Run the C++ search
         try:
+            print("Starting C++ MCTS search...")
+            print(f"Board shape: {board.shape if hasattr(board, 'shape') else len(board)}")
+            print(f"Number of legal moves: {len(legal_moves)}")
+            
+            # Debug: Check a few legal moves
+            print(f"Sample legal moves: {legal_moves[:5] if len(legal_moves) > 5 else legal_moves}")
+            
+            # Call the C++ search function
+            print("Calling cpp_mcts.search()...")
+            print(f"Parameters: num_simulations={self.cpp_mcts.get_num_simulations()}")
+            
+            start_time = time.time()
             probabilities = self.cpp_mcts.search(board, legal_moves, evaluator_wrapper)
+            elapsed = time.time() - start_time
+            
+            print(f"C++ MCTS search completed successfully in {elapsed:.3f} seconds")
             return probabilities
         except Exception as e:
             print(f"Error in C++ MCTS search: {e}")

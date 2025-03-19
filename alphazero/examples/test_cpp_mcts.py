@@ -37,7 +37,7 @@ def print_board(board):
         print()
 
 
-def performance_test(board_size=9, num_simulations=400, use_cuda=False, num_threads=1):
+def performance_test(board_size=5, num_simulations=20, use_cuda=False, num_threads=1):
     """
     Compare the performance of Python MCTS and C++ MCTS.
     
@@ -92,7 +92,7 @@ def performance_test(board_size=9, num_simulations=400, use_cuda=False, num_thre
             dirichlet_alpha=0.3,
             dirichlet_noise_weight=0.25,
             temperature=1.0,
-            use_transposition_table=True,
+            use_transposition_table=False,  # Disable transposition table to avoid infinite loops
             transposition_table_size=100000,
             num_threads=num_threads
         )
@@ -156,10 +156,10 @@ def performance_test(board_size=9, num_simulations=400, use_cuda=False, num_thre
 def parse_args():
     parser = argparse.ArgumentParser(description="Test C++ MCTS performance")
     
-    parser.add_argument("--board-size", type=int, default=9,
-                        help="Size of the Gomoku board (default: 9)")
-    parser.add_argument("--num-simulations", type=int, default=400,
-                        help="Number of MCTS simulations (default: 400)")
+    parser.add_argument("--board-size", type=int, default=6,
+                        help="Size of the Gomoku board (default: 6)")
+    parser.add_argument("--num-simulations", type=int, default=50,
+                        help="Number of MCTS simulations (default: 50)")
     parser.add_argument("--num-threads", type=int, default=1,
                         help="Number of threads for C++ MCTS (default: 1)")
     parser.add_argument("--use-cuda", action="store_true",

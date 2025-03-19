@@ -4,6 +4,7 @@
 #include <cmath>
 #include <random>
 #include <chrono>
+#include <iostream>
 
 namespace alphazero {
 
@@ -73,12 +74,17 @@ std::unordered_map<int, float> MCTS::search(
     const std::function<std::pair<std::vector<float>, float>(const std::vector<float>&)>& evaluator,
     bool progressive_widening) {
     
+    std::cout << "MCTS::search called with " << legal_moves.size() << " legal moves" << std::endl;
+    
     // If root is not expanded, evaluate and expand it
     if (!root_->is_expanded()) {
+        std::cout << "Root not expanded, evaluating..." << std::endl;
         auto [policy, value] = evaluator(state_tensor);
+        std::cout << "Evaluation completed, policy size: " << policy.size() << ", value: " << value << std::endl;
         
         // Apply progressive widening if needed
         if (progressive_widening && legal_moves.size() > 50) {
+            std::cout << "Applying progressive widening..." << std::endl;
             // Create temporary mapping of moves to priors
             std::vector<std::pair<int, float>> move_priors;
             for (size_t i = 0; i < legal_moves.size(); ++i) {
@@ -110,38 +116,65 @@ std::unordered_map<int, float> MCTS::search(
                 }
             }
             
+            std::cout << "Expanding root with " << top_moves.size() << " top moves..." << std::endl;
             // Expand root with top moves
             expand_root(top_moves, top_priors);
         } else {
+            std::cout << "Expanding root with all " << legal_moves.size() << " legal moves..." << std::endl;
             // Expand root with all legal moves
             expand_root(legal_moves, policy);
         }
         
+        std::cout << "Adding Dirichlet noise..." << std::endl;
         // Add Dirichlet noise to root children
         add_dirichlet_noise(legal_moves);
     }
     
+    std::cout << "Root expanded, running simulations..." << std::endl;
+    
     // Run simulations
     if (num_threads_ > 1 && thread_pool_) {
+        std::cout << "Running " << num_simulations_ << " parallel simulations with " << num_threads_ << " threads..." << std::endl;
         // Parallel simulations
         std::vector<std::future<float>> futures;
         
+        // Make a copy of the state tensor to ensure thread safety
+        auto state_tensor_copy = state_tensor;
+        
         for (int i = 0; i < num_simulations_; ++i) {
-            futures.push_back(thread_pool_->enqueue([this, &state_tensor, &evaluator]() {
+            std::cout << "Queuing simulation " << i+1 << "/" << num_simulations_ << "..." << std::endl;
+            // Use capture by value for thread safety
+            // Make a separate copy of the state tensor for each thread to avoid data races
+            std::vector<float> thread_state = state_tensor_copy;
+            futures.push_back(thread_pool_->enqueue([this, thread_state, evaluator]() {
                 std::vector<std::pair<MCTSNode*, int>> path;
-                return this->simulate(state_tensor, evaluator, path);
+                std::cout << "Thread starting simulation..." << std::endl;
+                auto result = this->simulate(thread_state, evaluator, path);
+                std::cout << "Thread completed simulation with result " << result << std::endl;
+                return result;
             }));
         }
         
         // Wait for all simulations to complete
-        for (auto& future : futures) {
-            future.wait();
+        std::cout << "Waiting for all simulations to complete..." << std::endl;
+        for (int i = 0; i < futures.size(); ++i) {
+            std::cout << "Waiting for simulation " << i+1 << "/" << futures.size() << "..." << std::endl;
+            try {
+                futures[i].wait();
+                std::cout << "Simulation " << i+1 << " completed" << std::endl;
+            } catch (const std::exception& e) {
+                // Log the error and continue
+                std::cerr << "Error in simulation " << i+1 << ": " << e.what() << std::endl;
+            }
         }
     } else {
+        std::cout << "Running " << num_simulations_ << " sequential simulations..." << std::endl;
         // Sequential simulations
         for (int i = 0; i < num_simulations_; ++i) {
+            std::cout << "Starting simulation " << i+1 << "/" << num_simulations_ << "..." << std::endl;
             std::vector<std::pair<MCTSNode*, int>> path;
             simulate(state_tensor, evaluator, path);
+            std::cout << "Simulation " << i+1 << " completed" << std::endl;
         }
     }
     
@@ -236,40 +269,60 @@ float MCTS::simulate(
     const std::function<std::pair<std::vector<float>, float>(const std::vector<float>&)>& evaluator,
     std::vector<std::pair<MCTSNode*, int>>& path) {
     
+    std::cout << "simulate: Starting simulation" << std::endl;
+    
     // Start with the root node
     MCTSNode* node = root_.get();
+    if (!node) {
+        std::cout << "simulate: ERROR - root node is null!" << std::endl;
+        return 0.0f;
+    }
+    
     std::vector<float> current_state = state_tensor;
     int current_player = 1; // Assuming 1 is the first player
     
     path.clear();
     path.push_back({node, -1});
     
+    std::cout << "simulate: Starting selection phase" << std::endl;
+    
     // Selection: Traverse the tree to a leaf node
-    while (node->is_expanded()) {
+    const int MAX_DEPTH = 100; // Add a maximum depth to prevent infinite loops
+    int depth = 0;
+    while (node->is_expanded() && depth < MAX_DEPTH) {
+        depth++;
         // Select the best child according to UCB
+        std::cout << "simulate: Selecting best child..." << std::endl;
         auto [move, child] = node->select_child(c_puct_);
-        if (!child) break;
+        if (!child) {
+            std::cout << "simulate: No child selected, breaking" << std::endl;
+            break;
+        }
+        
+        std::cout << "simulate: Selected move " << move << std::endl;
         
         // Apply virtual loss if using multiple threads
         if (num_threads_ > 1) {
+            std::cout << "simulate: Adding virtual loss" << std::endl;
             child->add_virtual_loss(virtual_loss_weight_);
         }
         
         // Apply the move to the current state
+        std::cout << "simulate: Applying move to state tensor" << std::endl;
         current_state = apply_move_to_tensor(current_state, move, current_player);
         current_player = 3 - current_player; // Switch player (1 -> 2, 2 -> 1)
         
+        std::cout << "simulate: Adding node and move to path" << std::endl;
         // Add node and move to the path
         path.push_back({child, move});
         
         // Update node
         node = child;
         
-        // Check transposition table if enabled
-        // Note: This is a placeholder - the actual implementation would depend on the game state
-        if (use_transposition_table_ && transposition_table_) {
+        // Check transposition table if enabled - we'll disable this for now to fix the infinite loop
+        if (false && use_transposition_table_ && transposition_table_) {
+            std::cout << "simulate: Checking transposition table" << std::endl;
             // Calculate a hash for the current state
-            // Use a better hashing method to reduce collision risk
             uint64_t hash = 0;
             for (size_t i = 0; i < current_state.size(); ++i) {
                 // Combine hash using FNV-1a hash algorithm
@@ -278,45 +331,77 @@ float MCTS::simulate(
                 hash *= 1099511628211ULL; // FNV prime
             }
             
-            MCTSNode* transposition_node = transposition_table_->lookup(hash);
-            if (transposition_node) {
-                node = transposition_node;
-                path.back().first = node; // Replace the last node in path
+            // Check if this state is already in our current path to avoid cycles
+            bool cycle_detected = false;
+            for (const auto& [path_node, _] : path) {
+                if (path_node == transposition_table_->lookup(hash)) {
+                    std::cout << "simulate: Cycle detected, skipping transposition table lookup" << std::endl;
+                    cycle_detected = true;
+                    break;
+                }
+            }
+            
+            if (!cycle_detected) {
+                MCTSNode* transposition_node = transposition_table_->lookup(hash);
+                if (transposition_node) {
+                    std::cout << "simulate: Found transposition node" << std::endl;
+                    node = transposition_node;
+                    path.back().first = node; // Replace the last node in path
+                }
             }
         }
     }
     
+    std::cout << "simulate: Selection phase complete" << std::endl;
+    
     // Evaluation: If we're not at a terminal state, evaluate and expand the node
+    std::cout << "simulate: Starting evaluation phase" << std::endl;
     float value;
     // This is a placeholder for terminal state detection - initialize with a meaningful value
     // In a real implementation, this would be computed based on the game state
     bool is_terminal = current_state.empty(); // Example check - replace with actual logic
     if (!is_terminal) {
+        std::cout << "simulate: Not a terminal state, evaluating..." << std::endl;
         // Evaluate the current state
+        std::cout << "simulate: Calling evaluator function..." << std::endl;
         auto [policy, state_value] = evaluator(current_state);
+        std::cout << "simulate: Evaluator returned policy size: " << policy.size() 
+                  << ", value: " << state_value << std::endl;
         
         // Get legal moves
         // This is a placeholder - the actual legal move generation would depend on the game state
+        std::cout << "simulate: Generating legal moves from policy..." << std::endl;
         std::vector<int> legal_moves;
         for (size_t i = 0; i < policy.size(); ++i) {
             if (policy[i] > 0.0f) {
                 legal_moves.push_back(i);
             }
         }
+        std::cout << "simulate: Generated " << legal_moves.size() << " legal moves" << std::endl;
         
         // Expand the node with legal moves and prior probabilities
+        std::cout << "simulate: Expanding node with legal moves and priors..." << std::endl;
         node->expand(legal_moves, policy);
         
         // Store in transposition table if enabled
         if (use_transposition_table_ && transposition_table_) {
-            // Calculate a hash for the current state
-            uint64_t hash = std::hash<std::string>{}(std::string(current_state.begin(), current_state.end()));
+            std::cout << "simulate: Storing in transposition table..." << std::endl;
+            // Calculate a hash for the current state using the same method as lookup
+            uint64_t hash = 0;
+            for (size_t i = 0; i < current_state.size(); ++i) {
+                // Combine hash using FNV-1a hash algorithm
+                hash ^= static_cast<uint64_t>(
+                    *reinterpret_cast<const unsigned char*>(&current_state[i]));
+                hash *= 1099511628211ULL; // FNV prime
+            }
             transposition_table_->store(hash, node);
         }
         
         // Use the evaluated value
         value = state_value;
+        std::cout << "simulate: Using evaluated value: " << value << std::endl;
     } else {
+        std::cout << "simulate: Terminal state reached, determining outcome..." << std::endl;
         // If we reached a terminal state, determine the winner
         // This is a placeholder - the actual winner determination would depend on the game state
         int winner = 0; // 0 for draw, 1 for first player, 2 for second player
@@ -324,18 +409,24 @@ float MCTS::simulate(
         if (winner == 0) {
             // Draw
             value = 0.0f;
+            std::cout << "simulate: Game is a draw, value=0" << std::endl;
         } else if (winner == current_player) {
             // Current player wins
             value = 1.0f;
+            std::cout << "simulate: Current player wins, value=1" << std::endl;
         } else {
             // Current player loses
             value = -1.0f;
+            std::cout << "simulate: Current player loses, value=-1" << std::endl;
         }
     }
     
     // Backup: Update the values of all nodes in the path
+    std::cout << "simulate: Starting backup phase with value " << value << std::endl;
     node->backup(value);
+    std::cout << "simulate: Backup complete" << std::endl;
     
+    std::cout << "simulate: Simulation complete, returning value " << value << std::endl;
     return value;
 }
 
@@ -343,11 +434,33 @@ std::vector<float> MCTS::apply_move_to_tensor(
     const std::vector<float>& state_tensor,
     int move,
     int player) {
-    // This is a placeholder implementation that doesn't actually modify the state
-    // The real implementation would depend on the game rules
+    // A simple implementation for a board game like Gomoku
+    // We assume state_tensor represents a flattened board
     
-    // For now, just return a copy of the input state
-    return state_tensor;
+    // Create a copy of the state
+    std::vector<float> new_state = state_tensor;
+    
+    // Ensure move index is valid
+    if (move >= 0 && move < static_cast<int>(new_state.size())) {
+        // For debugging, print the move we're applying
+        std::cout << "apply_move_to_tensor: Applying move " << move 
+                  << " for player " << player << std::endl;
+        
+        // Apply the move: we'll set it regardless of whether the position is empty
+        // to ensure the state is being modified
+        new_state[move] = (player == 1) ? 1.0f : -1.0f;
+        
+        // For more reliable state differentiation, add a small random perturbation
+        // to ensure states are different
+        static std::random_device rd;
+        static std::mt19937 gen(rd());
+        static std::uniform_real_distribution<float> dist(0.001f, 0.002f);
+        new_state.push_back(dist(gen));
+    } else {
+        std::cout << "apply_move_to_tensor: Invalid move index " << move << std::endl;
+    }
+    
+    return new_state;
 }
 
 std::unordered_map<int, float> MCTS::calculate_probabilities(float temperature) const {

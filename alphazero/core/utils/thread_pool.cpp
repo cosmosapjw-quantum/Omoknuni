@@ -73,7 +73,12 @@ size_t ThreadPool::queue_size() const {
 void ThreadPool::wait_all() {
     std::unique_lock<std::mutex> lock(done_mutex);
     done_condition.wait(lock, [this] {
-        return active_tasks == 0 && tasks.empty();
+        size_t queue_size = 0;
+        {
+            std::lock_guard<std::mutex> q_lock(queue_mutex);
+            queue_size = tasks.size();
+        }
+        return active_tasks == 0 && queue_size == 0;
     });
 }
 

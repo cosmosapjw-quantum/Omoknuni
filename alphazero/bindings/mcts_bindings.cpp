@@ -2,6 +2,7 @@
 #include <pybind11/stl.h>
 #include <pybind11/functional.h>
 #include <pybind11/numpy.h>
+#include <iostream>
 
 #include "../core/mcts/mcts.h"
 #include "../core/mcts/mcts_node.h"
@@ -99,7 +100,10 @@ PYBIND11_MODULE(cpp_mcts, m) {
              py::arg("num_threads") = 1)
     .def("search", [](GomokuMCTS& self, py::array_t<int> board, const std::vector<int>& legal_moves, 
                          const std::function<std::pair<std::vector<float>, float>(const std::vector<int>&)>& evaluator) {
+            std::cout << "C++ search function called" << std::endl;
+            
             // Convert numpy array to vector more safely
+            std::cout << "Converting board array to vector..." << std::endl;
             py::buffer_info buf = board.request();
             
             // Copy data safely
@@ -108,15 +112,27 @@ PYBIND11_MODULE(cpp_mcts, m) {
             for (ssize_t i = 0; i < buf.size; ++i) {
                 board_vec[i] = ptr[i];
             }
+            std::cout << "Board vector created with size " << board_vec.size() << std::endl;
             
-            // Convert to float tensor (dummy implementation for now)
+            // Convert to float tensor
+            std::cout << "Creating state tensor..." << std::endl;
             std::vector<float> state_tensor(board_vec.size(), 0.0f);
             
+            // Create wrapper around evaluator for debugging
+            std::cout << "Creating evaluator wrapper..." << std::endl;
+            auto debug_evaluator = [&evaluator, &board_vec](const std::vector<float>& ignored) {
+                std::cout << "C++ calling evaluator function..." << std::endl;
+                auto result = evaluator(board_vec);
+                std::cout << "Evaluator function returned" << std::endl;
+                return result;
+            };
+            
             // Run search
-            return self.mcts.search(state_tensor, legal_moves, 
-                [&evaluator, &board_vec](const std::vector<float>& ignored) {
-                    return evaluator(board_vec);
-                });
+            std::cout << "Starting MCTS search with " << legal_moves.size() << " legal moves..." << std::endl;
+            auto result = self.mcts.search(state_tensor, legal_moves, debug_evaluator);
+            std::cout << "MCTS search completed successfully" << std::endl;
+            
+            return result;
         })
         .def("select_move", [](GomokuMCTS& self, float temperature) {
             return self.mcts.select_move(temperature);
@@ -126,5 +142,11 @@ PYBIND11_MODULE(cpp_mcts, m) {
         })
         .def("set_temperature", [](GomokuMCTS& self, float temperature) {
             self.mcts.set_temperature(temperature);
+        })
+        .def("set_num_simulations", [](GomokuMCTS& self, int num_simulations) {
+            self.mcts.set_num_simulations(num_simulations);
+        })
+        .def("get_num_simulations", [](GomokuMCTS& self) {
+            return self.mcts.get_num_simulations();
         });
 }

@@ -55,6 +55,13 @@ public:
     void set_num_simulations(int num_simulations);
     
     /**
+     * Get the number of simulations to run.
+     * 
+     * @return Number of simulations
+     */
+    int get_num_simulations() const { return num_simulations_; }
+    
+    /**
      * Set the exploration constant for UCB.
      * 
      * @param c_puct Exploration constant
