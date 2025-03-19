@@ -3,21 +3,15 @@ from typing import List, Tuple, Optional
 
 from alphazero.python.games.game_base import GameWrapper
 
-# These will be the C++ modules we'll bind to
-# For now, we'll use placeholders and assume they'll be imported later
-try:
-    from alphazero.core.gomoku import Gamestate
-    from alphazero.core.attack_defense import AttackDefenseModule
-    GOMOKU_AVAILABLE = True
-except ImportError:
-    print("Warning: C++ Gomoku implementation not available.")
-    GOMOKU_AVAILABLE = False
+# Import the C++ modules
+from alphazero.core.gomoku import Gamestate
+from alphazero.core.attack_defense import AttackDefenseModule
 
 
 class GomokuGame(GameWrapper):
     """Python wrapper for the C++ Gomoku implementation"""
     
-    def __init__(self, board_size: int = 15, use_renju: bool = False, use_omok: bool = False):
+    def __init__(self, board_size: int = 15, use_renju: bool = False, use_omok: bool = False, seed: int = 0, use_pro_long_opening: bool = False):
         """
         Initialize a new Gomoku game
         
@@ -25,16 +19,16 @@ class GomokuGame(GameWrapper):
             board_size: Size of the board (default: 15x15)
             use_renju: Whether to use Renju rules (default: False)
             use_omok: Whether to use Omok rules (default: False)
+            seed: Random seed for the game (default: 0)
+            use_pro_long_opening: Whether to use professional long opening rules (default: False)
         """
-        if not GOMOKU_AVAILABLE:
-            raise ImportError("C++ Gomoku implementation not available")
-        
         self.board_size = board_size
         self.use_renju = use_renju
         self.use_omok = use_omok
+        self.use_pro_long_opening = use_pro_long_opening
         
         # Initialize the C++ game state
-        self.state = Gamestate(board_size, use_renju, use_omok)
+        self.state = Gamestate(board_size, use_renju, use_omok, seed, use_pro_long_opening)
         
         # Initialize attack/defense module
         self.attack_defense = AttackDefenseModule(board_size)
@@ -70,13 +64,41 @@ class GomokuGame(GameWrapper):
     
     def clone(self) -> 'GomokuGame':
         """Return a deep copy of the current game state"""
-        new_game = GomokuGame(self.board_size, self.use_renju, self.use_omok)
+        new_game = GomokuGame(
+            self.board_size, 
+            self.use_renju, 
+            self.use_omok, 
+            0,  # Don't copy the seed
+            self.use_pro_long_opening
+        )
         new_game.state = self.state.copy()
         return new_game
     
     def get_current_player(self) -> int:
         """Return the current player (1 for Black, 2 for White)"""
         return self.state.current_player
+    
+    def is_five_in_a_row(self, action: int, player: int) -> bool:
+        """
+        Check if there is a five-in-a-row from the given action for the player
+        
+        Args:
+            action: The action to check (or -1 to check the entire board)
+            player: The player to check for (1 for Black, 2 for White)
+            
+        Returns:
+            True if there is a five-in-a-row, False otherwise
+        """
+        return self.state.is_five_in_a_row(action, player)
+    
+    def undo_move(self, action: int) -> None:
+        """
+        Undo the move at the specified action
+        
+        Args:
+            action: The action to undo
+        """
+        self.state.undo_move(action)
     
     def get_attack_defense_scores(self, moves: List[int]) -> Tuple[List[float], List[float]]:
         """
