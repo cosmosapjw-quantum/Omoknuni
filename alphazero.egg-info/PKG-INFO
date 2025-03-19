@@ -2,7 +2,7 @@ Metadata-Version: 2.1
 Name: alphazero
 Version: 0.1.0
 Summary: AlphaZero-style board game AI
-Home-page: https://github.com/cosmosapjw-quantum/alphazero
+Home-page: https://github.com/yourusername/alphazero
 Author: Your Name
 Author-email: your.email@example.com
 Classifier: Programming Language :: Python :: 3
@@ -13,45 +13,144 @@ Description-Content-Type: text/markdown
 Requires-Dist: numpy>=1.19.0
 Requires-Dist: torch>=1.7.0
 Requires-Dist: pybind11>=2.6.0
+Requires-Dist: matplotlib>=3.3.0
+Requires-Dist: tqdm>=4.50.0
 
-# AlphaZero Engine
+# AlphaZero for Gomoku
 
-A modular, high-performance AlphaZero-style AI system that can be applied to various board games.
+A modular, high-performance AlphaZero-style AI system for Gomoku/Renju with C++ game logic and MCTS implementation.
 
 ## Features
 
 - Game-agnostic framework for AlphaZero-style learning and play
-- High-performance MCTS implementation in C++ with Python bindings
+- High-performance C++ implementation of Gomoku/Renju game rules
+- Attack and defense score computation for Gomoku in C++
+- Python-based MCTS with neural network integration
 - Flexible neural network architectures in PyTorch
-- Efficient parallelization for tree search and neural network inference
-
-## Supported Games
-
-- Gomoku/Renju (primary)
-- Chess (planned)
-- Go (future extension)
-
-## Requirements
-
-- C++17 compiler
-- Python 3.8+
-- PyTorch
-- CUDA-capable GPU (recommended)
+- Complete training and evaluation pipeline
 
 ## Installation
 
+### Prerequisites
+
+- Python 3.8+ with pip
+- C++17 compatible compiler (MSVC on Windows, GCC/Clang on Linux/Mac)
+- PyTorch
+- CUDA (optional, for GPU acceleration)
+
+### Setup
+
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/alphazero.git
+git clone <repository-url>
 cd alphazero
 
-# Install the package
+# Install the package in development mode
 pip install -e .
 ```
 
+For Windows users, see [WINDOWS_BUILD.md](WINDOWS_BUILD.md) for specific build instructions.
+
 ## Usage
 
-See the examples directory for usage examples.
+### Testing the C++ Gomoku Implementation
+
+```bash
+python alphazero/examples/test_gomoku.py
+```
+
+### Playing with MCTS and Neural Network
+
+```bash
+python alphazero/examples/test_nn_mcts.py
+```
+
+### Training AlphaZero
+
+```bash
+python alphazero/examples/train_alphazero.py \
+    --board-size 9 \
+    --num-iterations 20 \
+    --games-per-iteration 10 \
+    --mcts-simulations 400 \
+    --num-workers 4 \
+    --batch-size 64 \
+    --epochs-per-iteration 5 \
+    --checkpoint-dir checkpoints
+```
+
+For faster training, start with a smaller board size like 9x9.
+
+### Evaluating a Trained Model
+
+```bash
+python alphazero/examples/evaluate_model.py \
+    --model-path checkpoints/model_iter_20.pt \
+    --board-size 9 \
+    --num-games 20 \
+    --mcts-simulations 800 \
+    --opponent random
+```
+
+### Playing Against AlphaZero
+
+```bash
+python alphazero/examples/human_vs_ai.py \
+    --model-path checkpoints/model_iter_20.pt \
+    --board-size 15 \
+    --mcts-simulations 1600
+```
+
+## Gomoku Rules Options
+
+The implementation supports several rule variations:
+
+- **Standard Gomoku**: The simplest rule set, where five or more in a row wins.
+- **Renju Rules**: Black has restrictions on overlines and forbidden moves.
+- **Omok Rules**: Another rule variation with specific restrictions.
+- **Professional Long Opening**: Special opening rules used in professional games.
+
+To use these rules, add the corresponding flags to the command:
+
+```bash
+--use-renju --use-pro-long-opening
+```
+
+## Project Structure
+
+- **alphazero/core/**: C++ implementations
+  - **game/**: Game logic (Gomoku, attack/defense scoring)
+  - **mcts/**: Monte Carlo Tree Search algorithm (future C++ implementation)
+  - **utils/**: Utility functions (threading, hashing)
+
+- **alphazero/python/**: Python modules
+  - **games/**: Game wrappers for C++ implementations
+  - **mcts/**: MCTS implementation in Python
+  - **models/**: Neural network models
+  - **training/**: Training pipeline
+  - **utils/**: Utility functions
+
+- **alphazero/bindings/**: Python-C++ bindings
+
+- **alphazero/examples/**: Example scripts
+
+## Advanced Training Options
+
+For advanced training with larger boards or more complex models:
+
+```bash
+python alphazero/examples/train_alphazero.py \
+    --board-size 15 \
+    --num-filters 128 \
+    --num-residual-blocks 10 \
+    --num-iterations 100 \
+    --games-per-iteration 50 \
+    --mcts-simulations 800 \
+    --batch-size 128 \
+    --epochs-per-iteration 10 \
+    --num-workers 8 \
+    --use-cuda
+```
 
 ## License
 

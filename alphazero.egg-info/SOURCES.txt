@@ -5,5 +5,17 @@ alphazero.egg-info/SOURCES.txt
 alphazero.egg-info/dependency_links.txt
 alphazero.egg-info/requires.txt
 alphazero.egg-info/top_level.txt
+alphazero/bindings/mcts_bindings.cpp
 alphazero/core/game/attack_defense.cpp
 alphazero/core/game/gomoku.cpp
+alphazero/core/mcts/mcts.cpp
+alphazero/core/mcts/mcts_node.cpp
+alphazero/core/mcts/transposition_table.cpp
+alphazero/core/utils/thread_pool.cpp
+alphazero/bindings/mcts_bindings.cpp
+alphazero/core/game/attack_defense.cpp
+alphazero/core/game/gomoku.cpp
+alphazero/core/mcts/mcts.cpp
+alphazero/core/mcts/mcts_node.cpp
+alphazero/core/mcts/transposition_table.cpp
+alphazero/core/utils/thread_pool.cpp

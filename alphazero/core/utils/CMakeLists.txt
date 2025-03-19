@@ -1,0 +1,7 @@
+set(UTILS_SOURCES
+    thread_pool.cpp
+)
+
+add_library(utils STATIC ${UTILS_SOURCES})
+target_include_directories(utils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(utils PRIVATE Threads::Threads)

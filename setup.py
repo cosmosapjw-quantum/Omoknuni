@@ -11,21 +11,53 @@ if sys.platform == 'win32':
 else:
     extra_compile_args = ['-std=c++17']  # GCC/Clang flag
 
+# Define include directories
+include_dirs = [
+    pybind11.get_include(),
+    "alphazero/core",
+    "alphazero/core/game",
+    "alphazero/core/mcts",
+    "alphazero/core/utils"
+]
+
+# Define link args for threading library
+libraries = []
+if sys.platform != 'win32':
+    libraries = ['pthread']
+
 # Define the extension modules
 gomoku_module = Extension(
     'alphazero.core.gomoku',
     sources=['alphazero/core/game/gomoku.cpp'],
-    include_dirs=[pybind11.get_include()],
+    include_dirs=include_dirs,
     language='c++',
     extra_compile_args=extra_compile_args,
+    libraries=libraries,
 )
 
 attack_defense_module = Extension(
     'alphazero.core.attack_defense',
     sources=['alphazero/core/game/attack_defense.cpp'],
-    include_dirs=[pybind11.get_include()],
+    include_dirs=include_dirs,
     language='c++',
     extra_compile_args=extra_compile_args,
+    libraries=libraries,
+)
+
+# MCTS module and dependencies
+mcts_module = Extension(
+    'alphazero.bindings.cpp_mcts',
+    sources=[
+        'alphazero/bindings/mcts_bindings.cpp',
+        'alphazero/core/mcts/mcts_node.cpp',
+        'alphazero/core/mcts/mcts.cpp',
+        'alphazero/core/mcts/transposition_table.cpp',
+        'alphazero/core/utils/thread_pool.cpp'
+    ],
+    include_dirs=include_dirs,
+    language='c++',
+    extra_compile_args=extra_compile_args,
+    libraries=libraries,
 )
 
 setup(
@@ -36,7 +68,7 @@ setup(
     description="AlphaZero-style board game AI",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
-    url="https://github.com/cosmosapjw-quantum/alphazero",
+    url="https://github.com/yourusername/alphazero",
     packages=find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",
@@ -48,7 +80,9 @@ setup(
         "numpy>=1.19.0",
         "torch>=1.7.0",
         "pybind11>=2.6.0",
+        "matplotlib>=3.3.0",
+        "tqdm>=4.50.0",
     ],
-    ext_modules=[gomoku_module, attack_defense_module],
+    ext_modules=[gomoku_module, attack_defense_module, mcts_module],
     cmdclass={'build_ext': build_ext},
 )
