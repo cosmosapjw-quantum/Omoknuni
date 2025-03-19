@@ -71,24 +71,36 @@ std::pair<int, MCTSNode*> MCTSNode::select_child(float c_puct) {
         return {-1, nullptr};
     }
     
-    // Find the move with the highest UCB score
+    // Find moves with the highest UCB score
     float best_score = -std::numeric_limits<float>::max();
-    int best_move = -1;
-    MCTSNode* best_child = nullptr;
+    std::vector<std::pair<int, MCTSNode*>> best_children;
     
     for (const auto& child_pair : children) {
         int move = child_pair.first;
         MCTSNode* child = child_pair.second.get();
         
         float score = child->ucb_score(visit_count.load(), c_puct);
+        
         if (score > best_score) {
             best_score = score;
-            best_move = move;
-            best_child = child;
+            best_children.clear();
+            best_children.emplace_back(move, child);
+        } else if (std::abs(score - best_score) < 1e-6) {
+            // If scores are approximately equal, consider this child as well
+            best_children.emplace_back(move, child);
         }
     }
     
-    return {best_move, best_child};
+    // If multiple children have the same score, select one randomly
+    if (best_children.size() > 1) {
+        int index = std::rand() % best_children.size();
+        return best_children[index];
+    } else if (!best_children.empty()) {
+        return best_children[0];
+    }
+    
+    // This should never happen if children is not empty
+    return {-1, nullptr};
 }
 
 void MCTSNode::expand(const std::vector<int>& moves, const std::vector<float>& priors) {
@@ -105,21 +117,27 @@ void MCTSNode::expand(const std::vector<int>& moves, const std::vector<float>& p
 }
 
 void MCTSNode::backup(float value) {
-    // Update this node
-    visit_count.fetch_add(1);
-    {
-        std::lock_guard<std::mutex> lock(value_mutex);
-        value_sum += value;
-    }
+    // Use an iterative approach instead of recursion to avoid deadlocks
+    MCTSNode* current = this;
+    float current_value = value;
     
-    // Remove any virtual loss that was applied during selection
-    if (virtual_loss.load() > 0) {
-        remove_virtual_loss();
-    }
-    
-    // Update parent node with the negative of the value (for alternating players)
-    if (parent != nullptr) {
-        parent->backup(-value);
+    while (current != nullptr) {
+        // Update this node
+        current->visit_count.fetch_add(1);
+        {
+            std::lock_guard<std::mutex> lock(current->value_mutex);
+            current->value_sum += current_value;
+        }
+        
+        // Remove any virtual loss that was applied during selection
+        if (current->virtual_loss.load() > 0) {
+            current->remove_virtual_loss();
+        }
+        
+        // Move to parent with negated value (for alternating players)
+        MCTSNode* parent = current->parent;
+        current = parent;
+        current_value = -current_value; // Negate for alternating players
     }
 }
 

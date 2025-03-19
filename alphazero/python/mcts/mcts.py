@@ -92,13 +92,20 @@ class MCTSNode:
         Args:
             value: The value to back up
         """
-        # Update this node
-        self.visit_count += 1
-        self.value_sum += value
+        # Use an iterative approach instead of recursion
+        current_node = self
+        current_value = value
         
-        # Update parent node with the negative of the value (for alternating players)
-        if self.parent is not None:
-            self.parent.backup(-value)
+        while current_node is not None:
+            # Update this node
+            current_node.visit_count += 1
+            current_node.value_sum += current_value
+            
+            # Move to parent with negated value (for alternating players)
+            parent = current_node.parent
+            current_node = parent
+            if current_node is not None:
+                current_value = -current_value  # Negate for alternating players
 
 
 class MCTS:
@@ -242,7 +249,10 @@ class MCTS:
             legal_moves = self.game.get_legal_moves()
             return {move: 1.0 / len(legal_moves) for move in legal_moves}
         
-        if self.temperature < 0.01:
+        # Ensure temperature is positive
+        temp = max(0.01, abs(self.temperature))
+        
+        if temp < 0.01:
             # For very small temperature, just select the move with the most visits
             best_move = max(visits.items(), key=lambda x: x[1])[0]
             probs = {move: 1.0 if move == best_move else 0.0 for move in visits}
@@ -250,11 +260,25 @@ class MCTS:
             # Apply the temperature factor with a safer approach
             try:
                 # visits ^ (1/temperature) / sum(visits ^ (1/temperature))
-                temp_visits = {move: count ** (1 / self.temperature) for move, count in visits.items()}
+                temp_visits = {}
+                for move, count in visits.items():
+                    # Avoid issues with very large exponents by scaling
+                    if count > 0:
+                        # Use log-domain calculation for numerical stability
+                        log_count = math.log(count)
+                        scaled_value = math.exp(log_count / temp)
+                        temp_visits[move] = scaled_value
+                    else:
+                        temp_visits[move] = 0
+                
                 total_temp_visits = sum(temp_visits.values())
-                probs = {move: count / total_temp_visits for move, count in temp_visits.items()}
-            except OverflowError:
-                # If overflow occurs, fall back to a safer approach
+                if total_temp_visits > 0:
+                    probs = {move: count / total_temp_visits for move, count in temp_visits.items()}
+                else:
+                    # Fallback to uniform if all values are zero
+                    probs = {move: 1.0 / len(visits) for move in visits}
+            except (OverflowError, ValueError, ZeroDivisionError):
+                # If any numerical issues occur, fall back to a safer approach
                 # Just normalize the raw visit counts
                 probs = {move: count / total_visits for move, count in visits.items()}
         
@@ -275,6 +299,12 @@ class MCTS:
         # Select a move based on the probabilities
         moves = list(probs.keys())
         move_probs = list(probs.values())
+        
+        # Ensure probabilities sum to 1 (handling numerical precision issues)
+        sum_probs = sum(move_probs)
+        if abs(sum_probs - 1.0) > 1e-10:
+            move_probs = [p / sum_probs for p in move_probs]
+            
         move = np.random.choice(moves, p=move_probs)
         
         if return_probs:

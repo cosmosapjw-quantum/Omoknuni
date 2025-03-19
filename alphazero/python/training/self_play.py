@@ -47,6 +47,9 @@ class GameRecord:
             self.values = [0.0] * len(self.states)
             return
         
+        # Initialize values list with the same length as states
+        self.values = [0.0] * len(self.states)
+        
         # If we have a winner, we need to determine the value for each step
         for i in range(len(self.states)):
             # For even indices, the player is the first player (alternating)
@@ -54,10 +57,14 @@ class GameRecord:
             
             if result == player_at_step:
                 # This player won
-                self.values.append(1.0)
+                self.values[i] = 1.0
             else:
                 # This player lost
-                self.values.append(-1.0)
+                self.values[i] = -1.0
+                
+        # Verify that values length matches states length
+        if len(self.values) != len(self.states):
+            raise ValueError(f"Length mismatch: values ({len(self.values)}) and states ({len(self.states)})")
     
     def get_samples(self) -> Tuple[List[np.ndarray], List[Dict[int, float]], List[float]]:
         """
@@ -160,20 +167,58 @@ class SelfPlay:
         Returns:
             List of GameRecord objects
         """
-        if num_workers > 1:
+        # Use multiprocessing only if more than one worker and enough games
+        if num_workers > 1 and num_games >= num_workers:
+            try:
+                # Set a timeout for each game to prevent hanging
+                mp.set_start_method('spawn', force=True)
+            except RuntimeError:
+                # Method already set, ignore
+                pass
+                
+            records = []
+            # Use context manager for proper cleanup
             with mp.Pool(num_workers) as pool:
-                records = list(tqdm(
-                    pool.imap(self._play_game_wrapper, [None] * num_games),
-                    total=num_games,
-                    desc="Generating games"
-                ))
+                try:
+                    # Track progress with tqdm
+                    game_iter = pool.imap_unordered(self._play_game_wrapper, [None] * num_games)
+                    for record in tqdm(game_iter, total=num_games, desc="Generating games"):
+                        if record is not None:
+                            records.append(record)
+                except Exception as e:
+                    print(f"Error in parallel game generation: {e}")
+                    # Fallback to sequential mode if parallel fails
+                    pool.terminate()
+                    pool.join()
+                    remaining = num_games - len(records)
+                    if remaining > 0:
+                        print(f"Falling back to sequential mode for {remaining} remaining games")
+                        for _ in tqdm(range(remaining), desc="Generating additional games"):
+                            try:
+                                records.append(self.play_game())
+                            except Exception as game_error:
+                                print(f"Error generating game: {game_error}")
         else:
+            # Sequential game generation
             records = []
             for _ in tqdm(range(num_games), desc="Generating games"):
-                records.append(self.play_game())
-        
-        return records
+                try:
+                    records.append(self.play_game())
+                except Exception as e:
+                    print(f"Error generating game: {e}")
+                    
+        # Ensure we return valid records
+        return [r for r in records if r is not None]
     
-    def _play_game_wrapper(self, _) -> GameRecord:
-        """Wrapper for parallel game generation."""
-        return self.play_game()
+    def _play_game_wrapper(self, _) -> Optional[GameRecord]:
+        """
+        Wrapper for parallel game generation with error handling.
+        
+        Returns:
+            GameRecord or None if an error occurred
+        """
+        try:
+            return self.play_game()
+        except Exception as e:
+            print(f"Error in game generation: {e}")
+            return None

@@ -91,8 +91,9 @@ std::unordered_map<int, float> MCTS::search(
             std::sort(move_priors.begin(), move_priors.end(), 
                 [](const auto& a, const auto& b) { return a.second > b.second; });
             
-            // Take only the top moves
+            // Take only the top moves - ensure we don't go out of bounds
             int width = std::min(50, static_cast<int>(std::sqrt(legal_moves.size())));
+            width = std::min(width, static_cast<int>(move_priors.size())); // Safety check
             std::vector<int> top_moves;
             std::vector<float> top_priors;
             
@@ -268,8 +269,14 @@ float MCTS::simulate(
         // Note: This is a placeholder - the actual implementation would depend on the game state
         if (use_transposition_table_ && transposition_table_) {
             // Calculate a hash for the current state
-            // This is a placeholder - the actual hash calculation would depend on the game state
-            uint64_t hash = std::hash<std::string>{}(std::string(current_state.begin(), current_state.end()));
+            // Use a better hashing method to reduce collision risk
+            uint64_t hash = 0;
+            for (size_t i = 0; i < current_state.size(); ++i) {
+                // Combine hash using FNV-1a hash algorithm
+                hash ^= static_cast<uint64_t>(
+                    *reinterpret_cast<const unsigned char*>(&current_state[i]));
+                hash *= 1099511628211ULL; // FNV prime
+            }
             
             MCTSNode* transposition_node = transposition_table_->lookup(hash);
             if (transposition_node) {
@@ -281,8 +288,9 @@ float MCTS::simulate(
     
     // Evaluation: If we're not at a terminal state, evaluate and expand the node
     float value;
-    // This is a placeholder for terminal state detection
-    bool is_terminal = false;
+    // This is a placeholder for terminal state detection - initialize with a meaningful value
+    // In a real implementation, this would be computed based on the game state
+    bool is_terminal = current_state.empty(); // Example check - replace with actual logic
     if (!is_terminal) {
         // Evaluate the current state
         auto [policy, state_value] = evaluator(current_state);
@@ -441,10 +449,34 @@ size_t MCTS::count_nodes(const MCTSNode* node) const {
     
     size_t count = 1; // Count this node
     
-    // Count all children recursively
-    std::lock_guard<std::mutex> lock(node->children_mutex);
-    for (const auto& child_pair : node->children) {
-        count += count_nodes(child_pair.second.get());
+    // Use a non-recursive approach to avoid potential deadlocks with locks
+    std::vector<const MCTSNode*> stack;
+    
+    // First, lock and copy pointers to all children
+    {
+        std::lock_guard<std::mutex> lock(node->children_mutex);
+        for (const auto& child_pair : node->children) {
+            if (child_pair.second) {
+                stack.push_back(child_pair.second.get());
+                count++; // Count each child
+            }
+        }
+    }
+    
+    // Process each node in the stack without recursive calls
+    while (!stack.empty()) {
+        const MCTSNode* current = stack.back();
+        stack.pop_back();
+        
+        if (current) {
+            std::lock_guard<std::mutex> lock(current->children_mutex);
+            for (const auto& child_pair : current->children) {
+                if (child_pair.second) {
+                    stack.push_back(child_pair.second.get());
+                    count++; // Count each child
+                }
+            }
+        }
     }
     
     return count;

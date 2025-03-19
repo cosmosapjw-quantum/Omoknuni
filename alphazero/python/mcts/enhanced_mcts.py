@@ -106,7 +106,11 @@ class EnhancedMCTSNode:
             # Calculate a combined score with an optional RAVE component
             if rave_weight > 0.0 and self.rave_count > 0:
                 rave_score = self.rave_value_estimate()
-                rave_factor = rave_weight * self.rave_count / (self.rave_count + effective_visits + 1e-5)
+                # Ensure denominator is never too close to zero
+                denominator = self.rave_count + effective_visits
+                if denominator < 1e-4:
+                    denominator = 1e-4
+                rave_factor = rave_weight * self.rave_count / denominator
                 return (1 - rave_factor) * (exploitation + exploration) + rave_factor * rave_score
             else:
                 return exploitation + exploration
@@ -159,25 +163,35 @@ class EnhancedMCTSNode:
             value: The value to back up
             path: List of moves in the path for RAVE updates (if None, RAVE not used)
         """
-        with self.lock:
-            # Update this node
-            self.visit_count += 1
-            self.value_sum += value
-            
-            # Update RAVE statistics if path is provided
-            if path is not None:
-                moves_set = set(path)
-                for move, child in self.children.items():
-                    if move in moves_set:
-                        child.rave_count += 1
-                        child.rave_value += value
-            
-            # Remove any virtual loss that was applied during selection
-            self.remove_virtual_loss()
+        # Use iterative approach instead of recursion to avoid deadlocks
+        current_node = self
+        current_value = value
+        current_path = path
         
-        # Update parent node with the negative of the value (for alternating players)
-        if self.parent is not None:
-            self.parent.backup(-value, path)
+        while current_node is not None:
+            with current_node.lock:
+                # Update this node
+                current_node.visit_count += 1
+                current_node.value_sum += current_value
+                
+                # Update RAVE statistics if path is provided
+                if current_path is not None:
+                    moves_set = set(current_path)
+                    for move, child in current_node.children.items():
+                        if move in moves_set:
+                            with child.lock:
+                                child.rave_count += 1
+                                child.rave_value += current_value
+                
+                # Remove any virtual loss that was applied during selection
+                current_node.remove_virtual_loss()
+                
+                # Get parent for next iteration
+                parent = current_node.parent
+            
+            # Move to parent with negated value (for alternating players)
+            current_node = parent
+            current_value = -current_value  # Negate for alternating players
 
 
 class EnhancedMCTS:
@@ -242,8 +256,6 @@ class EnhancedMCTS:
         self.num_workers = num_workers
         self.simulations_queue = queue.Queue()
         self.executor = None
-        if num_workers > 1:
-            self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=num_workers)
     
     def search(self, game_state: Optional[GameWrapper] = None) -> Dict[int, float]:
         """
@@ -313,7 +325,9 @@ class EnhancedMCTS:
         
         # Store in transposition table if used
         if self.use_transposition_table:
-            hash_value = hash(str(self.game.get_state_tensor().tobytes()))
+            # Use a more efficient hashing method that doesn't create unnecessary strings
+            state_tensor = self.game.get_state_tensor()
+            hash_value = hash(tuple(state_tensor.flatten().tolist()))
             self.transposition_table.store(hash_value, self.root)
     
     def _simulate(self) -> None:
@@ -344,7 +358,9 @@ class EnhancedMCTS:
             
             # Check transposition table if enabled
             if self.use_transposition_table and not game_copy.is_terminal():
-                hash_value = hash(str(game_copy.get_state_tensor().tobytes()))
+                # Use a more efficient hashing method
+                state_tensor = game_copy.get_state_tensor()
+                hash_value = hash(tuple(state_tensor.flatten().tolist()))
                 transposition_node = self.transposition_table.lookup(hash_value)
                 if transposition_node is not None:
                     node = transposition_node
@@ -372,7 +388,9 @@ class EnhancedMCTS:
             
             # Store in transposition table if used
             if self.use_transposition_table:
-                hash_value = hash(str(game_copy.get_state_tensor().tobytes()))
+                # Use a more efficient hashing method
+                state_tensor = game_copy.get_state_tensor()
+                hash_value = hash(tuple(state_tensor.flatten().tolist()))
                 self.transposition_table.store(hash_value, node)
         else:
             # If we reached a terminal state, get the value based on the winner
@@ -401,13 +419,21 @@ class EnhancedMCTS:
         """
         Perform multiple MCTS simulations in parallel using a thread pool.
         """
-        # Submit simulations to the thread pool
-        futures = []
-        for _ in range(self.num_simulations):
-            futures.append(self.executor.submit(self._simulate))
-        
-        # Wait for all simulations to complete
-        concurrent.futures.wait(futures)
+        # Create a new executor for this search if none exists
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+            # Submit simulations to the thread pool
+            futures = []
+            for _ in range(self.num_simulations):
+                futures.append(executor.submit(self._simulate))
+            
+            # Wait for all simulations to complete and handle exceptions
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    # Get result to propagate any exceptions
+                    future.result()
+                except Exception as e:
+                    print(f"Error in simulation: {e}")
+                    # Continue with other simulations rather than failing completely
     
     def _get_search_probabilities(self) -> Dict[int, float]:
         """

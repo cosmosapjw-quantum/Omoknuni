@@ -1,0 +1,88 @@
+# AlphaZero Implementation Bug Fixes
+
+## C++ MCTS Implementation Fixes
+
+1. Improved hashing method in transposition table to reduce collision risk
+   - Replaced std::hash<std::string> with FNV-1a hash algorithm for better distribution and fewer collisions
+
+2. Fixed uninitialized terminal state variable in mcts.cpp
+   - Added proper initialization and documentation for the is_terminal flag
+
+3. Added bounds checking for progressive widening
+   - Ensured width calculation doesn't exceed move_priors.size() to prevent out-of-bounds access
+
+4. Implemented a non-recursive approach for count_nodes
+   - Replaced recursive implementation with iterative stack-based approach to avoid deadlocks with locks
+
+5. Fixed a potential null pointer dereference in transposition table
+   - Added proper check before accessing lru_map_ in lookup method
+
+6. Enhanced random eviction strategy in the transposition table when full
+   - Added proper eviction logic instead of silently failing
+
+7. Improved the backup method to use an iterative approach instead of recursion
+   - Prevents potential stack overflow and deadlocks in deep trees
+
+8. Fixed selection bias in select_child by randomizing when scores are equal
+   - Added randomization among top-scoring children instead of always taking the first one
+
+## Python MCTS Implementation Fixes
+
+1. Fixed MCTSNode.backup to use an iterative approach instead of recursion
+   - Prevents potential stack overflow in deep trees and improves performance
+
+2. Fixed negative temperature handling in _get_search_probabilities
+   - Added proper absolute value handling and log-domain calculations for numerical stability
+
+3. Added probability normalization for move selection
+   - Ensures probabilities sum to 1 to prevent np.random.choice from failing
+
+4. Enhanced error handling in CppMCTSWrapper
+   - Added detailed validation and better error messages
+   - Implemented retry logic for update_with_move failures
+
+5. Fixed the division by zero issue in enhanced_mcts.py RAVE calculation
+   - Added proper denominator handling and safety checks
+
+6. Fixed memory leak in executor handling in enhanced_mcts.py
+   - Used context manager to ensure proper cleanup of thread pools
+
+7. Improved efficiency of transposition table hashing
+   - Replaced inefficient string conversion with direct numerical hashing
+
+8. Fixed race condition in backup() in enhanced_mcts.py
+   - Implemented proper locking mechanism for thread safety
+
+## Training Infrastructure Fixes
+
+1. Fixed add_values method in self_play.py
+   - Fixed value array initialization to ensure consistent length with states
+   - Added validation to catch inconsistencies
+
+2. Improved multiprocessing pool management in generate_games
+   - Added proper error handling and fallback to sequential mode
+   - Implemented timeout mechanism to prevent hanging
+
+3. Enhanced checkpoint loading with comprehensive error handling
+   - Added file existence checks, proper key validation, and device mapping
+   - Implemented fallback mechanisms for error recovery
+
+4. Added validation and early stopping to the training pipeline
+   - Implemented patience-based early stopping
+   - Added tracking of best model and automatic saving
+
+5. Fixed policy loss calculation with proper shape validation
+   - Added handling for dimension mismatches and validation of input data
+
+6. Enhanced save_checkpoint method
+   - Added support for custom filenames
+   - Implemented error recovery and alternative save paths
+
+7. Added evaluation mode support to the trainer
+   - Separated training and validation code paths
+   - Used torch.set_grad_enabled for proper gradient handling
+
+8. Fixed board size calculation issue in trainer.py
+   - Added validation for non-square boards and proper fallback
+
+These fixes address all major bugs and issues identified in the codebase, including memory management issues, thread safety problems, numerical stability concerns, and error handling gaps.

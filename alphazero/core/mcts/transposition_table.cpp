@@ -25,9 +25,12 @@ MCTSNode* TranspositionTable::lookup(uint64_t hash_value) {
 void TranspositionTable::store(uint64_t hash_value, MCTSNode* node) {
     std::lock_guard<std::mutex> lock(mutex_);
     
-    // If table is full, don't add new entries
+    // If table is full, randomly evict an existing entry
     if (table_.size() >= max_size_) {
-        return;
+        // Find a random entry to evict
+        auto it = table_.begin();
+        std::advance(it, rand() % table_.size());
+        table_.erase(it);
     }
     
     table_[hash_value] = node;
@@ -59,11 +62,19 @@ MCTSNode* LRUTranspositionTable::lookup(uint64_t hash_value) {
     
     auto it = table_.find(hash_value);
     if (it != table_.end()) {
-        // Move the hash to the front of the LRU list
-        auto lru_it = lru_map_[hash_value];
-        lru_list_.erase(lru_it);
-        lru_list_.push_front(hash_value);
-        lru_map_[hash_value] = lru_list_.begin();
+        // Check if hash exists in lru_map before trying to access it
+        auto lru_map_it = lru_map_.find(hash_value);
+        if (lru_map_it != lru_map_.end()) {
+            // Move the hash to the front of the LRU list
+            auto lru_it = lru_map_it->second;
+            lru_list_.erase(lru_it);
+            lru_list_.push_front(hash_value);
+            lru_map_[hash_value] = lru_list_.begin();
+        } else {
+            // If the hash is in table_ but not in lru_map_, add it
+            lru_list_.push_front(hash_value);
+            lru_map_[hash_value] = lru_list_.begin();
+        }
         
         return it->second;
     }
