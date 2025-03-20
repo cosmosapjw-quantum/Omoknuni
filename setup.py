@@ -52,7 +52,8 @@ mcts_module = Extension(
         'alphazero/core/mcts/mcts_node.cpp',
         'alphazero/core/mcts/mcts.cpp',
         'alphazero/core/mcts/transposition_table.cpp',
-        'alphazero/core/utils/thread_pool.cpp'
+        'alphazero/core/utils/thread_pool.cpp',
+        'alphazero/core/mcts/zobrist_hash.cpp'
     ],
     include_dirs=include_dirs,
     language='c++',
