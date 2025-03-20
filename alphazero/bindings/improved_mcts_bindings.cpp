@@ -32,40 +32,50 @@ public:
     MCTS mcts;
 };
 
-// Special evaluator wrapper to manage the Python GIL
-class PyEvaluatorWrapper {
-public:
-    PyEvaluatorWrapper(const py::function& py_evaluator)
-        : py_evaluator_(py_evaluator) {}
-    
-    // This method will be called from C++ threads
-    std::pair<std::vector<float>, float> operator()(const std::vector<float>& state_tensor) {
-        std::lock_guard<std::mutex> lock(mutex_); // Ensure only one thread calls Python at a time
-        
-        // Acquire the GIL before calling into Python
-        py::gil_scoped_acquire acquire;
-        
-        try {
-            // Call the Python evaluator function safely with GIL held
-            py::object result = py_evaluator_(state_tensor);
-            
-            // Convert the Python return value to C++ types
-            std::vector<float> policy = result.attr("__getitem__")(0).cast<std::vector<float>>();
-            float value = result.attr("__getitem__")(1).cast<float>();
-            
-            return {policy, value};
-        }
-        catch (py::error_already_set& e) {
-            std::cerr << "Python error in evaluator: " << e.what() << std::endl;
-            // Return a fallback value on error
-            return {std::vector<float>(state_tensor.size(), 1.0f / state_tensor.size()), 0.0f};
-        }
-    }
+// Function type for evaluator function
+using EvaluatorFunc = std::function<std::pair<std::vector<float>, float>(const std::vector<float>&)>;
 
-private:
-    py::function py_evaluator_;
-    std::mutex mutex_; // Mutex to ensure thread safety
-};
+// Helper function to call a Python function with GIL management
+// Add a static counter to see how many times this is called
+std::pair<std::vector<float>, float> call_python_evaluator(
+    const py::function& py_evaluator, 
+    const std::vector<float>& state_tensor,
+    std::mutex& gil_mutex) {
+    
+    static std::atomic<int> call_count(0);
+    int count = call_count.fetch_add(1) + 1;
+    
+    // Log the call
+    std::cerr << "Evaluator call #" << count << " from thread " << std::this_thread::get_id() << std::endl;
+    
+    // Lock to ensure only one thread calls into Python at a time
+    std::lock_guard<std::mutex> lock(gil_mutex);
+    
+    std::cerr << "Thread " << std::this_thread::get_id() << " acquired mutex for call #" << count << std::endl;
+    
+    // Acquire the GIL before calling into Python
+    py::gil_scoped_acquire acquire;
+    
+    std::cerr << "Thread " << std::this_thread::get_id() << " acquired GIL for call #" << count << std::endl;
+    
+    try {
+        // Call the Python evaluator function safely with GIL held
+        py::object result = py_evaluator(state_tensor);
+        
+        // Convert the Python return value to C++ types
+        std::vector<float> policy = result.attr("__getitem__")(0).cast<std::vector<float>>();
+        float value = result.attr("__getitem__")(1).cast<float>();
+        
+        std::cerr << "Thread " << std::this_thread::get_id() << " completed call #" << count << std::endl;
+        
+        return {policy, value};
+    }
+    catch (py::error_already_set& e) {
+        std::cerr << "Python error in evaluator: " << e.what() << std::endl;
+        // Return a fallback value on error
+        return {std::vector<float>(state_tensor.size(), 1.0f / state_tensor.size()), 0.0f};
+    }
+}
 
 // Helper function for processing game board
 std::vector<float> process_board(py::array_t<int> board) {
@@ -147,14 +157,19 @@ PYBIND11_MODULE(improved_cpp_mcts, m) {
                         const std::vector<int>& legal_moves,
                         const py::function& evaluator,
                         bool progressive_widening) {
-            // Create our thread-safe evaluator wrapper
-            PyEvaluatorWrapper eval_wrapper(evaluator);
+            // Create a mutex for GIL safety
+            std::mutex gil_mutex;
+            
+            // Create a safe evaluator function
+            auto safe_evaluator = [&evaluator, &gil_mutex](const std::vector<float>& state) {
+                return call_python_evaluator(evaluator, state, gil_mutex);
+            };
             
             // Release the GIL before starting C++ threads
             py::gil_scoped_release release;
             
             // Call the C++ implementation
-            auto result = self.search(state_tensor, legal_moves, eval_wrapper, progressive_widening);
+            auto result = self.search(state_tensor, legal_moves, safe_evaluator, progressive_widening);
             
             // GIL is automatically reacquired when returning to Python
             return result;
@@ -191,27 +206,36 @@ PYBIND11_MODULE(improved_cpp_mcts, m) {
             // Create a copy of the board for the evaluator
             py::array_t<int> board_copy = board.attr("copy")().cast<py::array_t<int>>();
             
-            // Create our GIL-aware evaluator wrapper
-            PyEvaluatorWrapper eval_wrapper([evaluator, board_copy](const std::vector<float>& ignored) {
+            // Create a mutex for GIL safety
+            std::mutex gil_mutex;
+            
+            // Create a lambda to call the evaluator with the board copy
+            auto board_evaluator = [evaluator, board_copy, &gil_mutex](const std::vector<float>& ignored) -> std::pair<std::vector<float>, float> {
+                // Lock to ensure only one thread calls into Python at a time
+                std::lock_guard<std::mutex> lock(gil_mutex);
+                
+                // Acquire the GIL before calling into Python
+                py::gil_scoped_acquire acquire;
+                
                 try {
                     // Call the user's evaluator with the board copy
-                    return evaluator(board_copy).cast<std::pair<std::vector<float>, float>>();
+                    py::object result = evaluator(board_copy);
+                    auto policy = result.attr("__getitem__")(0).cast<std::vector<float>>();
+                    auto value = result.attr("__getitem__")(1).cast<float>();
+                    return {policy, value};
                 }
                 catch (py::error_already_set& e) {
-                    std::cerr << "Python error in evaluator: " << e.what() << std::endl;
+                    std::cerr << "Python error in board evaluator: " << e.what() << std::endl;
                     // Return a fallback value on error
-                    return std::make_pair(
-                        std::vector<float>(board_copy.size(), 1.0f / board_copy.size()),
-                        0.0f
-                    );
+                    return {std::vector<float>(board_copy.size(), 1.0f / board_copy.size()), 0.0f};
                 }
-            });
+            };
             
             // Release the GIL before starting C++ threads
             py::gil_scoped_release release;
             
             // Run the search
-            auto result = self.mcts.search(state_tensor, legal_moves, eval_wrapper);
+            auto result = self.mcts.search(state_tensor, legal_moves, board_evaluator);
             
             // GIL is automatically reacquired when returning to Python
             return result;

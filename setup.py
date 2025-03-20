@@ -61,6 +61,41 @@ mcts_module = Extension(
     libraries=libraries,
 )
 
+# Improved MCTS module with better GIL handling
+improved_mcts_module = Extension(
+    'alphazero.bindings.improved_cpp_mcts',
+    sources=[
+        'alphazero/bindings/improved_mcts_bindings.cpp',
+        'alphazero/core/mcts/mcts_node.cpp',
+        'alphazero/core/mcts/mcts.cpp',
+        'alphazero/core/mcts/transposition_table.cpp',
+        'alphazero/core/utils/thread_pool.cpp',
+        'alphazero/core/mcts/zobrist_hash.cpp'
+    ],
+    include_dirs=include_dirs,
+    language='c++',
+    extra_compile_args=extra_compile_args,
+    libraries=libraries,
+)
+
+# Batched MCTS module with leaf parallelization
+batched_mcts_module = Extension(
+    'alphazero.bindings.batched_cpp_mcts',
+    sources=[
+        'alphazero/bindings/batched_mcts_bindings.cpp',
+        'alphazero/core/mcts/mcts_node.cpp',
+        'alphazero/core/mcts/mcts.cpp',
+        'alphazero/core/mcts/transposition_table.cpp',
+        'alphazero/core/mcts/batch_evaluator.cpp',
+        'alphazero/core/utils/thread_pool.cpp',
+        'alphazero/core/mcts/zobrist_hash.cpp'
+    ],
+    include_dirs=include_dirs,
+    language='c++',
+    extra_compile_args=extra_compile_args,
+    libraries=libraries,
+)
+
 setup(
     name="alphazero",
     version="0.1.0",
@@ -84,6 +119,6 @@ setup(
         "matplotlib>=3.3.0",
         "tqdm>=4.50.0",
     ],
-    ext_modules=[gomoku_module, attack_defense_module, mcts_module],
+    ext_modules=[gomoku_module, attack_defense_module, mcts_module, improved_mcts_module, batched_mcts_module],
     cmdclass={'build_ext': build_ext},
 )

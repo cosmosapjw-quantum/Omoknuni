@@ -7,6 +7,8 @@
 #include <iostream>
 #include <unordered_set>
 #include <cstring>
+#include <atomic>
+#include <map>
 
 namespace alphazero {
 
@@ -406,6 +408,129 @@ float MCTS::simulate(
     return value;
 }
 
+int MCTS::simulate_batched(
+    const std::vector<float>& state_tensor,
+    BatchEvaluator& batch_evaluator,
+    std::vector<std::pair<MCTSNode*, int>>& path,
+    std::vector<float>& leaf_state) {
+    
+    // Start with the root node
+    MCTSNode* node = root_.get();
+    if (!node) {
+        std::cerr << "simulate_batched: ERROR - root node is null!" << std::endl;
+        return -1;
+    }
+    
+    std::vector<float> current_state = state_tensor;
+    int current_player = 1; // Assuming 1 is the first player
+    
+    path.clear();
+    path.push_back({node, -1});
+    
+    // Keep track of nodes where we added virtual loss
+    std::vector<MCTSNode*> virtual_loss_nodes;
+    
+    // Selection: Traverse the tree to a leaf node
+    const int MAX_DEPTH = 100; // Add a maximum depth to prevent infinite loops
+    int depth = 0;
+    while (node->is_expanded() && depth < MAX_DEPTH) {
+        depth++;
+        // Select the best child according to UCB
+        auto [move, child] = node->select_child(c_puct_);
+        if (!child) {
+            break;
+        }
+        
+        // Apply virtual loss if using multiple threads
+        if (num_threads_ > 1) {
+            child->add_virtual_loss(virtual_loss_weight_);
+            virtual_loss_nodes.push_back(child);
+        }
+        
+        // Apply the move to the current state
+        current_state = apply_move_to_tensor(current_state, move, current_player);
+        current_player = 3 - current_player; // Switch player (1 -> 2, 2 -> 1)
+        
+        // Add node and move to the path
+        path.push_back({child, move});
+        
+        // Update node
+        node = child;
+        
+        // Check transposition table if enabled
+        if (use_transposition_table_ && transposition_table_) {
+            // Calculate a hash for the current state
+            uint64_t hash = compute_state_hash(current_state, current_player);
+            
+            // Create a path hash set to check for cycles efficiently
+            std::unordered_set<MCTSNode*> path_nodes;
+            for (const auto& [path_node, _] : path) {
+                path_nodes.insert(path_node);
+            }
+            
+            // Look up in transposition table
+            MCTSNode* transposition_node = transposition_table_->lookup(hash);
+            if (transposition_node) {
+                // Check if this node is already in our path (cycle detection)
+                if (path_nodes.find(transposition_node) == path_nodes.end()) {
+                    // When using a transposition node, we need to clean up virtual loss
+                    // from the original node and apply it to the transposition node
+                    if (num_threads_ > 1) {
+                        // Remove virtual loss from the original node
+                        node->remove_virtual_loss(virtual_loss_weight_);
+                        // Remove from our tracking list
+                        if (!virtual_loss_nodes.empty()) {
+                            virtual_loss_nodes.pop_back();
+                        }
+                        
+                        // Add virtual loss to the transposition node
+                        transposition_node->add_virtual_loss(virtual_loss_weight_);
+                        virtual_loss_nodes.push_back(transposition_node);
+                    }
+                    
+                    node = transposition_node;
+                    path.back().first = node; // Replace the last node in path
+                }
+            }
+        }
+    }
+    
+    // Check for terminal state
+    bool is_terminal = current_state.empty(); // Example check - replace with actual logic
+    
+    if (is_terminal) {
+        // If we reached a terminal state, determine the winner (simplified example)
+        int winner = 0; // 0 for draw, 1 for first player, 2 for second player
+        float value;
+        
+        if (winner == 0) {
+            // Draw
+            value = 0.0f;
+        } else if (winner == current_player) {
+            // Current player wins
+            value = 1.0f;
+        } else {
+            // Current player loses
+            value = -1.0f;
+        }
+        
+        // Backup the value immediately for terminal states
+        node->backup(value);
+        
+        // Set leaf state for the caller
+        leaf_state = current_state;
+        
+        // Return -1 to indicate immediate evaluation (no batch request)
+        return -1;
+    }
+    
+    // For non-terminal states, queue the evaluation request
+    leaf_state = current_state;
+    
+    // Add the state to the batch evaluator and return the request ID
+    return batch_evaluator.enqueue_position(current_state);
+}
+
 std::vector<float> MCTS::apply_move_to_tensor(
     const std::vector<float>& state_tensor,
     int move,
@@ -476,6 +601,165 @@ std::vector<float> MCTS::apply_move_to_tensor(
     }
     
     return new_state;
+}
+
+std::unordered_map<int, float> MCTS::search_batched(
+    const std::vector<float>& state_tensor,
+    const std::vector<int>& legal_moves,
+    const std::function<std::vector<std::pair<std::vector<float>, float>>(const std::vector<std::vector<float>>&)>& batch_evaluator_func,
+    size_t batch_size,
+    size_t max_wait_ms,
+    bool progressive_widening) {
+    
+    // Make sure Zobrist hash is initialized with the correct board size
+    if (zobrist_hash_ && state_tensor.size() > 0) {
+        // Check if we need to initialize the Zobrist hash with correct board size
+        int board_size = static_cast<int>(std::sqrt(state_tensor.size()));
+        // Only consider the actual board elements, not any attached metadata
+        size_t board_elements = board_size * board_size;
+        if (board_elements <= state_tensor.size() && 
+            board_size != zobrist_hash_->get_board_size()) {
+            // Reinitialize with the new board size
+            zobrist_hash_ = std::make_unique<ZobristHash>(board_size, 2);
+        }
+    }
+    
+    // If root is not expanded, evaluate and expand it
+    if (!root_->is_expanded()) {
+        // Use the batch evaluator to evaluate the root state
+        auto batch_results = batch_evaluator_func({state_tensor});
+        
+        if (batch_results.empty()) {
+            std::cerr << "search_batched: ERROR - batch evaluator returned empty results for root!" << std::endl;
+            return {};
+        }
+        
+        auto [policy, value] = batch_results[0];
+        
+        // Apply progressive widening if needed
+        if (progressive_widening && legal_moves.size() > 50) {
+            // Create temporary mapping of moves to priors
+            std::vector<std::pair<int, float>> move_priors;
+            for (size_t i = 0; i < legal_moves.size(); ++i) {
+                int move = legal_moves[i];
+                float prior = (i < policy.size()) ? policy[i] : 0.0f;
+                move_priors.emplace_back(move, prior);
+            }
+            
+            // Sort by prior probability
+            std::sort(move_priors.begin(), move_priors.end(), 
+                [](const auto& a, const auto& b) { return a.second > b.second; });
+            
+            // Take only the top moves - ensure we don't go out of bounds
+            int width = std::min(50, static_cast<int>(std::sqrt(legal_moves.size())));
+            width = std::min(width, static_cast<int>(move_priors.size())); // Safety check
+            std::vector<int> top_moves;
+            std::vector<float> top_priors;
+            
+            for (int i = 0; i < width; ++i) {
+                top_moves.push_back(move_priors[i].first);
+                top_priors.push_back(move_priors[i].second);
+            }
+            
+            // Normalize priors
+            float sum_priors = std::accumulate(top_priors.begin(), top_priors.end(), 0.0f);
+            if (sum_priors > 0.0f) {
+                for (float& prior : top_priors) {
+                    prior /= sum_priors;
+                }
+            }
+            
+            // Expand root with top moves
+            expand_root(top_moves, top_priors);
+        } else {
+            // Expand root with all legal moves
+            expand_root(legal_moves, policy);
+        }
+        
+        // Add Dirichlet noise to root children
+        add_dirichlet_noise(legal_moves);
+    }
+    
+    // Create a BatchEvaluator to manage batched evaluation
+    BatchEvaluator batch_evaluator(batch_evaluator_func, batch_size, max_wait_ms);
+    batch_evaluator.start();
+    
+    // Track paths and leaf states for each simulation
+    std::vector<std::vector<std::pair<MCTSNode*, int>>> paths(num_simulations_);
+    std::vector<std::vector<float>> leaf_states(num_simulations_);
+    std::vector<int> request_ids(num_simulations_, -1);
+    
+    // Run simulations
+    if (num_threads_ > 1 && thread_pool_) {
+        // Parallel simulations
+        std::vector<std::future<int>> futures;
+        
+        // Make a copy of the state tensor to ensure thread safety
+        auto state_tensor_copy = state_tensor;
+        
+        for (int i = 0; i < num_simulations_; ++i) {
+            // Use capture by value for thread safety
+            std::vector<float> thread_state = state_tensor_copy;
+            futures.push_back(thread_pool_->enqueue([this, i, thread_state, &batch_evaluator, &paths, &leaf_states, &request_ids]() {
+                request_ids[i] = this->simulate_batched(thread_state, batch_evaluator, paths[i], leaf_states[i]);
+                return i;  // Return the simulation index
+            }));
+        }
+        
+        // Wait for all simulations to submit their evaluation requests
+        for (auto& future : futures) {
+            try {
+                // Get the result to ensure the future completes
+                future.get();
+            } catch (const std::exception& e) {
+                // Log the error and continue
+                std::cerr << "Error in simulation: " << e.what() << std::endl;
+            }
+        }
+        
+        // Process batch results and update the tree
+        // Create a new set of futures for processing results
+        std::vector<std::future<void>> result_futures;
+        
+        for (int i = 0; i < num_simulations_; ++i) {
+            if (request_ids[i] >= 0) {
+                result_futures.push_back(thread_pool_->enqueue([this, i, &batch_evaluator, &paths, &leaf_states, &request_ids]() {
+                    this->process_batch_result(request_ids[i], batch_evaluator, paths[i], leaf_states[i]);
+                }));
+            }
+        }
+        
+        // Wait for all result processing to complete
+        for (auto& future : result_futures) {
+            try {
+                future.get();
+            } catch (const std::exception& e) {
+                std::cerr << "Error in processing batch result: " << e.what() << std::endl;
+            }
+        }
+    } else {
+        // Sequential simulations
+        for (int i = 0; i < num_simulations_; ++i) {
+            // Submit the simulation
+            request_ids[i] = simulate_batched(state_tensor, batch_evaluator, paths[i], leaf_states[i]);
+            
+            // Process the result immediately if it's available (terminal state)
+            if (request_ids[i] < 0) {
+                continue;  // Terminal state was processed in simulate_batched
+            }
+            
+            // Process the batch result when it becomes available
+            process_batch_result(request_ids[i], batch_evaluator, paths[i], leaf_states[i]);
+        }
+    }
+    
+    // Ensure all evaluations are complete
+    batch_evaluator.stop();
+    
+    // Calculate and store probabilities
+    current_probabilities_ = calculate_probabilities(temperature_);
+    
+    return current_probabilities_;
 }
 
 std::unordered_map<int, float> MCTS::calculate_probabilities(float temperature) const {
@@ -568,6 +852,60 @@ void MCTS::add_dirichlet_noise(const std::vector<int>& legal_moves) {
 
 void MCTS::expand_root(const std::vector<int>& legal_moves, const std::vector<float>& priors) {
     root_->expand(legal_moves, priors);
+}
+
+void MCTS::process_batch_result(
+    int request_id,
+    BatchEvaluator& batch_evaluator,
+    std::vector<std::pair<MCTSNode*, int>>& path,
+    const std::vector<float>& leaf_state) {
+    
+    // Skip processing if request_id is invalid (e.g., from terminal state)
+    if (request_id < 0 || path.empty()) {
+        return;
+    }
+    
+    // Get the leaf node from the path
+    MCTSNode* node = path.back().first;
+    if (!node) {
+        std::cerr << "process_batch_result: ERROR - leaf node is null!" << std::endl;
+        return;
+    }
+    
+    // Get the evaluation result from the batch evaluator
+    auto [policy, value] = batch_evaluator.get_result(request_id);
+    
+    // Only proceed if the policy is valid
+    if (policy.empty()) {
+        std::cerr << "process_batch_result: ERROR - received empty policy!" << std::endl;
+        return;
+    }
+    
+    // Generate legal moves from the policy
+    std::vector<int> legal_moves;
+    for (size_t i = 0; i < policy.size(); ++i) {
+        if (policy[i] > 0.0f) {
+            legal_moves.push_back(i);
+        }
+    }
+    
+    // Expand the node with legal moves and prior probabilities
+    node->expand(legal_moves, policy);
+    
+    // Store in transposition table if enabled
+    if (use_transposition_table_ && transposition_table_) {
+        // Determine the current player (assuming the last player to move is 3 - current_player)
+        int current_player = path.size() % 2 == 0 ? 1 : 2;  // Simplified player tracking
+        
+        // Calculate a hash for the current state
+        uint64_t hash = compute_state_hash(leaf_state, current_player);
+        
+        // Store the node in the transposition table
+        transposition_table_->store(hash, node);
+    }
+    
+    // Backup: Update the values of all nodes in the path
+    node->backup(value);
 }
 
 size_t MCTS::count_nodes(const MCTSNode* node) const {
