@@ -6,6 +6,7 @@
 #include <chrono>
 #include <iostream>
 #include <unordered_set>
+#include <cstring>
 
 namespace alphazero {
 
@@ -158,10 +159,11 @@ std::unordered_map<int, float> MCTS::search(
             }));
         }
         
-        // Wait for all simulations to complete
+        // Wait for all simulations to complete and get their results
         for (auto& future : futures) {
             try {
-                future.wait();
+                // Get the result to ensure the future completes
+                future.get();
             } catch (const std::exception& e) {
                 // Log the error and continue
                 std::cerr << "Error in simulation: " << e.what() << std::endl;
@@ -279,6 +281,9 @@ float MCTS::simulate(
     path.clear();
     path.push_back({node, -1});
     
+    // Keep track of nodes where we added virtual loss
+    std::vector<MCTSNode*> virtual_loss_nodes;
+    
     // Selection: Traverse the tree to a leaf node
     const int MAX_DEPTH = 100; // Add a maximum depth to prevent infinite loops
     int depth = 0;
@@ -293,6 +298,7 @@ float MCTS::simulate(
         // Apply virtual loss if using multiple threads
         if (num_threads_ > 1) {
             child->add_virtual_loss(virtual_loss_weight_);
+            virtual_loss_nodes.push_back(child);
         }
         
         // Apply the move to the current state
@@ -322,6 +328,21 @@ float MCTS::simulate(
             if (transposition_node) {
                 // Check if this node is already in our path (cycle detection)
                 if (path_nodes.find(transposition_node) == path_nodes.end()) {
+                    // When using a transposition node, we need to clean up virtual loss
+                    // from the original node and apply it to the transposition node
+                    if (num_threads_ > 1) {
+                        // Remove virtual loss from the original node
+                        node->remove_virtual_loss(virtual_loss_weight_);
+                        // Remove from our tracking list
+                        if (!virtual_loss_nodes.empty()) {
+                            virtual_loss_nodes.pop_back();
+                        }
+                        
+                        // Add virtual loss to the transposition node
+                        transposition_node->add_virtual_loss(virtual_loss_weight_);
+                        virtual_loss_nodes.push_back(transposition_node);
+                    }
+                    
                     node = transposition_node;
                     path.back().first = node; // Replace the last node in path
                 }
@@ -379,6 +400,7 @@ float MCTS::simulate(
     }
     
     // Backup: Update the values of all nodes in the path
+    // The backup method will clear the virtual loss in each node
     node->backup(value);
     
     return value;

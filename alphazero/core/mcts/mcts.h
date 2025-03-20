@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <future>
 #include <cstdint>
+#include <cstring>
 
 #include "mcts_node.h"
 #include "transposition_table.h"
