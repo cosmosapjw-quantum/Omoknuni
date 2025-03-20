@@ -10,11 +10,52 @@ import time
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
+# Print the python path to help debug import issues
+print(f"Python path: {sys.path}")
+
+# Enable verbose importing
+print("Trying to import the module...")
+print(f"Current working directory: {os.getcwd()}")
+print(f"Looking for libraries in: {os.path.abspath(os.path.dirname(__file__))}")
+
+# List available .so files in bindings directory
+bindings_dir = os.path.join(os.path.dirname(__file__), "alphazero", "bindings")
+if os.path.exists(bindings_dir):
+    print(f"Contents of {bindings_dir}:")
+    for item in os.listdir(bindings_dir):
+        print(f"  - {item}")
+else:
+    print(f"{bindings_dir} does not exist.")
+
+# Try to import the module with detailed error tracking
 try:
+    print("Attempting to import MCTS...")
     from alphazero.bindings.cpp_mcts import MCTS
     print("Successfully imported MCTS")
 except ImportError as e:
     print(f"Error importing MCTS: {e}")
+    
+    # Show more detailed traceback
+    import traceback
+    traceback.print_exc()
+    
+    # Check if the module file exists
+    try:
+        import importlib.util
+        module_path = os.path.join(bindings_dir, "cpp_mcts.cpython-312-x86_64-linux-gnu.so")
+        if os.path.exists(module_path):
+            print(f"Module exists at: {module_path}")
+            # Try to load it directly
+            spec = importlib.util.spec_from_file_location("cpp_mcts", module_path)
+            if spec:
+                print("Successfully created module spec")
+            else:
+                print("Failed to create module spec")
+        else:
+            print(f"Module file not found: {module_path}")
+    except Exception as ee:
+        print(f"Error checking module: {ee}")
+    
     sys.exit(1)
 
 def simple_evaluator(state_tensor):

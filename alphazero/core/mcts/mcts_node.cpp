@@ -16,7 +16,7 @@ MCTSNode::MCTSNode(float prior, MCTSNode* parent, int move)
 }
 
 MCTSNode::~MCTSNode() {
-    // Children are automatically cleaned up by unique_ptr
+    // Standard destructor (smart pointers will handle children cleanup)
 }
 
 bool MCTSNode::is_expanded() const {
@@ -39,29 +39,37 @@ void MCTSNode::add_virtual_loss(int amount) {
 }
 
 void MCTSNode::remove_virtual_loss(int amount) {
-    virtual_loss.fetch_sub(amount);
+    // Check to avoid underflow
+    int current = virtual_loss.load();
+    if (current >= amount) {
+        virtual_loss.fetch_sub(amount);
+    } else {
+        virtual_loss.store(0);
+    }
 }
 
 float MCTSNode::ucb_score(int parent_visit_count, float c_puct) const {
-    // Effective visit count (including virtual loss)
-    int effective_visits = visit_count.load() + virtual_loss.load();
+    // Get the visit count including virtual loss
+    int visits = visit_count.load();
+    int effective_visits = visits + virtual_loss.load();
     
+    // Edge case: if no visits, return infinity to ensure exploration
     if (effective_visits == 0) {
-        // If no visits yet, use a high value to encourage exploration
         return std::numeric_limits<float>::max();
     }
     
-    // Exploitation term: Q(s,a)
+    // Calculate exploitation term (Q-value)
     float exploitation;
     {
         std::lock_guard<std::mutex> lock(value_mutex);
         exploitation = value_sum / static_cast<float>(effective_visits);
     }
     
-    // Exploration term: c_puct * P(s,a) * sqrt(N(s)) / (1 + N(s,a))
+    // Calculate exploration term (U-value)
     float exploration = c_puct * prior * std::sqrt(static_cast<float>(parent_visit_count)) / 
-                        (1.0f + static_cast<float>(effective_visits));
+                       (1.0f + static_cast<float>(effective_visits));
     
+    // Return the combined score
     return exploitation + exploration;
 }
 
@@ -72,7 +80,6 @@ std::pair<int, MCTSNode*> MCTSNode::select_child(float c_puct) {
         return {-1, nullptr};
     }
     
-    // Find moves with the highest UCB score
     float best_score = -std::numeric_limits<float>::max();
     std::vector<std::pair<int, MCTSNode*>> best_children;
     
@@ -87,12 +94,12 @@ std::pair<int, MCTSNode*> MCTSNode::select_child(float c_puct) {
             best_children.clear();
             best_children.emplace_back(move, child);
         } else if (std::abs(score - best_score) < 1e-6) {
-            // If scores are approximately equal, consider this child as well
+            // If scores are very close, consider them tied
             best_children.emplace_back(move, child);
         }
     }
     
-    // If multiple children have the same score, select one randomly
+    // If there are multiple best children, select randomly
     if (best_children.size() > 1) {
         int index = std::rand() % best_children.size();
         return best_children[index];
@@ -100,14 +107,19 @@ std::pair<int, MCTSNode*> MCTSNode::select_child(float c_puct) {
         return best_children[0];
     }
     
-    // This should never happen if children is not empty
+    // Should never reach here if children is not empty
     return {-1, nullptr};
 }
 
 void MCTSNode::expand(const std::vector<int>& moves, const std::vector<float>& priors) {
     std::lock_guard<std::mutex> lock(children_mutex);
     
-    // Create children for each move
+    // Already expanded
+    if (!children.empty()) {
+        return;
+    }
+    
+    // Create child nodes for each move
     for (size_t i = 0; i < moves.size(); ++i) {
         int move = moves[i];
         float move_prior = (i < priors.size()) ? priors[i] : 0.0f;
@@ -118,44 +130,18 @@ void MCTSNode::expand(const std::vector<int>& moves, const std::vector<float>& p
 }
 
 void MCTSNode::backup(float value) {
-    // Use an iterative approach instead of recursion to avoid deadlocks
-<<<<<<< HEAD
-=======
-    // std::cout << "MCTSNode::backup called with value " << value << std::endl;
->>>>>>> 10601aef4003f04bae6932ca18ab877ee6edb043
     MCTSNode* current = this;
     float current_value = value;
     
     while (current != nullptr) {
-<<<<<<< HEAD
-=======
-        // std::cout << "  Backup depth " << depth << ": updating node stats" << std::endl;
->>>>>>> 10601aef4003f04bae6932ca18ab877ee6edb043
-        // Update visit count atomically
         current->visit_count.fetch_add(1);
         
-        // Update value sum with mutex protection
         {
-<<<<<<< HEAD
             std::lock_guard<std::mutex> lock(current->value_mutex);
             current->value_sum += current_value;
             
-            // Remove any virtual loss that was applied during selection
-            // Always remove the virtual loss, even if it's zero, to prevent underflow
+            // Reset virtual loss to 0 instead of decrementing
             current->virtual_loss.store(0);
-=======
-            // std::cout << "  Backup depth " << depth << ": acquiring value_mutex" << std::endl;
-            std::lock_guard<std::mutex> lock(current->value_mutex);
-            current->value_sum += current_value;
-            // std::cout << "  Backup depth " << depth << ": updated value_sum to " << current->value_sum << std::endl;
-            
-            // Remove any virtual loss that was applied during selection
-            // Doing this within the same lock to avoid race conditions
-            if (current->virtual_loss.load() > 0) {
-                // std::cout << "  Backup depth " << depth << ": removing virtual loss" << std::endl;
-                current->virtual_loss.fetch_sub(1);
-            }
->>>>>>> 10601aef4003f04bae6932ca18ab877ee6edb043
         }
         
         // Store parent in a local variable before potentially modifying 'current'
@@ -163,25 +149,10 @@ void MCTSNode::backup(float value) {
         
         // Negate the value for alternating players
         current_value = -current_value;
-<<<<<<< HEAD
         
         // Move to parent
         current = parent;
     }
-=======
-        // std::cout << "  Backup depth " << depth << ": negated value to " << current_value << std::endl;
-        
-        // Move to parent
-        current = parent;
-        // if (current) {
-        //     std::cout << "  Backup depth " << depth << ": moving to parent node" << std::endl;
-        // } else {
-        //     std::cout << "  Backup depth " << depth << ": reached root, backup complete" << std::endl;
-        // }
-        depth++;
-    }
-    // std::cout << "MCTSNode::backup finished" << std::endl;
->>>>>>> 10601aef4003f04bae6932ca18ab877ee6edb043
 }
 
 MCTSNode* MCTSNode::get_child(int move) {
