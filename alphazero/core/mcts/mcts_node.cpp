@@ -153,11 +153,11 @@ void MCTSNode::backup(float value) {
         
         // Move to parent
         current = parent;
-        if (current) {
-            // std::cout << "  Backup depth " << depth << ": moving to parent node" << std::endl;
-        } else {
-            // std::cout << "  Backup depth " << depth << ": reached root, backup complete" << std::endl;
-        }
+        // if (current) {
+        //     std::cout << "  Backup depth " << depth << ": moving to parent node" << std::endl;
+        // } else {
+        //     std::cout << "  Backup depth " << depth << ": reached root, backup complete" << std::endl;
+        // }
         depth++;
     }
     // std::cout << "MCTSNode::backup finished" << std::endl;

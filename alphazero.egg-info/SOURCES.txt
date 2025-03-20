@@ -19,4 +19,5 @@ alphazero/core/game/gomoku.cpp
 alphazero/core/mcts/mcts.cpp
 alphazero/core/mcts/mcts_node.cpp
 alphazero/core/mcts/transposition_table.cpp
+alphazero/core/mcts/zobrist_hash.cpp
 alphazero/core/utils/thread_pool.cpp
