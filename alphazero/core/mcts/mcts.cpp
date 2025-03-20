@@ -450,7 +450,7 @@ std::vector<float> MCTS::apply_move_to_tensor(
             new_state.push_back(dist(gen));
         }
     } else {
-        std::cout << "apply_move_to_tensor: Invalid move index " << move << std::endl;
+        // std::cout << "apply_move_to_tensor: Invalid move index " << move << std::endl;
     }
     
     return new_state;

@@ -119,27 +119,27 @@ void MCTSNode::expand(const std::vector<int>& moves, const std::vector<float>& p
 
 void MCTSNode::backup(float value) {
     // Use an iterative approach instead of recursion to avoid deadlocks
-    std::cout << "MCTSNode::backup called with value " << value << std::endl;
+    // std::cout << "MCTSNode::backup called with value " << value << std::endl;
     MCTSNode* current = this;
     float current_value = value;
     int depth = 0;
     
     while (current != nullptr) {
-        std::cout << "  Backup depth " << depth << ": updating node stats" << std::endl;
+        // std::cout << "  Backup depth " << depth << ": updating node stats" << std::endl;
         // Update visit count atomically
         current->visit_count.fetch_add(1);
         
         // Update value sum with mutex protection
         {
-            std::cout << "  Backup depth " << depth << ": acquiring value_mutex" << std::endl;
+            // std::cout << "  Backup depth " << depth << ": acquiring value_mutex" << std::endl;
             std::lock_guard<std::mutex> lock(current->value_mutex);
             current->value_sum += current_value;
-            std::cout << "  Backup depth " << depth << ": updated value_sum to " << current->value_sum << std::endl;
+            // std::cout << "  Backup depth " << depth << ": updated value_sum to " << current->value_sum << std::endl;
             
             // Remove any virtual loss that was applied during selection
             // Doing this within the same lock to avoid race conditions
             if (current->virtual_loss.load() > 0) {
-                std::cout << "  Backup depth " << depth << ": removing virtual loss" << std::endl;
+                // std::cout << "  Backup depth " << depth << ": removing virtual loss" << std::endl;
                 current->virtual_loss.fetch_sub(1);
             }
         }
@@ -149,18 +149,18 @@ void MCTSNode::backup(float value) {
         
         // Negate the value for alternating players
         current_value = -current_value;
-        std::cout << "  Backup depth " << depth << ": negated value to " << current_value << std::endl;
+        // std::cout << "  Backup depth " << depth << ": negated value to " << current_value << std::endl;
         
         // Move to parent
         current = parent;
         if (current) {
-            std::cout << "  Backup depth " << depth << ": moving to parent node" << std::endl;
+            // std::cout << "  Backup depth " << depth << ": moving to parent node" << std::endl;
         } else {
-            std::cout << "  Backup depth " << depth << ": reached root, backup complete" << std::endl;
+            // std::cout << "  Backup depth " << depth << ": reached root, backup complete" << std::endl;
         }
         depth++;
     }
-    std::cout << "MCTSNode::backup finished" << std::endl;
+    // std::cout << "MCTSNode::backup finished" << std::endl;
 }
 
 MCTSNode* MCTSNode::get_child(int move) {
