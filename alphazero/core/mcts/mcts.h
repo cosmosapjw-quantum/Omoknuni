@@ -7,12 +7,16 @@
 #include <unordered_map>
 #include <future>
 #include <cstdint>
+#include <cstring>
 
 #include "mcts_node.h"
 #include "transposition_table.h"
 #include "zobrist_hash.h"
 #include "batch_evaluator.h"
+<<<<<<< HEAD
 #include "node_pool.h"
+=======
+>>>>>>> 42bb511ab1410a992c3fb9fc8a11235d555aea77
 #include "../utils/thread_pool.h"
 
 namespace alphazero {
@@ -109,10 +113,42 @@ public:
      * @param progressive_widening Whether to use progressive widening for large branching factors
      * @return Map of moves to visit probabilities
      */
+    /**
+     * Run the MCTS search from the current root.
+     * This is the standard MCTS search method.
+     * 
+     * @param state_tensor Tensor representation of the current game state
+     * @param legal_moves List of legal moves from the current state
+     * @param evaluator Function that takes a state tensor and returns (policy, value)
+     * @param progressive_widening Whether to use progressive widening for large branching factors
+     * @return Map of moves to visit probabilities
+     */
     std::unordered_map<int, float> search(
         const std::vector<float>& state_tensor,
         const std::vector<int>& legal_moves,
         const std::function<std::pair<std::vector<float>, float>(const std::vector<float>&)>& evaluator,
+        bool progressive_widening = false);
+        
+    /**
+     * Run the MCTS search using batched leaf evaluation.
+     * This method is optimized for neural network evaluation by collecting leaf nodes
+     * and evaluating them in batches, which can significantly improve performance
+     * when using a GPU-accelerated neural network.
+     * 
+     * @param state_tensor Tensor representation of the current game state
+     * @param legal_moves List of legal moves from the current state
+     * @param batch_evaluator Function that takes a batch of state tensors and returns (policy, value) pairs
+     * @param batch_size Maximum batch size for evaluation
+     * @param max_wait_ms Maximum time to wait for a full batch in milliseconds
+     * @param progressive_widening Whether to use progressive widening for large branching factors
+     * @return Map of moves to visit probabilities
+     */
+    std::unordered_map<int, float> search_batched(
+        const std::vector<float>& state_tensor,
+        const std::vector<int>& legal_moves,
+        const std::function<std::vector<std::pair<std::vector<float>, float>>(const std::vector<std::vector<float>>&)>& batch_evaluator,
+        size_t batch_size = 16,
+        size_t max_wait_ms = 10,
         bool progressive_widening = false);
     
     /**
@@ -165,6 +201,21 @@ public:
      */
     int get_num_threads() const { return num_threads_; }
     
+    /**
+     * Process the result of a batched simulation and update the MCTS tree.
+     * This method is called after a leaf node has been evaluated by the batch evaluator.
+     * 
+     * @param request_id The request ID returned by simulate_batched
+     * @param batch_evaluator The BatchEvaluator that processed the request
+     * @param path The path of nodes and moves from the root to the leaf
+     * @param leaf_state The state tensor at the leaf node
+     */
+    void process_batch_result(
+        int request_id,
+        BatchEvaluator& batch_evaluator,
+        std::vector<std::pair<MCTSNode*, int>>& path,
+        const std::vector<float>& leaf_state);
+
 private:
     // Root node of the search tree
     std::unique_ptr<MCTSNode> root_;
@@ -218,10 +269,35 @@ private:
      * @param path Path of moves taken during this simulation
      * @return Value of the leaf node
      */
+    /**
+     * Perform a single MCTS simulation.
+     * 
+     * @param state_tensor Tensor representation of the current game state
+     * @param evaluator Function that takes a state tensor and returns (policy, value)
+     * @param path Path of moves taken during this simulation
+     * @return Value of the leaf node
+     */
     float simulate(
         const std::vector<float>& state_tensor,
         const std::function<std::pair<std::vector<float>, float>(const std::vector<float>&)>& evaluator,
         std::vector<std::pair<MCTSNode*, int>>& path);
+        
+    /**
+     * Perform MCTS simulation with batched leaf evaluation.
+     * Instead of evaluating the leaf node directly, this method enqueues it for batch evaluation
+     * and returns the evaluation asynchronously.
+     * 
+     * @param state_tensor Tensor representation of the current game state
+     * @param batch_evaluator BatchEvaluator for evaluating leaf nodes in batches
+     * @param path Path of moves taken during this simulation
+     * @param leaf_state Output parameter to store the leaf state tensor
+     * @return Unique request ID for retrieving the evaluation result later
+     */
+    int simulate_batched(
+        const std::vector<float>& state_tensor,
+        BatchEvaluator& batch_evaluator,
+        std::vector<std::pair<MCTSNode*, int>>& path,
+        std::vector<float>& leaf_state);
     
     /**
      * Apply a move to a state tensor to get a new state tensor.

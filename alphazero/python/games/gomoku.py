@@ -163,3 +163,5 @@ class GomokuGame(GameWrapper):
             0,  # Use default seed
             self.use_pro_long_opening
         )
+        
+    # These methods are now directly calling the C++ implementation

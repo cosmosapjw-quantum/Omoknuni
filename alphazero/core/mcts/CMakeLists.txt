@@ -2,6 +2,8 @@ set(MCTS_SOURCES
     mcts_node.cpp
     mcts.cpp
     transposition_table.cpp
+    batch_evaluator.cpp
+    zobrist_hash.cpp
 )
 
 add_library(mcts STATIC ${MCTS_SOURCES})

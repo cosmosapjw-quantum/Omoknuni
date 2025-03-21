@@ -61,11 +61,42 @@ mcts_module = Extension(
     libraries=libraries,
 )
 
+<<<<<<< HEAD
 # New batch evaluator module
 batch_evaluator_module = Extension(
     'alphazero.bindings.batch_evaluator',
     sources=[
         'alphazero/bindings/batch_evaluator_bindings.cpp'
+=======
+# Improved MCTS module with better GIL handling
+improved_mcts_module = Extension(
+    'alphazero.bindings.improved_cpp_mcts',
+    sources=[
+        'alphazero/bindings/improved_mcts_bindings.cpp',
+        'alphazero/core/mcts/mcts_node.cpp',
+        'alphazero/core/mcts/mcts.cpp',
+        'alphazero/core/mcts/transposition_table.cpp',
+        'alphazero/core/utils/thread_pool.cpp',
+        'alphazero/core/mcts/zobrist_hash.cpp'
+    ],
+    include_dirs=include_dirs,
+    language='c++',
+    extra_compile_args=extra_compile_args,
+    libraries=libraries,
+)
+
+# Batched MCTS module with leaf parallelization
+batched_mcts_module = Extension(
+    'alphazero.bindings.batched_cpp_mcts',
+    sources=[
+        'alphazero/bindings/batched_mcts_bindings.cpp',
+        'alphazero/core/mcts/mcts_node.cpp',
+        'alphazero/core/mcts/mcts.cpp',
+        'alphazero/core/mcts/transposition_table.cpp',
+        'alphazero/core/mcts/batch_evaluator.cpp',
+        'alphazero/core/utils/thread_pool.cpp',
+        'alphazero/core/mcts/zobrist_hash.cpp'
+>>>>>>> 42bb511ab1410a992c3fb9fc8a11235d555aea77
     ],
     include_dirs=include_dirs,
     language='c++',
@@ -96,11 +127,15 @@ setup(
         "matplotlib>=3.3.0",
         "tqdm>=4.50.0",
     ],
+<<<<<<< HEAD
     ext_modules=[
         gomoku_module, 
         attack_defense_module, 
         mcts_module, 
         batch_evaluator_module
     ],
+=======
+    ext_modules=[gomoku_module, attack_defense_module, mcts_module, improved_mcts_module, batched_mcts_module],
+>>>>>>> 42bb511ab1410a992c3fb9fc8a11235d555aea77
     cmdclass={'build_ext': build_ext},
 )
