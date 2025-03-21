@@ -61,6 +61,18 @@ mcts_module = Extension(
     libraries=libraries,
 )
 
+# New batch evaluator module
+batch_evaluator_module = Extension(
+    'alphazero.bindings.batch_evaluator',
+    sources=[
+        'alphazero/bindings/batch_evaluator_bindings.cpp'
+    ],
+    include_dirs=include_dirs,
+    language='c++',
+    extra_compile_args=extra_compile_args,
+    libraries=libraries,
+)
+
 setup(
     name="alphazero",
     version="0.1.0",
@@ -84,6 +96,11 @@ setup(
         "matplotlib>=3.3.0",
         "tqdm>=4.50.0",
     ],
-    ext_modules=[gomoku_module, attack_defense_module, mcts_module],
+    ext_modules=[
+        gomoku_module, 
+        attack_defense_module, 
+        mcts_module, 
+        batch_evaluator_module
+    ],
     cmdclass={'build_ext': build_ext},
 )

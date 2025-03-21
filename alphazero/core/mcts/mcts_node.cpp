@@ -20,7 +20,7 @@ MCTSNode::~MCTSNode() {
 }
 
 bool MCTSNode::is_expanded() const {
-    std::lock_guard<std::mutex> lock(children_mutex);
+    std::lock_guard<std::recursive_mutex> lock(children_mutex);
     return !children.empty();
 }
 
@@ -30,7 +30,7 @@ float MCTSNode::value() const {
         return 0.0f;
     }
     
-    std::lock_guard<std::mutex> lock(value_mutex);
+    std::lock_guard<std::recursive_mutex> lock(value_mutex);
     return value_sum / static_cast<float>(visits);
 }
 
@@ -54,7 +54,7 @@ float MCTSNode::ucb_score(int parent_visit_count, float c_puct) const {
     // Exploitation term: Q(s,a)
     float exploitation;
     {
-        std::lock_guard<std::mutex> lock(value_mutex);
+        std::lock_guard<std::recursive_mutex> lock(value_mutex);
         exploitation = value_sum / static_cast<float>(effective_visits);
     }
     
@@ -66,7 +66,7 @@ float MCTSNode::ucb_score(int parent_visit_count, float c_puct) const {
 }
 
 std::pair<int, MCTSNode*> MCTSNode::select_child(float c_puct) {
-    std::lock_guard<std::mutex> lock(children_mutex);
+    std::lock_guard<std::recursive_mutex> lock(children_mutex);
     
     if (children.empty()) {
         return {-1, nullptr};
@@ -79,6 +79,9 @@ std::pair<int, MCTSNode*> MCTSNode::select_child(float c_puct) {
     for (const auto& child_pair : children) {
         int move = child_pair.first;
         MCTSNode* child = child_pair.second.get();
+        
+        // Skip null children
+        if (!child) continue;
         
         float score = child->ucb_score(visit_count.load(), c_puct);
         
@@ -105,7 +108,12 @@ std::pair<int, MCTSNode*> MCTSNode::select_child(float c_puct) {
 }
 
 void MCTSNode::expand(const std::vector<int>& moves, const std::vector<float>& priors) {
-    std::lock_guard<std::mutex> lock(children_mutex);
+    std::lock_guard<std::recursive_mutex> lock(children_mutex);
+    
+    // If already expanded, don't re-expand
+    if (!children.empty()) {
+        return;
+    }
     
     // Create children for each move
     for (size_t i = 0; i < moves.size(); ++i) {
@@ -119,27 +127,20 @@ void MCTSNode::expand(const std::vector<int>& moves, const std::vector<float>& p
 
 void MCTSNode::backup(float value) {
     // Use an iterative approach instead of recursion to avoid deadlocks
-    std::cout << "MCTSNode::backup called with value " << value << std::endl;
     MCTSNode* current = this;
     float current_value = value;
-    int depth = 0;
     
     while (current != nullptr) {
-        std::cout << "  Backup depth " << depth << ": updating node stats" << std::endl;
         // Update visit count atomically
         current->visit_count.fetch_add(1);
         
         // Update value sum with mutex protection
         {
-            std::cout << "  Backup depth " << depth << ": acquiring value_mutex" << std::endl;
-            std::lock_guard<std::mutex> lock(current->value_mutex);
+            std::lock_guard<std::recursive_mutex> lock(current->value_mutex);
             current->value_sum += current_value;
-            std::cout << "  Backup depth " << depth << ": updated value_sum to " << current->value_sum << std::endl;
             
             // Remove any virtual loss that was applied during selection
-            // Doing this within the same lock to avoid race conditions
             if (current->virtual_loss.load() > 0) {
-                std::cout << "  Backup depth " << depth << ": removing virtual loss" << std::endl;
                 current->virtual_loss.fetch_sub(1);
             }
         }
@@ -149,22 +150,14 @@ void MCTSNode::backup(float value) {
         
         // Negate the value for alternating players
         current_value = -current_value;
-        std::cout << "  Backup depth " << depth << ": negated value to " << current_value << std::endl;
         
         // Move to parent
         current = parent;
-        if (current) {
-            std::cout << "  Backup depth " << depth << ": moving to parent node" << std::endl;
-        } else {
-            std::cout << "  Backup depth " << depth << ": reached root, backup complete" << std::endl;
-        }
-        depth++;
     }
-    std::cout << "MCTSNode::backup finished" << std::endl;
 }
 
 MCTSNode* MCTSNode::get_child(int move) {
-    std::lock_guard<std::mutex> lock(children_mutex);
+    std::lock_guard<std::recursive_mutex> lock(children_mutex);
     
     auto it = children.find(move);
     if (it != children.end()) {
@@ -175,7 +168,7 @@ MCTSNode* MCTSNode::get_child(int move) {
 }
 
 std::unordered_map<int, int> MCTSNode::get_visit_counts() const {
-    std::lock_guard<std::mutex> lock(children_mutex);
+    std::lock_guard<std::recursive_mutex> lock(children_mutex);
     
     std::unordered_map<int, int> visit_counts;
     for (const auto& child_pair : children) {

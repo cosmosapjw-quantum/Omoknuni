@@ -27,14 +27,14 @@ public:
     // Node statistics
     std::atomic<int> visit_count;
     float value_sum;  // Changed from std::atomic<float> to regular float with mutex protection
-    mutable std::mutex value_mutex;  // Add a mutex to protect value_sum
+    mutable std::recursive_mutex value_mutex;  // Changed from std::mutex to std::recursive_mutex
     float prior;
     MCTSNode* parent;
     int move;
     
     // Children nodes
     std::unordered_map<int, std::unique_ptr<MCTSNode>> children;
-    mutable std::mutex children_mutex;
+    mutable std::recursive_mutex children_mutex;  // Changed from std::mutex to std::recursive_mutex
     
     // Virtual loss for parallelization
     std::atomic<int> virtual_loss;

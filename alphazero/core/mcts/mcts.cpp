@@ -48,10 +48,6 @@ MCTS::MCTS(int num_simulations,
     rng_.seed(seed);
 }
 
-MCTS::~MCTS() {
-    // All resources are automatically cleaned up by smart pointers
-}
-
 void MCTS::set_num_simulations(int num_simulations) {
     num_simulations_ = num_simulations;
 }
@@ -73,11 +69,68 @@ void MCTS::set_temperature(float temperature) {
     temperature_ = temperature;
 }
 
+std::unordered_map<int, float> MCTS::calculate_raw_probabilities(float temperature) const {
+    std::unordered_map<int, float> probabilities;
+    std::unordered_map<int, int> visits = root_->get_visit_counts();
+    
+    if (visits.empty()) {
+        return probabilities;
+    }
+    
+    // Special case for very small temperature (almost 0)
+    if (temperature < 0.01f) {
+        // Find the move with the most visits
+        auto max_it = std::max_element(visits.begin(), visits.end(),
+            [](const auto& a, const auto& b) { return a.second < b.second; });
+        
+        // Set probability 1.0 for the most visited move, 0.0 for others
+        for (const auto& [move, count] : visits) {
+            probabilities[move] = (move == max_it->first) ? 1.0f : 0.0f;
+        }
+    } else {
+        // Apply temperature
+        float sum = 0.0f;
+        try {
+            // Calculate temperature-adjusted visit counts
+            for (const auto& [move, count] : visits) {
+                float power = std::pow(static_cast<float>(count), 1.0f / temperature);
+                probabilities[move] = power;
+                sum += power;
+            }
+            
+            // Normalize
+            if (sum > 0.0f) {
+                for (auto& [move, prob] : probabilities) {
+                    prob /= sum;
+                }
+            }
+        } catch (const std::exception& e) {
+            // If we encounter numerical issues, fall back to normalizing the raw visit counts
+            sum = 0.0f;
+            for (const auto& [move, count] : visits) {
+                probabilities[move] = static_cast<float>(count);
+                sum += count;
+            }
+            
+            if (sum > 0.0f) {
+                for (auto& [move, prob] : probabilities) {
+                    prob /= sum;
+                }
+            }
+        }
+    }
+    
+    return probabilities;
+}
+
 std::unordered_map<int, float> MCTS::search(
     const std::vector<float>& state_tensor,
     const std::vector<int>& legal_moves,
     const std::function<std::pair<std::vector<float>, float>(const std::vector<float>&)>& evaluator,
     bool progressive_widening) {
+    
+    // Store the legal moves for future reference
+    legal_moves_ = legal_moves;  // Add this line to store legal moves
     
     // Make sure Zobrist hash is initialized with the correct board size
     if (zobrist_hash_ && state_tensor.size() > 0) {
@@ -94,16 +147,45 @@ std::unordered_map<int, float> MCTS::search(
     
     // If root is not expanded, evaluate and expand it
     if (!root_->is_expanded()) {
-        auto [policy, value] = evaluator(state_tensor);
+        // Root evaluation - always done sequentially
+        auto eval_result = evaluator(state_tensor);
+        auto& policy = eval_result.first;
+        
+        // IMPORTANT CHANGE: Filter policy to only include legal moves
+        std::vector<float> filtered_policy(policy.size(), 0.0f);
+        for (int move : legal_moves) {
+            if (move >= 0 && move < static_cast<int>(policy.size())) {
+                filtered_policy[move] = policy[move];
+            }
+        }
+        
+        // Normalize filtered policy
+        float sum = 0.0f;
+        for (float p : filtered_policy) {
+            sum += p;
+        }
+        
+        if (sum > 0.0f) {
+            for (float& p : filtered_policy) {
+                p /= sum;
+            }
+        } else {
+            // If all probabilities are zero, use uniform distribution for legal moves
+            for (int move : legal_moves) {
+                if (move >= 0 && move < static_cast<int>(filtered_policy.size())) {
+                    filtered_policy[move] = 1.0f / legal_moves.size();
+                }
+            }
+        }
         
         // Apply progressive widening if needed
         if (progressive_widening && legal_moves.size() > 50) {
             // Create temporary mapping of moves to priors
             std::vector<std::pair<int, float>> move_priors;
-            for (size_t i = 0; i < legal_moves.size(); ++i) {
-                int move = legal_moves[i];
-                float prior = (i < policy.size()) ? policy[i] : 0.0f;
-                move_priors.emplace_back(move, prior);
+            for (int move : legal_moves) {
+                if (move >= 0 && move < static_cast<int>(filtered_policy.size())) {
+                    move_priors.emplace_back(move, filtered_policy[move]);
+                }
             }
             
             // Sort by prior probability
@@ -129,55 +211,77 @@ std::unordered_map<int, float> MCTS::search(
                 }
             }
             
-            // Expand root with top moves
-            expand_root(top_moves, top_priors);
+            // Expand root with top moves only
+            root_->expand(top_moves, top_priors);
         } else {
-            // Expand root with all legal moves
-            expand_root(legal_moves, policy);
+            // IMPORTANT CHANGE: Expand root with legal moves only
+            root_->expand(legal_moves, filtered_policy);
         }
         
         // Add Dirichlet noise to root children
         add_dirichlet_noise(legal_moves);
     }
     
-    // Run simulations
     if (num_threads_ > 1 && thread_pool_) {
-        // Parallel simulations
-        std::vector<std::future<float>> futures;
+        // Improved parallel simulation approach
+        std::atomic<int> simulations_completed{0};
+        std::vector<std::future<void>> futures;
         
-        // Make a copy of the state tensor to ensure thread safety
-        auto state_tensor_copy = state_tensor;
-        
-        for (int i = 0; i < num_simulations_; ++i) {
-            // Use capture by value for thread safety
-            // Make a separate copy of the state tensor for each thread to avoid data races
-            std::vector<float> thread_state = state_tensor_copy;
-            futures.push_back(thread_pool_->enqueue([this, thread_state, evaluator]() {
+        // Use thread pool to run simulations in parallel
+        for (int i = 0; i < num_threads_; ++i) {
+            futures.push_back(thread_pool_->enqueue([this, &simulations_completed, &state_tensor, &evaluator]() {
                 std::vector<std::pair<MCTSNode*, int>> path;
-                return this->simulate(thread_state, evaluator, path);
+                
+                // Each thread runs simulations until the total count is reached
+                while (simulations_completed.fetch_add(1) < num_simulations_) {
+                    this->simulate(state_tensor, evaluator, path);
+                    path.clear();
+                }
             }));
         }
         
         // Wait for all simulations to complete
         for (auto& future : futures) {
-            try {
-                future.wait();
-            } catch (const std::exception& e) {
-                // Log the error and continue
-                std::cerr << "Error in simulation: " << e.what() << std::endl;
-            }
+            future.get();
         }
     } else {
         // Sequential simulations
         for (int i = 0; i < num_simulations_; ++i) {
-            std::vector<std::pair<MCTSNode*, int>> path;
-            simulate(state_tensor, evaluator, path);
+            try {
+                std::vector<std::pair<MCTSNode*, int>> path;
+                simulate(state_tensor, evaluator, path);
+            } catch (const std::exception& e) {
+                std::cerr << "Error in simulation: " << e.what() << std::endl;
+            }
         }
     }
     
-    // Calculate and store probabilities
-    current_probabilities_ = calculate_probabilities(temperature_);
+    // Calculate and store probabilities - filter to legal moves only
+    auto raw_probs = calculate_raw_probabilities(temperature_);
+    std::unordered_map<int, float> filtered_probs;
     
+    // Only include legal moves in the final probabilities
+    float total = 0.0f;
+    for (const auto& [move, prob] : raw_probs) {
+        if (std::find(legal_moves_.begin(), legal_moves_.end(), move) != legal_moves_.end()) {
+            filtered_probs[move] = prob;
+            total += prob;
+        }
+    }
+    
+    // Renormalize if needed
+    if (total > 0.0f) {
+        for (auto& [move, prob] : filtered_probs) {
+            prob /= total;
+        }
+    } else if (!legal_moves_.empty()) {
+        // Fallback to uniform over legal moves
+        for (int move : legal_moves_) {
+            filtered_probs[move] = 1.0f / legal_moves_.size();
+        }
+    }
+    
+    current_probabilities_ = filtered_probs;
     return current_probabilities_;
 }
 
@@ -185,18 +289,41 @@ int MCTS::select_move(float temperature) {
     // Use provided temperature instead of the object's temperature
     auto probs = calculate_probabilities(temperature);
     
+    // IMPORTANT CHANGE: Filter probabilities to only include legal moves
+    std::unordered_map<int, float> legal_probs;
+    float total_prob = 0.0f;
+    
+    for (const auto& [move, prob] : probs) {
+        if (std::find(legal_moves_.begin(), legal_moves_.end(), move) != legal_moves_.end()) {
+            legal_probs[move] = prob;
+            total_prob += prob;
+        }
+    }
+    
+    // Re-normalize if needed
+    if (total_prob > 0.0f) {
+        for (auto& [move, prob] : legal_probs) {
+            prob /= total_prob;
+        }
+    } else if (!legal_moves_.empty()) {
+        // If no legal move has probability, use uniform
+        for (int move : legal_moves_) {
+            legal_probs[move] = 1.0f / legal_moves_.size();
+        }
+    }
+    
+    // Check if we have any moves
+    if (legal_probs.empty()) {
+        return -1;
+    }
+    
     // Extract moves and probabilities for sampling
     std::vector<int> moves;
     std::vector<float> probabilities;
     
-    for (const auto& [move, prob] : probs) {
+    for (const auto& [move, prob] : legal_probs) {
         moves.push_back(move);
         probabilities.push_back(prob);
-    }
-    
-    // Check if we have any moves
-    if (moves.empty()) {
-        return -1;
     }
     
     // Prepare discrete distribution for sampling
@@ -223,7 +350,7 @@ void MCTS::update_with_move(int move) {
         // Copy the child's children to the new root
         // This is a shallow copy - the children are moved from the old tree
         {
-            std::lock_guard<std::mutex> lock(child->children_mutex);
+            std::lock_guard<std::recursive_mutex> lock(child->children_mutex);
             new_root->children = std::move(child->children);
         }
         
@@ -269,7 +396,6 @@ float MCTS::simulate(
     // Start with the root node
     MCTSNode* node = root_.get();
     if (!node) {
-        std::cerr << "simulate: ERROR - root node is null!" << std::endl;
         return 0.0f;
     }
     
@@ -282,106 +408,242 @@ float MCTS::simulate(
     // Selection: Traverse the tree to a leaf node
     const int MAX_DEPTH = 100; // Add a maximum depth to prevent infinite loops
     int depth = 0;
-    while (node->is_expanded() && depth < MAX_DEPTH) {
+    
+    // Using a loop structure that better avoids holding locks across calls
+    while (depth < MAX_DEPTH) {
         depth++;
-        // Select the best child according to UCB
-        auto [move, child] = node->select_child(c_puct_);
-        if (!child) {
-            break;
+        
+        // First, check if node is expanded without holding long-term locks
+        bool is_expanded = false;
+        {
+            std::lock_guard<std::recursive_mutex> lock(node->children_mutex);
+            is_expanded = !node->children.empty();
         }
         
-        // Apply virtual loss if using multiple threads
+        if (!is_expanded) {
+            break; // Not expanded, we'll expand it below
+        }
+        
+        // Select the best child, carefully managing locks
+        int best_move = -1;
+        MCTSNode* best_child = nullptr;
+        
+        // Get all children once with a single lock
+        std::vector<std::pair<int, MCTSNode*>> children_copy;
+        {
+            std::lock_guard<std::recursive_mutex> lock(node->children_mutex);
+            
+            // Copy the relevant child information to reduce lock duration
+            for (const auto& [move, child_ptr] : node->children) {
+                if (child_ptr) {
+                    // IMPORTANT: Only include children corresponding to legal moves
+                    // We're at an intermediate state here, so we need domain-specific logic
+                    // to determine legal moves at this point - for the root we have legal_moves_
+                    children_copy.emplace_back(move, child_ptr.get());
+                }
+            }
+        }
+        
+        // Find best child without holding the lock
+        if (!children_copy.empty()) {
+            float best_score = -std::numeric_limits<float>::max();
+            
+            for (const auto& [move, child] : children_copy) {
+                float score = child->ucb_score(node->visit_count.load(), c_puct_);
+                
+                if (score > best_score) {
+                    best_score = score;
+                    best_move = move;
+                    best_child = child;
+                }
+            }
+        }
+        
+        if (!best_child) {
+            break; // No suitable child found
+        }
+        
+        // Apply virtual loss - only do this after we're sure about the selected child
         if (num_threads_ > 1) {
-            child->add_virtual_loss(virtual_loss_weight_);
+            best_child->add_virtual_loss(virtual_loss_weight_);
         }
         
         // Apply the move to the current state
-        current_state = apply_move_to_tensor(current_state, move, current_player);
+        current_state = apply_move_to_tensor(current_state, best_move, current_player);
         current_player = 3 - current_player; // Switch player (1 -> 2, 2 -> 1)
         
         // Add node and move to the path
-        path.push_back({child, move});
+        path.push_back({best_child, best_move});
         
         // Update node
-        node = child;
+        node = best_child;
         
-        // Check transposition table if enabled
+        // Check transposition table if enabled - using local variables to reduce lock duration
         if (use_transposition_table_ && transposition_table_) {
-            
-            // Calculate a hash for the current state
             uint64_t hash = compute_state_hash(current_state, current_player);
             
-            // Create a path hash set to check for cycles efficiently
+            // Create path hash set to check for cycles efficiently
             std::unordered_set<MCTSNode*> path_nodes;
             for (const auto& [path_node, _] : path) {
                 path_nodes.insert(path_node);
             }
             
-            // Look up in transposition table
+            // Lookup transposition - get result once, holding lock briefly
             MCTSNode* transposition_node = transposition_table_->lookup(hash);
-            if (transposition_node) {
-                // Check if this node is already in our path (cycle detection)
-                if (path_nodes.find(transposition_node) == path_nodes.end()) {
-                    node = transposition_node;
-                    path.back().first = node; // Replace the last node in path
-                }
+            
+            if (transposition_node && path_nodes.find(transposition_node) == path_nodes.end()) {
+                node = transposition_node;
+                path.back().first = node; // Replace the last node in path
             }
         }
     }
     
     // Evaluation: If we're not at a terminal state, evaluate and expand the node
-    float value;
-    // This is a placeholder for terminal state detection - initialize with a meaningful value
-    // In a real implementation, this would be computed based on the game state
-    bool is_terminal = current_state.empty(); // Example check - replace with actual logic
+    float value = 0.0f;
+    
+    // Terminal state detection logic would go here
+    bool is_terminal = false; // Proper implementation would check game state
+    
     if (!is_terminal) {
-        // Evaluate the current state
-        auto [policy, state_value] = evaluator(current_state);
+        // Evaluate the current state - do this outside of any locks
+        std::pair<std::vector<float>, float> eval_result;
+        try {
+            eval_result = evaluator(current_state);
+        }
+        catch (const std::exception& e) {
+            std::cerr << "Error during evaluation: " << e.what() << std::endl;
+            return 0.0f;
+        }
         
-        // Get legal moves
-        // This is a placeholder - the actual legal move generation would depend on the game state
-        std::vector<int> legal_moves;
+        auto& [policy, state_value] = eval_result;
+        
+        // IMPORTANT: Determine legal moves at this state
+        // Here we filter potential legal moves based on positive policy values
+        // In a real implementation, you would track legal moves through state transitions
+        std::vector<int> legal_moves_at_state;
+        std::vector<float> filtered_policy;
+        
         for (size_t i = 0; i < policy.size(); ++i) {
             if (policy[i] > 0.0f) {
-                legal_moves.push_back(i);
+                legal_moves_at_state.push_back(i);
+                filtered_policy.push_back(policy[i]);
             }
         }
         
-        // Expand the node with legal moves and prior probabilities
-        node->expand(legal_moves, policy);
+        // Normalize the filtered policy
+        float sum_policy = std::accumulate(filtered_policy.begin(), filtered_policy.end(), 0.0f);
+        if (sum_policy > 0.0f) {
+            for (float& p : filtered_policy) {
+                p /= sum_policy;
+            }
+        } else if (!legal_moves_at_state.empty()) {
+            // If all zero, use uniform
+            float uniform_prob = 1.0f / legal_moves_at_state.size();
+            filtered_policy.resize(legal_moves_at_state.size(), uniform_prob);
+        }
         
-        // Store in transposition table if enabled
-        if (use_transposition_table_ && transposition_table_) {
-            // Calculate a hash for the current state using our helper function
-            uint64_t hash = compute_state_hash(current_state, current_player);
+        // Expand the node - with careful lock management
+        bool already_expanded = false;
+        {
+            std::lock_guard<std::recursive_mutex> lock(node->children_mutex);
+            already_expanded = !node->children.empty();
             
-            // Store the node in the transposition table
+            if (!already_expanded && !legal_moves_at_state.empty()) {
+                // Only expand if not already expanded and we have legal moves
+                for (size_t i = 0; i < legal_moves_at_state.size(); ++i) {
+                    int move = legal_moves_at_state[i];
+                    float move_prior = (i < filtered_policy.size()) ? filtered_policy[i] : 0.0f;
+                    
+                    node->children[move] = std::make_unique<MCTSNode>(move_prior, node, move);
+                }
+            }
+        }
+        
+        // Store in transposition table if enabled - do this after expansion
+        if (use_transposition_table_ && transposition_table_ && !already_expanded) {
+            uint64_t hash = compute_state_hash(current_state, current_player);
             transposition_table_->store(hash, node);
         }
         
         // Use the evaluated value
         value = state_value;
-    } else {
-        // If we reached a terminal state, determine the winner
-        // This is a placeholder - the actual winner determination would depend on the game state
-        int winner = 0; // 0 for draw, 1 for first player, 2 for second player
-        
-        if (winner == 0) {
-            // Draw
-            value = 0.0f;
-        } else if (winner == current_player) {
-            // Current player wins
-            value = 1.0f;
-        } else {
-            // Current player loses
-            value = -1.0f;
-        }
     }
     
     // Backup: Update the values of all nodes in the path
-    node->backup(value);
+    // This implementation avoids recursive calls by using a loop
+    for (auto it = path.rbegin(); it != path.rend(); ++it) {
+        MCTSNode* path_node = it->first;
+        if (path_node) {
+            // Update visit count atomically
+            path_node->visit_count.fetch_add(1);
+            
+            // Update value sum with locking
+            {
+                std::lock_guard<std::recursive_mutex> lock(path_node->value_mutex);
+                path_node->value_sum += value;
+                
+                // Remove virtual loss if applicable
+                if (num_threads_ > 1 && path_node->virtual_loss.load() > 0) {
+                    path_node->virtual_loss.fetch_sub(1);
+                }
+            }
+            
+            // Negate value for alternating players
+            value = -value;
+        }
+    }
     
     return value;
+}
+
+uint64_t MCTS::compute_state_hash(const std::vector<float>& state_tensor, int current_player) const {
+    if (state_tensor.empty()) {
+        return 0;
+    }
+    
+    // Try to extract stored hash from the state tensor first if it exists
+    // Detect if the tensor has extra elements for storing the hash
+    int board_size = static_cast<int>(std::sqrt(state_tensor.size()));
+    if (board_size * board_size < static_cast<int>(state_tensor.size()) && 
+        static_cast<int>(state_tensor.size()) >= board_size * board_size + sizeof(uint64_t) / sizeof(float)) {
+        
+        // Extra space might contain hash value
+        uint64_t hash = 0;
+        const float* ptr = state_tensor.data() + board_size * board_size;
+        memcpy(&hash, ptr, sizeof(hash));
+        
+        // If the hash is valid (non-zero), return it directly
+        if (hash != 0) {
+            return hash;
+        }
+    }
+    
+    // If no stored hash or invalid hash, compute it using Zobrist if available
+    if (zobrist_hash_) {
+        return zobrist_hash_->compute_hash(state_tensor, current_player);
+    }
+    
+    // Fallback to FNV-1a algorithm if Zobrist hash is not available
+    const uint64_t FNV_PRIME = 1099511628211ULL;
+    const uint64_t FNV_OFFSET = 14695981039346656037ULL;
+    
+    uint64_t hash = FNV_OFFSET;
+    
+    // Only hash the board part, not any extra metadata
+    size_t board_elements = board_size * board_size;
+    for (size_t i = 0; i < std::min(state_tensor.size(), board_elements); ++i) {
+        // Convert float to byte representation for more stable hashing
+        uint8_t byte_val = static_cast<uint8_t>(
+            static_cast<int>(state_tensor[i] * 255.0f) & 0xFF);
+        hash ^= byte_val;
+        hash *= FNV_PRIME;
+    }
+    
+    // Add the current player to the hash to distinguish same board with different players
+    hash ^= static_cast<uint64_t>(current_player);
+    hash *= FNV_PRIME;
+    
+    return hash;
 }
 
 std::vector<float> MCTS::apply_move_to_tensor(
@@ -560,7 +822,7 @@ size_t MCTS::count_nodes(const MCTSNode* node) const {
     
     // First, lock and copy pointers to all children
     {
-        std::lock_guard<std::mutex> lock(node->children_mutex);
+        std::lock_guard<std::recursive_mutex> lock(node->children_mutex);
         for (const auto& child_pair : node->children) {
             if (child_pair.second) {
                 stack.push_back(child_pair.second.get());
@@ -575,7 +837,7 @@ size_t MCTS::count_nodes(const MCTSNode* node) const {
         stack.pop_back();
         
         if (current) {
-            std::lock_guard<std::mutex> lock(current->children_mutex);
+            std::lock_guard<std::recursive_mutex> lock(current->children_mutex);
             for (const auto& child_pair : current->children) {
                 if (child_pair.second) {
                     stack.push_back(child_pair.second.get());

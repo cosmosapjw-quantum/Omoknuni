@@ -68,16 +68,16 @@ private:
     std::queue<std::function<void()>> tasks;
     
     // Synchronization
-    mutable std::mutex queue_mutex;
-    std::condition_variable condition;
+    mutable std::recursive_mutex queue_mutex;  // Changed from std::mutex
+    std::condition_variable_any condition;
     
     // Shutdown flag
     std::atomic<bool> stop;
     
     // Number of active tasks
     std::atomic<size_t> active_tasks;
-    std::condition_variable done_condition;
-    mutable std::mutex done_mutex;
+    std::condition_variable_any done_condition;
+    mutable std::recursive_mutex done_mutex;  // Changed from std::mutex
 };
 
 // Implementation of the enqueue template method
@@ -97,7 +97,7 @@ auto ThreadPool::enqueue(F&& f, Args&&... args)
     
     // Add the task to the queue
     {
-        std::lock_guard<std::mutex> lock(queue_mutex);
+        std::lock_guard<std::recursive_mutex> lock(queue_mutex);
         
         // Don't allow enqueueing after stopping the pool
         if (stop) {
@@ -113,7 +113,7 @@ auto ThreadPool::enqueue(F&& f, Args&&... args)
             
             // Decrement the active task count and notify if all tasks are done
             {
-                std::lock_guard<std::mutex> lock(done_mutex);
+                std::lock_guard<std::recursive_mutex> lock(done_mutex);
                 active_tasks--;
                 if (active_tasks == 0 && tasks.empty()) {
                     done_condition.notify_all();

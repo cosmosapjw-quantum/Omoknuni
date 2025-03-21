@@ -74,7 +74,7 @@ protected:
     std::unordered_map<uint64_t, MCTSNode*> table_;
     
     // Mutex for thread safety
-    mutable std::mutex mutex_;
+    mutable std::recursive_mutex mutex_;  // Changed from std::mutex to std::recursive_mutex
 };
 
 /**

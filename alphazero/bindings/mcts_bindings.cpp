@@ -7,6 +7,7 @@
 #include "../core/mcts/mcts.h"
 #include "../core/mcts/mcts_node.h"
 #include "../core/mcts/transposition_table.h"
+#include "../core/mcts/batch_evaluator.h"
 
 namespace py = pybind11;
 using namespace alphazero;
@@ -39,7 +40,6 @@ PYBIND11_MODULE(cpp_mcts, m) {
              py::arg("parent") = nullptr,
              py::arg("move") = -1)
         .def_readonly("visit_count", &MCTSNode::visit_count)
-        .def_readonly("value_sum", &MCTSNode::value_sum)
         .def_readonly("prior", &MCTSNode::prior)
         .def_readonly("move", &MCTSNode::move)
         .def("value", &MCTSNode::value)
@@ -98,7 +98,7 @@ PYBIND11_MODULE(cpp_mcts, m) {
              py::arg("use_transposition_table") = true,
              py::arg("transposition_table_size") = 1000000,
              py::arg("num_threads") = 1)
-    .def("search", [](GomokuMCTS& self, py::array_t<int> board, const std::vector<int>& legal_moves, 
+        .def("search", [](GomokuMCTS& self, py::array_t<int> board, const std::vector<int>& legal_moves, 
                          const std::function<std::pair<std::vector<float>, float>(const std::vector<int>&)>& evaluator) {
             // Convert numpy array to vector more safely
             py::buffer_info buf = board.request();
@@ -152,5 +152,8 @@ PYBIND11_MODULE(cpp_mcts, m) {
         })
         .def("get_num_simulations", [](GomokuMCTS& self) {
             return self.mcts.get_num_simulations();
+        })
+        .def("get_c_puct", [](GomokuMCTS& self) {
+            return self.mcts.get_c_puct();
         });
 }

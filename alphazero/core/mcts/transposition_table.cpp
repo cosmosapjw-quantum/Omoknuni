@@ -1,3 +1,5 @@
+#include <random>
+
 #include "transposition_table.h"
 #include "mcts_node.h"
 
@@ -12,7 +14,7 @@ TranspositionTable::~TranspositionTable() {
 }
 
 MCTSNode* TranspositionTable::lookup(uint64_t hash_value) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     auto it = table_.find(hash_value);
     if (it != table_.end()) {
@@ -23,31 +25,40 @@ MCTSNode* TranspositionTable::lookup(uint64_t hash_value) {
 }
 
 void TranspositionTable::store(uint64_t hash_value, MCTSNode* node) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    if (node == nullptr) {
+        return; // Don't store null nodes
+    }
     
-    // If table is full, randomly evict an existing entry
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    
+    // If table is full, evict an existing entry
     if (table_.size() >= max_size_) {
+        // Generate a random index (thread-safe)
+        static thread_local std::mt19937 gen(std::random_device{}());
+        std::uniform_int_distribution<size_t> dist(0, table_.size() - 1);
+        
         // Find a random entry to evict
         auto it = table_.begin();
-        std::advance(it, rand() % table_.size());
+        std::advance(it, dist(gen) % table_.size()); // Ensure we don't go out of bounds
         table_.erase(it);
     }
     
+    // Store the new node
     table_[hash_value] = node;
 }
 
 void TranspositionTable::clear() {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     table_.clear();
 }
 
 size_t TranspositionTable::size() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return table_.size();
 }
 
 bool TranspositionTable::contains(uint64_t hash_value) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return table_.find(hash_value) != table_.end();
 }
 
@@ -58,7 +69,7 @@ LRUTranspositionTable::LRUTranspositionTable(size_t max_size)
 }
 
 MCTSNode* LRUTranspositionTable::lookup(uint64_t hash_value) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     auto it = table_.find(hash_value);
     if (it != table_.end()) {
@@ -99,21 +110,20 @@ void LRUTranspositionTable::store(uint64_t hash_value, MCTSNode* node) {
         return; // Don't store null nodes
     }
     
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
-    // If hash already exists, update it and move to front of LRU list
+    // If hash already exists, update it
     auto it = table_.find(hash_value);
     if (it != table_.end()) {
-        // Only update if the new node has more information (more visits)
+        // Only update if the new node has more information
         if (node->visit_count.load() > it->second->visit_count.load()) {
             it->second = node;
         }
         
-        // Always move to front of LRU list regardless of whether we updated the node
+        // Update LRU position regardless
         auto lru_map_it = lru_map_.find(hash_value);
         if (lru_map_it != lru_map_.end()) {
-            auto lru_it = lru_map_it->second;
-            lru_list_.erase(lru_it);
+            lru_list_.erase(lru_map_it->second);
             lru_list_.push_front(hash_value);
             lru_map_[hash_value] = lru_list_.begin();
         } else {
@@ -126,20 +136,11 @@ void LRUTranspositionTable::store(uint64_t hash_value, MCTSNode* node) {
     }
     
     // If table is full, remove the least recently used entry
-    if (table_.size() >= max_size_) {
-        // Make sure the list is not empty
-        if (!lru_list_.empty()) {
-            uint64_t lru_hash = lru_list_.back();
-            table_.erase(lru_hash);
-            lru_map_.erase(lru_hash);
-            lru_list_.pop_back();
-        } else {
-            // If the list is empty but the table is full, something is wrong
-            // Let's clear everything to be safe
-            table_.clear();
-            lru_map_.clear();
-            lru_list_.clear();
-        }
+    if (table_.size() >= max_size_ && !lru_list_.empty()) {
+        uint64_t lru_hash = lru_list_.back();
+        table_.erase(lru_hash);
+        lru_map_.erase(lru_hash);
+        lru_list_.pop_back();
     }
     
     // Add the new entry
@@ -149,7 +150,7 @@ void LRUTranspositionTable::store(uint64_t hash_value, MCTSNode* node) {
 }
 
 void LRUTranspositionTable::clear() {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     table_.clear();
     lru_list_.clear();
     lru_map_.clear();
