@@ -2,7 +2,7 @@
 #include "games/chess/chess_state.h"
 #include "games/chess/chess_rules.h"
 #include "games/chess/chess960.h"
-#include "utils/attack_defense_module.h"  // For GPU attack/defense computation
+// #include "utils/attack_defense_module.h"  // Removed - will be implemented in neural network tasks
 #include <sstream>
 #include <iostream>
 #include <iomanip>

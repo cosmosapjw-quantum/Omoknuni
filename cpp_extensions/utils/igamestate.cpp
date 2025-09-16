@@ -1,5 +1,5 @@
 // src/core/igamestate.cpp
-#include "core/igamestate.h"
+#include "igamestate.h"
 
 namespace alphazero {
 namespace core {

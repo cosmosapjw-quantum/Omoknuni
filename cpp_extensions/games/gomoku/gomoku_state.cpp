@@ -1,9 +1,9 @@
 // File: gomoku_state.cpp
 #include "games/gomoku/gomoku_state.h"
 #include "games/gomoku/gomoku_rules.h"     // For rules_engine_
-#include "core/illegal_move_exception.h" // For core::IllegalMoveException
+#include "illegal_move_exception.h" // For core::IllegalMoveException
 // #include "mcts/aggressive_memory_manager.h" // Removed - not needed
-#include "utils/attack_defense_module.h"  // For attack/defense planes
+// #include "utils/attack_defense_module.h"  // Removed - will be implemented in neural network tasks
 #include <stdexcept> // For std::invalid_argument, std::out_of_range
 #include <iostream>  // For debugging (optional, remove in production)
 #include <numeric>   // For std::accumulate, std::gcd
@@ -464,32 +464,7 @@ std::vector<std::vector<std::vector<float>>> GomokuState::getEnhancedTensorRepre
 #endif
                 
                 // CPU fallback
-                auto attack_defense_module = std::make_unique<alphazero::GomokuAttackDefenseModule>(board_size_);
-                std::vector<std::unique_ptr<core::IGameState>> states_batch;
-                states_batch.push_back(this->clone());
-                
-                auto [attack_planes, defense_planes] = attack_defense_module->compute_planes(states_batch);
-                
-                // Verify the attack/defense planes have the correct size
-                if (!attack_planes.empty() && attack_planes[0].size() == board_size_ &&
-                    !attack_planes[0].empty() && attack_planes[0][0].size() == board_size_) {
-                    // Copy attack plane to channel 18
-                    for (int r = 0; r < board_size_; ++r) {
-                        for (int c = 0; c < board_size_; ++c) {
-                            tensor[18][r][c] = attack_planes[0][r][c];
-                        }
-                    }
-                }
-                
-                if (!defense_planes.empty() && defense_planes[0].size() == board_size_ &&
-                    !defense_planes[0].empty() && defense_planes[0][0].size() == board_size_) {
-                    // Copy defense plane to channel 19
-                    for (int r = 0; r < board_size_; ++r) {
-                        for (int c = 0; c < board_size_; ++c) {
-                            tensor[19][r][c] = defense_planes[0][r][c];
-                        }
-                    }
-                }
+                // auto attack_defense_module = std::make_unique<alphazero::GomokuAttackDefenseModule>(board_size_); // Removed - will be implemented in neural network tasks
             }
         } catch (const std::exception& e) {
             // If attack/defense computation fails, just leave those channels as zeros

@@ -1,5 +1,5 @@
 // src/core/game_export.cpp
-#include "core/game_export.h"
+#include "game_export.h"
 #include <stdexcept>
 #include <sstream>
 #include <fstream>

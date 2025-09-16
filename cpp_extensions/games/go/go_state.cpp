@@ -1,6 +1,6 @@
 // src/games/go/go_state.cpp
 #include "games/go/go_state.h"
-#include "utils/attack_defense_module.h"  // For GPU attack/defense computation
+// #include "utils/attack_defense_module.h"  // Removed - will be implemented in neural network tasks
 #include <iostream>
 #include <algorithm>
 #include <sstream>

@@ -15,6 +15,9 @@ set(UTILS_SOURCES
 # Create static library for utilities (shared by other modules)
 add_library(utils_core STATIC ${UTILS_SOURCES})
 
+# Enable Position Independent Code for static library
+set_target_properties(utils_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # Link libraries
 target_link_libraries(utils_core PUBLIC OpenMP::OpenMP_CXX)
 

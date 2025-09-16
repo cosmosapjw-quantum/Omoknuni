@@ -7,14 +7,14 @@
 #include <vector>
 #include <string>
 
-#include "core/igamestate.h"
-#include "core/game_export.h"
+#include "igamestate.h"
+#include "game_export.h"
 
 #include "games/chess/chess_state.h"
 #include "games/go/go_state.h"
 #include "games/gomoku/gomoku_state.h"
 
-#include "utils/attack_defense_module.h"
+// #include "utils/attack_defense_module.h" // Removed - will be implemented in neural network tasks
 
 namespace py = pybind11;
 
@@ -182,67 +182,6 @@ PYBIND11_MODULE(alphazero_py, m) {
         .def("get_omok_rules", &games::gomoku::GomokuState::getOmokRules)
         .def("get_pro_long_opening", &games::gomoku::GomokuState::getProLongOpening);
     
-    // Attack/Defense Module bindings
-    py::class_<AttackDefenseModule>(m, "AttackDefenseModule");
-    
-    py::class_<GomokuAttackDefenseModule, AttackDefenseModule>(m, "GomokuAttackDefenseModule")
-        .def(py::init<int>(), py::arg("board_size"))
-        .def("compute_bonuses", [](GomokuAttackDefenseModule& self,
-                                   const std::vector<std::vector<std::vector<int>>>& board_batch,
-                                   const std::vector<int>& chosen_moves,
-                                   const std::vector<int>& player_batch) {
-            auto [attack_bonuses, defense_bonuses] = self.compute_bonuses(board_batch, chosen_moves, player_batch);
-            return py::make_tuple(attack_bonuses, defense_bonuses);
-        }, py::arg("board_batch"), py::arg("chosen_moves"), py::arg("player_batch"))
-        .def("compute_planes", [](GomokuAttackDefenseModule&,
-                                 const std::vector<core::IGameState*>& states) {
-            // Note: Need to adapt this based on actual implementation
-            // For now, return empty planes
-            std::vector<std::vector<std::vector<float>>> attack_planes;
-            std::vector<std::vector<std::vector<float>>> defense_planes;
-            return py::make_tuple(attack_planes, defense_planes);
-        }, py::arg("states"));
-    
-    // Helper function to compute attack/defense planes for a single state
-    m.def("compute_attack_defense_planes", [](core::IGameState* state, const std::string& game_type) {
-        // Get board size
-        int board_size = state->getBoardSize();
-        
-        // Create appropriate module based on game type
-        if (game_type == "gomoku") {
-            GomokuAttackDefenseModule module(board_size);
-            
-            // Get board representation
-            auto tensor = state->getTensorRepresentation();
-            
-            // Compute attack/defense scores for each position
-            std::vector<std::vector<float>> attack_plane(board_size, std::vector<float>(board_size, 0.0f));
-            std::vector<std::vector<float>> defense_plane(board_size, std::vector<float>(board_size, 0.0f));
-            
-            // Simple heuristic: Check for patterns around each empty position
-            // This is a placeholder - real implementation would use the C++ module
-            
-            // Convert to numpy arrays
-            py::array_t<float> attack_array({board_size, board_size});
-            py::array_t<float> defense_array({board_size, board_size});
-            
-            auto attack_ptr = static_cast<float*>(attack_array.mutable_unchecked<2>().mutable_data(0, 0));
-            auto defense_ptr = static_cast<float*>(defense_array.mutable_unchecked<2>().mutable_data(0, 0));
-            
-            for (int i = 0; i < board_size; ++i) {
-                for (int j = 0; j < board_size; ++j) {
-                    attack_ptr[i * board_size + j] = attack_plane[i][j];
-                    defense_ptr[i * board_size + j] = defense_plane[i][j];
-                }
-            }
-            
-            return py::make_tuple(attack_array, defense_array);
-        }
-        
-        // Return zeros for other game types
-        py::array_t<float> zeros({board_size, board_size});
-        return py::make_tuple(zeros, zeros);
-    }, py::arg("state"), py::arg("game_type"));
 }
 
 } // namespace python
