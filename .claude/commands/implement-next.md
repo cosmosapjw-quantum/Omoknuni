@@ -1,6 +1,8 @@
-# /implement-next — Implement the next READY task safely
+---
+name: implement-next
+description: Implement the next READY task safely
+---
 
-**Goal**  
 Pick the next task in `specs/001-goal-create-spec/tasks.md` (topmost not done), implement it *safely*, and update task status + artifacts. Respect SDD: the spec and plan are source of truth.
 
 **Inputs**
@@ -13,7 +15,7 @@ Pick the next task in `specs/001-goal-create-spec/tasks.md` (topmost not done), 
 - Keep changes scoped to ONE task (≤4h).
 - Generate unit tests and minimal docs alongside code.
 - Add/adjust CI as needed to keep the build green.
-- If the task is ambiguous, add an “Assumption:” note in the PR description and the “Open Questions” section of `spec.md`.
+- If the task is ambiguous, add an "Assumption:" note in the PR description and the "Open Questions" section of `spec.md`.
 
 **Process**
 1) **Select Task:** Choose the first task in tasks.md that is not marked complete, starting in Phase 0 and moving downward.
