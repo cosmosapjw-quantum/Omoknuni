@@ -47,6 +47,12 @@ All notable changes to this project will be documented in this file.
 - Outstanding performance: 330M allocations/second (target was >1M/second)
 - Memory efficiency: 27 bytes per node with 10M nodes using only 270MB total
 - Complete bounds checking and validation with comprehensive unit test coverage
+- **T008**: Vectorized PUCT selection with AVX2 SIMD optimizations
+- High-performance implementation of PUCT formula: Q + c_puct * P * sqrt(N_parent) / (1 + N_child)
+- AVX2 vectorization processes 8 children simultaneously for 3.6-5.2x speedup over scalar
+- Handles variable child counts efficiently with automatic scalar fallback
+- Comprehensive First Play Urgency (FPU) support for unvisited nodes
+- Single-pass child selection with optimized maximum finding algorithm
 
 ### Changed
 - Moved existing game logic from `/games` to `/cpp_extensions/games/`

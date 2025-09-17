@@ -4,7 +4,7 @@
  */
 
 #include <gtest/gtest.h>
-#include "../../cpp_extensions/mcts/tree.hpp"
+#include "mcts/tree.hpp"
 #include <vector>
 #include <algorithm>
 

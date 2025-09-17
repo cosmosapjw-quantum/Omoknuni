@@ -29,6 +29,30 @@ endif()
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 find_package(pybind11 CONFIG REQUIRED)
 
+# Find Google Test for unit testing
+find_package(GTest QUIET)
+if(NOT GTest_FOUND)
+    # Fetch Google Test if not found
+    include(FetchContent)
+    FetchContent_Declare(
+        googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG v1.14.0
+    )
+    # For Windows: Prevent overriding the parent project's compiler/linker settings
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
+
+    # Enable testing
+    enable_testing()
+    include(GoogleTest)
+    message(STATUS "Google Test will be downloaded and built automatically")
+else()
+    enable_testing()
+    include(GoogleTest)
+    message(STATUS "Found Google Test")
+endif()
+
 # Find PyTorch (optional, for C++ libtorch integration)
 find_package(Torch QUIET)
 if(Torch_FOUND)
@@ -51,6 +75,11 @@ include_directories(cpp_extensions)
 add_subdirectory(cpp_extensions/mcts)
 add_subdirectory(cpp_extensions/games)
 add_subdirectory(cpp_extensions/utils)
+
+# Add tests subdirectory if testing is enabled
+if(BUILD_TESTING OR GTest_FOUND OR TARGET gtest)
+    add_subdirectory(tests)
+endif()
 
 # Global compiler flags for performance
 if(CMAKE_BUILD_TYPE STREQUAL "Release" OR NOT CMAKE_BUILD_TYPE)

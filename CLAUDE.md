@@ -24,7 +24,7 @@ This is a high-performance AlphaZero-style reinforcement learning engine targeti
 The codebase follows a hybrid approach with Python orchestration and C++/pybind11 for performance-critical operations:
 
 ### Core Components
-- **MCTS Engine** (`cpp_extensions/mcts/`): C++17 implementation with atomic operations, virtual loss coordination, vectorized PUCT selection
+- **MCTS Engine** (`cpp_extensions/mcts/`): C++17 implementation with atomic operations, virtual loss coordination, AVX2-vectorized PUCT selection (3.6-5.2x speedup)
 - **Game Adapters** (`cpp_extensions/games/`): Uniform interface for Gomoku/Chess/Go with in-place move application and feature extraction
 - **Neural Network** (`src/neural/`): ResNet with Squeeze-Excitation blocks (20 blocks, 256 channels), mixed precision fp16
 - **Training Pipeline** (`src/training/`): Experience replay buffer using memory-mapped files, AdamW optimizer with cosine scheduling

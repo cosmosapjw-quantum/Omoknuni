@@ -316,6 +316,15 @@ public:
     }
 
     /**
+     * @brief Set prior probability for node
+     */
+    void set_prior_prob(NodeIndex index, float value) {
+        assert(is_valid_index(index));
+        assert(value >= 0.0f && value <= 1.0f);
+        prior_probs_[index] = value;
+    }
+
+    /**
      * @brief Set virtual loss for node
      */
     void set_virtual_loss(NodeIndex index, float value) {
