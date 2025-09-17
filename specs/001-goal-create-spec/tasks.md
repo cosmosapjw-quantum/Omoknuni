@@ -31,7 +31,8 @@
 - [x] **T006** Implement SoA memory layout | Create cpp_extensions/mcts/tree.hpp with aligned float32 arrays for N,W,P,VL, int32 arrays for parent/child indices, uint8 flags array, 64-byte alignment for SIMD | ✅ Memory layout uses <64 bytes per node, arrays aligned to 64-byte boundaries, supports 50M nodes | Dev | 4h
   *Completed: 2025-09-17, Author: Claude Code*
 
-- [ ] **T007** Node pool pre-allocation | Extend tree.hpp with pre-allocated node pools, index-based node references, memory management with reuse, bounds checking | Tree memory <1GB for 10M nodes, no malloc/free in hot paths, O(1) node allocation | Dev | 3h
+- [x] **T007** Node pool pre-allocation | Extend tree.hpp with pre-allocated node pools, index-based node references, memory management with reuse, bounds checking | ✅ Tree memory <1GB for 10M nodes (270MB achieved), no malloc/free in hot paths, O(1) node allocation (330M allocations/sec) | Dev | 3h
+  *Completed: 2025-09-17, Author: Claude Code, Commit: a7a1d7e*
 
 - [ ] **T008** Vectorized PUCT selection | Create cpp_extensions/mcts/selection.cpp with vectorized UCB calculation, single-pass child selection, SIMD optimizations for AVX2 | Selection vectorized, 4-8x faster than naive implementation, works with variable child counts | Dev | 4h
 

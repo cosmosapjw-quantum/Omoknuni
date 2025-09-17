@@ -168,6 +168,59 @@ public:
     NodeIndex add_root_node(float prior_prob, std::uint8_t current_player);
 
     /**
+     * @brief Allocate a single node from the pre-allocated pool
+     *
+     * @return Index of allocated node, or NULL_NODE_INDEX if pool is full
+     */
+    NodeIndex allocate_node();
+
+    /**
+     * @brief Allocate multiple contiguous nodes from the pool
+     *
+     * This is more efficient than calling allocate_node() multiple times
+     * when expanding a parent node with multiple children.
+     *
+     * @param count Number of contiguous nodes to allocate
+     * @return Index of first allocated node, or NULL_NODE_INDEX if insufficient space
+     */
+    NodeIndex allocate_nodes(std::uint16_t count);
+
+    /**
+     * @brief Deallocate a single node back to the pool
+     *
+     * Note: This marks the node as free but doesn't clear its data.
+     * The data will be overwritten when the node is reused.
+     *
+     * @param index Index of node to deallocate
+     */
+    void deallocate_node(NodeIndex index);
+
+    /**
+     * @brief Deallocate multiple contiguous nodes back to the pool
+     *
+     * @param first_index Index of first node to deallocate
+     * @param count Number of contiguous nodes to deallocate
+     */
+    void deallocate_nodes(NodeIndex first_index, std::uint16_t count);
+
+    /**
+     * @brief Get number of available nodes in the pool
+     */
+    std::size_t get_available_nodes() const {
+        return (max_nodes_ - next_free_index_) + free_nodes_.size();
+    }
+
+    /**
+     * @brief Check if the tree has space for additional nodes
+     *
+     * @param count Number of nodes to check for
+     * @return true if space is available, false otherwise
+     */
+    bool has_space_for(std::uint16_t count) const {
+        return get_available_nodes() >= count;
+    }
+
+    /**
      * @brief Validate tree structure and constraints
      *
      * @return true if tree is valid, false otherwise
@@ -306,10 +359,10 @@ public:
     }
 
     /**
-     * @brief Check if node index is valid
+     * @brief Check if node index is valid (within allocated range)
      */
     bool is_valid_index(NodeIndex index) const {
-        return index >= 0 && static_cast<std::size_t>(index) < node_count_;
+        return index >= 0 && static_cast<std::size_t>(index) < next_free_index_;
     }
 
     /**
@@ -340,8 +393,15 @@ private:
     // Maximum number of nodes this tree can hold
     std::size_t max_nodes_;
 
-    // Current number of nodes in tree
+    // Current number of nodes in tree (actively used nodes)
     std::size_t node_count_;
+
+    // Free list for efficient node reuse
+    std::vector<NodeIndex> free_nodes_;
+
+    // Index of the next contiguous node to allocate (when free list is empty)
+    // This tracks the high-water mark of allocated indices
+    std::size_t next_free_index_;
 
     // Structure-of-Arrays: separate aligned arrays for each node attribute
     // All arrays are 64-byte aligned for SIMD operations

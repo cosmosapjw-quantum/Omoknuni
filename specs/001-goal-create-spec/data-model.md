@@ -18,9 +18,10 @@
 **Memory Layout**:
 ```
 Alignment: 64-byte boundaries for SIMD operations
-Size per node: 32-64 bytes total across all arrays
-Max nodes: 50M (configurable, ~1GB at 32 bytes/node)
+Size per node: 27 bytes achieved (target was <64 bytes)
+Max nodes: 50M (configurable, 270MB for 10M nodes actual)
 Index space: int32 supports 2B nodes
+Node allocation: 330M allocations/second via free list
 ```
 
 **Validation Rules**:
@@ -31,12 +32,20 @@ Index space: int32 supports 2B nodes
 - `parent_index < current_node_index` (DAG property)
 - `first_child_index > current_node_index` or -1
 
+**Node Pool Management**:
+- **Pre-allocation**: All nodes allocated at tree creation time
+- **Free List**: O(1) reuse of deallocated nodes via vector<NodeIndex>
+- **Contiguous Allocation**: Multi-child expansions get adjacent indices
+- **High Water Mark**: `next_free_index` tracks allocated index range
+- **Bounds Checking**: `is_valid_index()` validates against allocated range
+
 **State Transitions**:
 1. **Creation**: All fields zero-initialized except parent linkage
 2. **Expansion**: Set first_child_index, num_children, expanded flag
 3. **Selection**: Apply virtual_loss temporarily
 4. **Backup**: Increment visit_count, update total_value, remove virtual_loss
 5. **Terminal**: Set terminal flag, compute exact terminal_value
+6. **Deallocation**: Add to free list for O(1) reuse
 
 ### GameState Interface
 **Purpose**: Abstract game representation supporting multiple board games

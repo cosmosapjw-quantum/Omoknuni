@@ -19,6 +19,7 @@ namespace mcts {
 MCTSTree::MCTSTree(std::size_t max_nodes)
     : max_nodes_(max_nodes)
     , node_count_(0)
+    , next_free_index_(0)
     , visit_counts_(nullptr)
     , total_values_(nullptr)
     , prior_probs_(nullptr)
@@ -119,16 +120,14 @@ std::size_t MCTSTree::get_memory_usage() const {
 
 void MCTSTree::clear() {
     node_count_ = 0;
+    next_free_index_ = 0;
+    free_nodes_.clear();
     initialize_arrays();
 }
 
 NodeIndex MCTSTree::add_root_node(float prior_prob, std::uint8_t current_player) {
     if (node_count_ > 0) {
         throw std::logic_error("Root node already exists");
-    }
-
-    if (max_nodes_ == 0) {
-        throw std::runtime_error("Tree has no capacity");
     }
 
     if (prior_prob < 0.0f || prior_prob > 1.0f) {
@@ -139,8 +138,11 @@ NodeIndex MCTSTree::add_root_node(float prior_prob, std::uint8_t current_player)
         throw std::invalid_argument("current_player must be 0 or 1");
     }
 
-    NodeIndex root_index = 0;
-    node_count_ = 1;
+    // Allocate root node using the pool system
+    NodeIndex root_index = allocate_node();
+    if (root_index == NULL_NODE_INDEX) {
+        throw std::runtime_error("Failed to allocate root node");
+    }
 
     // Initialize root node
     visit_counts_[root_index] = 0.0f;
@@ -182,8 +184,8 @@ bool MCTSTree::validate_tree() const {
         return true;  // Empty tree is valid
     }
 
-    if (node_count_ > max_nodes_) {
-        return false;  // Too many nodes
+    if (next_free_index_ > max_nodes_) {
+        return false;  // Index out of bounds
     }
 
     // Validate root node
@@ -191,8 +193,8 @@ bool MCTSTree::validate_tree() const {
         return false;  // Root must have no parent
     }
 
-    // Validate all nodes
-    for (std::size_t i = 0; i < node_count_; ++i) {
+    // Validate all allocated nodes
+    for (std::size_t i = 0; i < next_free_index_; ++i) {
         NodeIndex index = static_cast<NodeIndex>(i);
 
         // Check visit count is non-negative
@@ -213,7 +215,7 @@ bool MCTSTree::validate_tree() const {
         // Check parent index validity
         NodeIndex parent = parent_indices_[index];
         if (parent != NULL_NODE_INDEX) {
-            if (parent < 0 || static_cast<std::size_t>(parent) >= node_count_) {
+            if (parent < 0 || static_cast<std::size_t>(parent) >= next_free_index_) {
                 return false;  // Invalid parent index
             }
             if (parent >= index) {
@@ -224,7 +226,7 @@ bool MCTSTree::validate_tree() const {
         // Check first child index validity
         NodeIndex first_child = first_child_indices_[index];
         if (first_child != NULL_NODE_INDEX) {
-            if (first_child < 0 || static_cast<std::size_t>(first_child) >= node_count_) {
+            if (first_child < 0 || static_cast<std::size_t>(first_child) >= next_free_index_) {
                 return false;  // Invalid child index
             }
             if (first_child <= index) {
@@ -235,7 +237,7 @@ bool MCTSTree::validate_tree() const {
             std::uint16_t expected_children = num_children_[index];
             for (std::uint16_t j = 0; j < expected_children; ++j) {
                 NodeIndex child_index = first_child + j;
-                if (static_cast<std::size_t>(child_index) >= node_count_) {
+                if (static_cast<std::size_t>(child_index) >= next_free_index_) {
                     return false;  // Child index out of range
                 }
                 if (parent_indices_[child_index] != index) {
@@ -289,6 +291,82 @@ TreeMemoryStats get_tree_memory_stats(const MCTSTree& tree) {
         static_cast<double>(stats.total_bytes) / stats.node_count : 0.0;
 
     return stats;
+}
+
+NodeIndex MCTSTree::allocate_node() {
+    // First try to reuse a node from the free list
+    if (!free_nodes_.empty()) {
+        NodeIndex index = free_nodes_.back();
+        free_nodes_.pop_back();
+        ++node_count_;  // Increment active node count
+        return index;
+    }
+
+    // If no free nodes, allocate from the contiguous pool
+    if (next_free_index_ >= max_nodes_) {
+        return NULL_NODE_INDEX;  // Pool exhausted
+    }
+
+    NodeIndex index = static_cast<NodeIndex>(next_free_index_);
+    ++next_free_index_;
+    ++node_count_;
+
+    return index;
+}
+
+NodeIndex MCTSTree::allocate_nodes(std::uint16_t count) {
+    if (count == 0) {
+        return NULL_NODE_INDEX;
+    }
+
+    if (count == 1) {
+        return allocate_node();
+    }
+
+    // For multiple nodes, we need contiguous allocation
+    // Check if we have enough contiguous space from the pool
+    if (next_free_index_ + count > max_nodes_) {
+        return NULL_NODE_INDEX;  // Not enough contiguous space
+    }
+
+    NodeIndex first_index = static_cast<NodeIndex>(next_free_index_);
+    next_free_index_ += count;
+    node_count_ += count;
+
+    return first_index;
+}
+
+void MCTSTree::deallocate_node(NodeIndex index) {
+    if (!is_valid_index(index)) {
+        return;  // Invalid index, ignore
+    }
+
+    // Add to free list for reuse
+    free_nodes_.push_back(index);
+    --node_count_;  // Decrement active node count
+}
+
+void MCTSTree::deallocate_nodes(NodeIndex first_index, std::uint16_t count) {
+    if (count == 0) {
+        return;
+    }
+
+    if (count == 1) {
+        deallocate_node(first_index);
+        return;
+    }
+
+    // Deallocate multiple contiguous nodes
+    std::uint16_t deallocated = 0;
+    for (std::uint16_t i = 0; i < count; ++i) {
+        NodeIndex index = first_index + i;
+        if (is_valid_index(index)) {
+            free_nodes_.push_back(index);
+            ++deallocated;
+        }
+    }
+
+    node_count_ -= deallocated;  // Decrement active node count
 }
 
 } // namespace mcts
