@@ -17,6 +17,12 @@ All notable changes to this project will be documented in this file.
 - Performance regression detection with benchmark comparison
 - Build artifact caching for faster CI runs
 - Sample test suites for validation
+- **T003**: Basic telemetry framework implementation
+- Prometheus-compatible metrics collection with comprehensive performance tracking
+- GPU utilization monitoring using nvidia-ml-py with automatic fallback
+- Memory usage tracking for both system RAM and GPU VRAM
+- Structured logging framework with JSON output and contextual information
+- Performance metrics for simulations/second, inference batching, and resource utilization
 
 ### Changed
 - Moved existing game logic from `/games` to `/cpp_extensions/games/`

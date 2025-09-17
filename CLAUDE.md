@@ -168,7 +168,7 @@ Implementation follows Test-Driven Development with contract tests that must fai
 - **Clean logic**: Keep core logic clean and push implementation details to the edges
 - **File Organization**: Balance file organization with simplicity - use an appropriate number of files for the project scale
 
-## Pull Requests
+## Pull Requests & Git Commit
 
 - Create a detailed message of what changed. Focus on the high level description of
   the problem it tries to solve, and how it is solved. Don't go into the specifics of the

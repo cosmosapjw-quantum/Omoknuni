@@ -15,7 +15,8 @@
 - [x] **T002** [P] Initialize CI/CD pipeline | Create .github/workflows/ci.yml with pytest, flake8, mypy checks, GPU testing on self-hosted runner, performance regression detection | ✅ All checks pass on sample code, GPU tests run successfully, build artifacts cached | Dev | 2h
   *Completed: 2025-09-17, Author: Claude Code*
 
-- [ ] **T003** [P] Implement basic telemetry framework | Create src/telemetry/metrics.py with Prometheus-compatible metrics collection, GPU utilization monitoring, memory usage tracking, structured logging setup | Metrics collection functional, can track simulations/sec, GPU util, memory usage | Dev | 3h
+- [x] **T003** [P] Implement basic telemetry framework | Create src/telemetry/metrics.py with Prometheus-compatible metrics collection, GPU utilization monitoring, memory usage tracking, structured logging setup | ✅ Metrics collection functional, can track simulations/sec, GPU util, memory usage | Dev | 3h
+  *Completed: 2025-09-17, Author: Claude Code*
 
 - [ ] **T004** [P] GPU warmup and device detection | Create src/neural/device_manager.py with CUDA availability check, GPU warming with dummy inference, optimal batch size detection, RTX 3060 Ti specific optimizations | GPU detected, warmed up in <5s, optimal batch size determined automatically | Dev | 2h
 
