@@ -23,6 +23,12 @@ All notable changes to this project will be documented in this file.
 - Memory usage tracking for both system RAM and GPU VRAM
 - Structured logging framework with JSON output and contextual information
 - Performance metrics for simulations/second, inference batching, and resource utilization
+- **T004**: GPU warmup and device detection system
+- CUDA availability detection with automatic CPU fallback
+- GPU warmup with dummy inference calls for consistent latency measurements
+- Binary search batch size optimization within RTX 3060 Ti 8GB VRAM constraints
+- RTX 3060 Ti specific optimizations (TensorFloat-32, cuDNN benchmark mode)
+- Device initialization completing in <5s with optimal batch size determination
 
 ### Changed
 - Moved existing game logic from `/games` to `/cpp_extensions/games/`
