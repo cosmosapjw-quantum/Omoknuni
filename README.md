@@ -8,6 +8,10 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 
 ### Completed
 - [x] **T001**: Project structure and build system setup
+- [x] **T002**: CI/CD pipeline with GitHub Actions
+- [x] **T003**: Basic telemetry framework with Prometheus metrics
+- [x] **T004**: GPU warmup and device detection system
+- [x] **T005**: MCTS API contract tests for Test-Driven Development
 
 ### Current Architecture
 
@@ -15,6 +19,8 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - **Performance Target**: 30-40k simulations/second with 80-92% GPU utilization
 - **Target Hardware**: AMD Ryzen 5900X + NVIDIA RTX 3060 Ti (8GB VRAM)
 - **Memory Efficient**: Structure-of-Arrays layout, <1GB tree memory for 10M nodes
+- **Telemetry**: Prometheus-compatible metrics with GPU monitoring and structured logging
+- **Device Management**: RTX 3060 Ti optimizations with automatic batch size estimation
 
 ## Quick Start
 
@@ -43,6 +49,22 @@ pip install -r requirements.txt
 export CFLAGS="-O3 -march=znver3 -fopenmp"
 export CXXFLAGS="-O3 -march=znver3 -fopenmp"
 python -m pip install -e . --config-settings build-dir=build
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+python -m pytest
+
+# Run specific test categories
+python -m pytest tests/unit/          # Unit tests
+python -m pytest tests/contract/      # API contract tests
+python -m pytest tests/integration/   # Integration tests
+python -m pytest tests/performance/   # Performance benchmarks
+
+# Run with coverage
+python -m pytest --cov=src --cov-report=html
 ```
 
 ### Project Structure

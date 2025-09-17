@@ -29,6 +29,12 @@ All notable changes to this project will be documented in this file.
 - Binary search batch size optimization within RTX 3060 Ti 8GB VRAM constraints
 - RTX 3060 Ti specific optimizations (TensorFloat-32, cuDNN benchmark mode)
 - Device initialization completing in <5s with optimal batch size determination
+- **T005**: MCTS API contract test suite for Test-Driven Development
+- Comprehensive contract tests covering all functions and classes in MCTS API specification
+- 34 test cases validating function signatures, parameter types, and return annotations
+- Mock GameState implementation for testing with realistic game scenarios (Gomoku/Chess/Go)
+- All tests correctly fail with NotImplementedError as required for TDD approach
+- 100% API coverage ensuring complete interface validation before implementation
 
 ### Changed
 - Moved existing game logic from `/games` to `/cpp_extensions/games/`

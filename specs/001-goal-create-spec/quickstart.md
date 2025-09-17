@@ -58,8 +58,9 @@ python -m pip install -e . --config-settings build-dir=build
 ### 5. Verify Installation
 ```bash
 # Run basic tests
-python -m pytest tests/contract/ -v
-python -m pytest tests/unit/test_installation.py -v
+python -m pytest tests/contract/ -v           # API contract tests (34 tests)
+python -m pytest tests/unit/ -v               # Unit tests for implemented components
+python -m pytest tests/integration/ -v        # Integration tests
 
 # Check GPU availability
 python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"

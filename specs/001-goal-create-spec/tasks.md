@@ -25,7 +25,8 @@
 
 ## PHASE 1 — Tree Core
 
-- [ ] **T005** [P] Contract test for MCTS API | Create tests/contract/test_mcts_api.py testing all functions in contracts/mcts_api.py, verify signatures match exactly, tests must FAIL initially | All API contract tests fail with NotImplementedError, test coverage 100% | Dev | 2h
+- [x] **T005** [P] Contract test for MCTS API | Create tests/contract/test_mcts_api.py testing all functions in contracts/mcts_api.py, verify signatures match exactly, tests must FAIL initially | ✅ All API contract tests fail with NotImplementedError, test coverage 100% | Dev | 2h
+  *Completed: 2025-09-17, Author: Claude Code*
 
 - [ ] **T006** Implement SoA memory layout | Create cpp_extensions/mcts/tree.hpp with aligned float32 arrays for N,W,P,VL, int32 arrays for parent/child indices, uint8 flags array, 64-byte alignment for SIMD | Memory layout uses <64 bytes per node, arrays aligned to 64-byte boundaries, supports 50M nodes | Dev | 4h
 
