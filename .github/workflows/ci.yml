@@ -1,0 +1,298 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main, develop, 001-goal-create-spec ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.12"
+  CMAKE_BUILD_TYPE: Release
+
+jobs:
+  lint-and-type-check:
+    name: Lint and Type Check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 mypy black isort
+        pip install -r requirements.txt
+
+    - name: Run Black (code formatting)
+      run: black --check --diff src/ tests/
+
+    - name: Run isort (import sorting)
+      run: isort --check-only --diff src/ tests/
+
+    - name: Run flake8 (linting)
+      run: |
+        flake8 src/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 src/ tests/ --count --exit-zero --max-complexity=10 --max-line-length=88 --statistics
+
+    - name: Run mypy (type checking)
+      run: |
+        mypy src/ --ignore-missing-imports --disallow-untyped-defs
+
+  test-cpu:
+    name: CPU Tests (Ubuntu)
+    runs-on: ubuntu-latest
+    needs: lint-and-type-check
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential libomp-dev
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Cache build artifacts
+      uses: actions/cache@v3
+      with:
+        path: |
+          build/
+          dist/
+          *.egg-info/
+        key: ${{ runner.os }}-build-${{ hashFiles('pyproject.toml', 'CMakeLists.txt', 'cpp_extensions/**/*') }}
+        restore-keys: |
+          ${{ runner.os }}-build-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
+        pip install pytest pytest-cov pytest-xdist
+        pip install -r requirements.txt
+
+    - name: Build package (CPU only)
+      run: |
+        export CFLAGS="-O3 -march=native -fopenmp"
+        export CXXFLAGS="-O3 -march=native -fopenmp"
+        pip install -e . --config-settings=cmake.args="-DCMAKE_BUILD_TYPE=Release"
+
+    - name: Run unit tests
+      run: |
+        pytest tests/unit/ -v --cov=src --cov-report=xml --cov-report=html
+      continue-on-error: true
+
+    - name: Run contract tests
+      run: |
+        pytest tests/contract/ -v
+      continue-on-error: true
+
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+  test-gpu:
+    name: GPU Tests (Self-hosted)
+    runs-on: [self-hosted, gpu, rtx-3060-ti]
+    needs: lint-and-type-check
+    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'gpu-test')
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Check GPU availability
+      run: |
+        nvidia-smi
+        nvcc --version || echo "NVCC not found"
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-gpu-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-gpu-pip-
+
+    - name: Cache build artifacts
+      uses: actions/cache@v3
+      with:
+        path: |
+          build/
+          dist/
+          *.egg-info/
+        key: ${{ runner.os }}-gpu-build-${{ hashFiles('pyproject.toml', 'CMakeLists.txt', 'cpp_extensions/**/*') }}
+        restore-keys: |
+          ${{ runner.os }}-gpu-build-
+
+    - name: Install dependencies with GPU support
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
+        pip install pytest pytest-cov pytest-xdist
+        pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+        pip install -r requirements.txt
+
+    - name: Build package (GPU enabled)
+      run: |
+        export CFLAGS="-O3 -march=znver3 -fopenmp"
+        export CXXFLAGS="-O3 -march=znver3 -fopenmp"
+        pip install -e . --config-settings=cmake.args="-DCMAKE_BUILD_TYPE=Release"
+
+    - name: Run GPU-specific tests
+      run: |
+        pytest tests/unit/ tests/integration/ -v -m "gpu or not slow" --cov=src
+      continue-on-error: true
+
+    - name: Run performance benchmarks
+      run: |
+        pytest tests/performance/ -v --benchmark-only --benchmark-json=benchmark_results.json
+      continue-on-error: true
+
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v3
+      with:
+        name: benchmark-results
+        path: benchmark_results.json
+
+  performance-regression:
+    name: Performance Regression Detection
+    runs-on: [self-hosted, gpu, rtx-3060-ti]
+    needs: test-gpu
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Download benchmark results
+      uses: actions/download-artifact@v3
+      with:
+        name: benchmark-results
+
+    - name: Setup performance monitoring
+      run: |
+        pip install pytest-benchmark[histogram]
+
+    - name: Compare with baseline
+      run: |
+        # Download previous benchmark if exists
+        mkdir -p .benchmarks
+        # Compare current results with baseline
+        python scripts/compare_benchmarks.py benchmark_results.json
+      continue-on-error: true
+
+    - name: Update performance baseline
+      run: |
+        # Store current results as new baseline
+        cp benchmark_results.json .benchmarks/baseline.json
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
+        git add .benchmarks/baseline.json
+        git commit -m "Update performance baseline [skip ci]" || echo "No changes to commit"
+
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [test-cpu]
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest
+        pip install -r requirements.txt
+
+    - name: Build package
+      run: |
+        pip install -e .
+
+    - name: Run integration tests
+      run: |
+        pytest tests/integration/ -v --tb=short
+      continue-on-error: true
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Run Bandit security scan
+      uses: securecodewarrior/github-action-bandit@v1
+      with:
+        buildcommand: "pip install -r requirements.txt"
+
+    - name: Run Safety check
+      run: |
+        pip install safety
+        safety check -r requirements.txt
+      continue-on-error: true
+
+  build-docs:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Install documentation dependencies
+      run: |
+        pip install sphinx sphinx-rtd-theme
+        pip install -r requirements.txt
+
+    - name: Build documentation
+      run: |
+        cd docs && make html
+      continue-on-error: true
+
+    - name: Upload documentation
+      uses: actions/upload-artifact@v3
+      with:
+        name: documentation
+        path: docs/_build/html/

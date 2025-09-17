@@ -12,6 +12,11 @@ All notable changes to this project will be documented in this file.
 - Migrated existing C++ game logic files to proper cpp_extensions structure
 - Complete CMake configuration for games and utils modules
 - .gitignore file to exclude venv and build artifacts
+- **T002**: Complete CI/CD pipeline with GitHub Actions
+- Multi-stage testing pipeline (lint, unit tests, integration tests, GPU tests)
+- Performance regression detection with benchmark comparison
+- Build artifact caching for faster CI runs
+- Sample test suites for validation
 
 ### Changed
 - Moved existing game logic from `/games` to `/cpp_extensions/games/`

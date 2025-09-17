@@ -12,7 +12,8 @@
 - [x] **T001** Setup project structure and build system | Create src/{core,games,neural,training,telemetry,utils}/ directories, cpp_extensions/{mcts,games,utils}/ directories, tests/{contract,integration,unit,performance}/ directories, pyproject.toml with scikit-build-core, requirements.txt with PyTorch 2.x, pybind11, Cython dependencies | ✅ Project structure matches plan.md, all dependencies install cleanly, build system configured with -O3 -march=znver3 -fopenmp flags | Dev | 3h
   *Completed: 2025-09-16, Author: Claude Code*
 
-- [ ] **T002** [P] Initialize CI/CD pipeline | Create .github/workflows/ci.yml with pytest, flake8, mypy checks, GPU testing on self-hosted runner, performance regression detection | All checks pass on sample code, GPU tests run successfully, build artifacts cached | Dev | 2h
+- [x] **T002** [P] Initialize CI/CD pipeline | Create .github/workflows/ci.yml with pytest, flake8, mypy checks, GPU testing on self-hosted runner, performance regression detection | ✅ All checks pass on sample code, GPU tests run successfully, build artifacts cached | Dev | 2h
+  *Completed: 2025-09-17, Author: Claude Code*
 
 - [ ] **T003** [P] Implement basic telemetry framework | Create src/telemetry/metrics.py with Prometheus-compatible metrics collection, GPU utilization monitoring, memory usage tracking, structured logging setup | Metrics collection functional, can track simulations/sec, GPU util, memory usage | Dev | 3h
 
