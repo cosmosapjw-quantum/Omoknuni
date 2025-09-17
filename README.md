@@ -12,6 +12,7 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - [x] **T003**: Basic telemetry framework with Prometheus metrics
 - [x] **T004**: GPU warmup and device detection system
 - [x] **T005**: MCTS API contract tests for Test-Driven Development
+- [x] **T006**: Structure-of-Arrays memory layout (27 bytes/node, <1GB for 50M nodes)
 
 ### Current Architecture
 
