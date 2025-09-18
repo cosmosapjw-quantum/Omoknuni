@@ -59,6 +59,12 @@ All notable changes to this project will be documented in this file.
 - RAII guard for exception-safe virtual loss cleanup during search operations
 - Configurable virtual loss magnitude (default 1.0) with safety limits
 - Comprehensive thread safety testing with stress tests and race condition validation
+- **T010**: Value backup mechanism with proper sign flipping per tree level
+- Atomic visit count and total value updates for thread-safe backup operations
+- Correct value perspective alternation: each level up the tree negates the value
+- Path traversal from leaf to root with comprehensive validation
+- Integration with virtual loss removal for complete MCTS cycle support
+- RAII backup guard for exception-safe virtual loss cleanup
 
 ### Changed
 - Moved existing game logic from `/games` to `/cpp_extensions/games/`
