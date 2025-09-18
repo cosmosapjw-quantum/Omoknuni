@@ -258,8 +258,23 @@ void BackupManager::update_statistics(const BackupResult& result, std::size_t pa
     total_nodes_updated_.fetch_add(result.nodes_updated, std::memory_order_relaxed);
 
     // Update cumulative statistics for averages
-    cumulative_path_length_.fetch_add(static_cast<float>(path_length), std::memory_order_relaxed);
-    cumulative_leaf_value_.fetch_add(std::abs(leaf_value), std::memory_order_relaxed);
+    // Note: std::atomic<float>::fetch_add may not be available in all C++17 implementations
+    // Use compare-and-swap loop instead
+    float expected_path, desired_path;
+    do {
+        expected_path = cumulative_path_length_.load(std::memory_order_acquire);
+        desired_path = expected_path + static_cast<float>(path_length);
+    } while (!cumulative_path_length_.compare_exchange_weak(expected_path, desired_path,
+                                                           std::memory_order_release,
+                                                           std::memory_order_acquire));
+
+    float expected_value, desired_value;
+    do {
+        expected_value = cumulative_leaf_value_.load(std::memory_order_acquire);
+        desired_value = expected_value + std::abs(leaf_value);
+    } while (!cumulative_leaf_value_.compare_exchange_weak(expected_value, desired_value,
+                                                          std::memory_order_release,
+                                                          std::memory_order_acquire));
 }
 
 // BackupGuard implementation

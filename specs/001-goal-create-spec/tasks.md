@@ -43,7 +43,8 @@
 - [x] **T010** Value backup with sign flipping | Create cpp_extensions/mcts/backup.cpp with atomic visit count/value updates, proper value sign alternation per ply, path traversal from leaf to root | ✅ Backup correctly flips signs each level, atomic updates working, visit counts accurate | Dev | 3h
   *Completed: 2025-09-18, Author: Claude Code*
 
-- [ ] **T011** Single-threaded MCTS integration test | Create tests/integration/test_mcts_single_thread.py testing complete MCTS cycle: select→expand→evaluate→backup, verify tree integrity | Single-threaded search completes, tree structure valid, performance >10k nodes/sec | Dev | 2h
+- [x] **T011** Single-threaded MCTS integration test | Create tests/integration/test_mcts_single_thread.py testing complete MCTS cycle: select→expand→evaluate→backup, verify tree integrity | ✅ Single-threaded search completes, tree structure valid, performance >10k nodes/sec | Dev | 2h
+  *Completed: 2025-09-18, Author: Claude Code*
 
 ---
 

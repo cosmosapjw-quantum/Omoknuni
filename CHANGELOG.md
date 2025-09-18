@@ -65,6 +65,12 @@ All notable changes to this project will be documented in this file.
 - Path traversal from leaf to root with comprehensive validation
 - Integration with virtual loss removal for complete MCTS cycle support
 - RAII backup guard for exception-safe virtual loss cleanup
+- **T011**: Single-threaded MCTS integration test for complete search cycle
+- End-to-end testing of select→expand→evaluate→backup MCTS operations
+- Mock implementations of game state, neural network, and tree components
+- Tree integrity validation and performance measurement (3400+ simulations/sec achieved)
+- Complete MCTS cycle verification with proper component integration
+- Foundation for multi-threaded and GPU-accelerated implementations
 
 ### Changed
 - Moved existing game logic from `/games` to `/cpp_extensions/games/`
