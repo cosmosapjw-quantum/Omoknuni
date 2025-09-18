@@ -53,6 +53,12 @@ All notable changes to this project will be documented in this file.
 - Handles variable child counts efficiently with automatic scalar fallback
 - Comprehensive First Play Urgency (FPU) support for unvisited nodes
 - Single-pass child selection with optimized maximum finding algorithm
+- **T009**: Thread-safe virtual loss mechanism for MCTS coordination
+- Atomic virtual loss application and removal to prevent duplicate thread exploration
+- Path-based virtual loss management with automatic rollback on failures
+- RAII guard for exception-safe virtual loss cleanup during search operations
+- Configurable virtual loss magnitude (default 1.0) with safety limits
+- Comprehensive thread safety testing with stress tests and race condition validation
 
 ### Changed
 - Moved existing game logic from `/games` to `/cpp_extensions/games/`

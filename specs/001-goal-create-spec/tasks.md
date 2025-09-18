@@ -37,7 +37,8 @@
 - [x] **T008** Vectorized PUCT selection | Create cpp_extensions/mcts/selection.cpp with vectorized UCB calculation, single-pass child selection, SIMD optimizations for AVX2 | ✅ Selection vectorized, 3.6-5.2x faster than naive implementation (target achieved with realistic child counts), works with variable child counts | Dev | 4h
   *Completed: 2025-09-17, Author: Claude Code*
 
-- [ ] **T009** Virtual loss mechanism | Implement cpp_extensions/mcts/virtual_loss.cpp with atomic virtual loss application/removal, thread-safe path traversal, configurable VL magnitude | Virtual loss prevents duplicate selection, atomic operations working, configurable +1.0 default | Dev | 3h
+- [x] **T009** Virtual loss mechanism | Implement cpp_extensions/mcts/virtual_loss.cpp with atomic virtual loss application/removal, thread-safe path traversal, configurable VL magnitude | ✅ Virtual loss prevents duplicate selection, atomic operations working, configurable +1.0 default | Dev | 3h
+  *Completed: 2025-09-18, Author: Claude Code*
 
 - [ ] **T010** Value backup with sign flipping | Create cpp_extensions/mcts/backup.cpp with atomic visit count/value updates, proper value sign alternation per ply, path traversal from leaf to root | Backup correctly flips signs each level, atomic updates working, visit counts accurate | Dev | 3h
 
