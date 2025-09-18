@@ -71,6 +71,12 @@ All notable changes to this project will be documented in this file.
 - Tree integrity validation and performance measurement (3400+ simulations/sec achieved)
 - Complete MCTS cycle verification with proper component integration
 - Foundation for multi-threaded and GPU-accelerated implementations
+- **T012**: Contract test for neural network inference API
+- Comprehensive test coverage for InferenceWorker abstract base class
+- GPU/CPU compatibility testing with device detection and memory management
+- Validation of batch processing interfaces and micro-batching logic
+- Factory function contracts for worker creation and batch size estimation
+- CPU fallback mechanism and model validation interface testing
 
 ### Changed
 - Moved existing game logic from `/games` to `/cpp_extensions/games/`

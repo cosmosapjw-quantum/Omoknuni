@@ -50,7 +50,8 @@
 
 ## PHASE 2 — Inference Worker
 
-- [ ] **T012** [P] Contract test for inference API | Create tests/contract/test_inference_api.py testing all functions in contracts/inference_api.py, verify GPU/CPU compatibility, batch processing | All inference API contract tests fail with NotImplementedError, covers all use cases | Dev | 2h
+- [x] **T012** [P] Contract test for inference API | Create tests/contract/test_inference_api.py testing all functions in contracts/inference_api.py, verify GPU/CPU compatibility, batch processing | ✅ All inference API contract tests fail with NotImplementedError, covers all use cases | Dev | 2h
+  *Completed: 2025-09-18, Author: Claude Code*
 
 - [ ] **T013** ResNet architecture implementation | Create src/neural/model.py with ResidualBlock+SE attention, 20 blocks with 256 channels, policy and value heads, mixed precision support | Model forward pass works, parameters ~10M, fits in 8GB VRAM with batch size 64 | Dev | 4h
 
