@@ -31,6 +31,7 @@ def test_imports():
         import training
         import telemetry
         import utils
+
         assert True
     except ImportError as e:
         pytest.fail(f"Failed to import modules: {e}")
@@ -53,7 +54,7 @@ def test_project_structure():
         "tests/contract",
         "tests/integration",
         "tests/unit",
-        "tests/performance"
+        "tests/performance",
     ]
 
     for dir_path in required_dirs:
@@ -65,6 +66,7 @@ def test_project_structure():
 def test_slow_operation():
     """Example of a slow test that should be skipped in quick CI runs."""
     import time
+
     time.sleep(0.1)  # Simulate slow operation
     assert True
 
@@ -75,6 +77,7 @@ def test_gpu_placeholder():
     # This is a placeholder until we implement actual GPU functionality
     try:
         import torch
+
         if torch.cuda.is_available():
             assert torch.cuda.device_count() > 0
         else:
@@ -88,7 +91,7 @@ class TestSampleClass:
 
     def test_class_method(self):
         """Test within a class."""
-        assert hasattr(self, 'test_class_method')
+        assert hasattr(self, "test_class_method")
 
     def test_setup_and_teardown(self):
         """Test that demonstrates setup/teardown would work."""

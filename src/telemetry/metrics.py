@@ -12,10 +12,17 @@ from dataclasses import dataclass, field
 from collections import defaultdict, deque
 
 import psutil
-from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest
+from prometheus_client import (
+    Counter,
+    Histogram,
+    Gauge,
+    CollectorRegistry,
+    generate_latest,
+)
 
 try:
     import pynvml
+
     NVML_AVAILABLE = True
 except ImportError:
     NVML_AVAILABLE = False
@@ -24,6 +31,7 @@ except ImportError:
 @dataclass
 class PerformanceMetrics:
     """Container for performance metrics."""
+
     simulations_per_second: float = 0.0
     gpu_utilization_percent: float = 0.0
     gpu_memory_used_mb: float = 0.0
@@ -62,81 +70,81 @@ class MetricsCollector:
 
         # Performance counters
         self.simulations_total = Counter(
-            'alphazero_simulations_total',
-            'Total number of MCTS simulations performed',
-            ['game_type'],
-            registry=self.registry
+            "alphazero_simulations_total",
+            "Total number of MCTS simulations performed",
+            ["game_type"],
+            registry=self.registry,
         )
 
         self.inference_requests_total = Counter(
-            'alphazero_inference_requests_total',
-            'Total number of neural network inference requests',
-            registry=self.registry
+            "alphazero_inference_requests_total",
+            "Total number of neural network inference requests",
+            registry=self.registry,
         )
 
         # Performance histograms
         self.simulation_duration = Histogram(
-            'alphazero_simulation_duration_seconds',
-            'Time taken for individual MCTS simulations',
+            "alphazero_simulation_duration_seconds",
+            "Time taken for individual MCTS simulations",
             buckets=[0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0],
-            registry=self.registry
+            registry=self.registry,
         )
 
         self.inference_duration = Histogram(
-            'alphazero_inference_duration_seconds',
-            'Time taken for neural network inference',
+            "alphazero_inference_duration_seconds",
+            "Time taken for neural network inference",
             buckets=[0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1],
-            registry=self.registry
+            registry=self.registry,
         )
 
         self.batch_size = Histogram(
-            'alphazero_inference_batch_size',
-            'Neural network inference batch sizes',
+            "alphazero_inference_batch_size",
+            "Neural network inference batch sizes",
             buckets=[1, 8, 16, 32, 48, 64, 96, 128],
-            registry=self.registry
+            registry=self.registry,
         )
 
         # System resource gauges
         self.gpu_utilization = Gauge(
-            'alphazero_gpu_utilization_percent',
-            'GPU utilization percentage',
-            registry=self.registry
+            "alphazero_gpu_utilization_percent",
+            "GPU utilization percentage",
+            registry=self.registry,
         )
 
         self.gpu_memory_used = Gauge(
-            'alphazero_gpu_memory_used_mb',
-            'GPU memory used in megabytes',
-            registry=self.registry
+            "alphazero_gpu_memory_used_mb",
+            "GPU memory used in megabytes",
+            registry=self.registry,
         )
 
         self.gpu_memory_total = Gauge(
-            'alphazero_gpu_memory_total_mb',
-            'Total GPU memory in megabytes',
-            registry=self.registry
+            "alphazero_gpu_memory_total_mb",
+            "Total GPU memory in megabytes",
+            registry=self.registry,
         )
 
         self.system_memory_used = Gauge(
-            'alphazero_system_memory_used_mb',
-            'System memory used in megabytes',
-            registry=self.registry
+            "alphazero_system_memory_used_mb",
+            "System memory used in megabytes",
+            registry=self.registry,
         )
 
         self.system_memory_total = Gauge(
-            'alphazero_system_memory_total_mb',
-            'Total system memory in megabytes',
-            registry=self.registry
+            "alphazero_system_memory_total_mb",
+            "Total system memory in megabytes",
+            registry=self.registry,
         )
 
         self.cpu_percent = Gauge(
-            'alphazero_cpu_percent',
-            'CPU utilization percentage',
-            registry=self.registry
+            "alphazero_cpu_percent",
+            "CPU utilization percentage",
+            registry=self.registry,
         )
 
         self.simulations_per_second = Gauge(
-            'alphazero_simulations_per_second',
-            'Current simulations per second rate',
-            registry=self.registry
+            "alphazero_simulations_per_second",
+            "Current simulations per second rate",
+            registry=self.registry,
         )
 
         # Performance tracking
@@ -151,7 +159,9 @@ class MetricsCollector:
                 pynvml.nvmlInit()
                 device_count = pynvml.nvmlDeviceGetCount()
                 if device_count > 0:
-                    self._gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # Use first GPU
+                    self._gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(
+                        0
+                    )  # Use first GPU
             except pynvml.NVMLError:
                 self._gpu_handle = None
 
@@ -163,9 +173,7 @@ class MetricsCollector:
 
             self._running = True
             self._collector_thread = threading.Thread(
-                target=self._collection_loop,
-                daemon=True,
-                name="MetricsCollector"
+                target=self._collection_loop, daemon=True, name="MetricsCollector"
             )
             self._collector_thread.start()
 
@@ -302,12 +310,12 @@ class MetricsCollector:
             system_memory_used_mb=memory.used / 1024 / 1024,
             system_memory_total_mb=memory.total / 1024 / 1024,
             cpu_percent=cpu_percent,
-            timestamp=current_time
+            timestamp=current_time,
         )
 
     def get_prometheus_metrics(self) -> str:
         """Get metrics in Prometheus format."""
-        return generate_latest(self.registry).decode('utf-8')
+        return generate_latest(self.registry).decode("utf-8")
 
     def reset_counters(self) -> None:
         """Reset all performance counters."""

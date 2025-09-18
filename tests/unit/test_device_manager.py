@@ -9,7 +9,13 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 
-from src.neural.device_manager import DeviceManager, DeviceInfo, DummyModel, get_device_manager, initialize_device
+from src.neural.device_manager import (
+    DeviceManager,
+    DeviceInfo,
+    DummyModel,
+    get_device_manager,
+    initialize_device,
+)
 
 
 class TestDummyModel:
@@ -38,9 +44,9 @@ class TestDummyModel:
     def test_different_game_sizes(self):
         """Test model with different game board sizes."""
         test_cases = [
-            ((7, 15, 15), 225),    # Gomoku
-            ((12, 8, 8), 4096),    # Chess
-            ((17, 19, 19), 361)    # Go
+            ((7, 15, 15), 225),  # Gomoku
+            ((12, 8, 8), 4096),  # Chess
+            ((17, 19, 19), 361),  # Go
         ]
 
         for input_shape, num_actions in test_cases:
@@ -65,7 +71,7 @@ class TestDeviceInfo:
             memory_free_mb=7500.0,
             compute_capability=(8, 6),
             device_id=0,
-            is_cuda_available=True
+            is_cuda_available=True,
         )
 
         assert device_info.name == "Test GPU"
@@ -84,9 +90,9 @@ class TestDeviceManager:
         assert device_manager.memory_fraction == 0.8
         assert device_manager.warmup_iterations == 5
         assert device_manager.device_info is None
-        assert device_manager.device == torch.device('cpu')
+        assert device_manager.device == torch.device("cpu")
 
-    @patch('torch.cuda.is_available')
+    @patch("torch.cuda.is_available")
     def test_detect_device_no_cuda(self, mock_cuda_available):
         """Test device detection when CUDA is not available."""
         mock_cuda_available.return_value = False
@@ -98,10 +104,12 @@ class TestDeviceManager:
         assert device_info.name == "CPU"
         assert device_info.device_id == -1
 
-    @patch('torch.cuda.is_available')
-    @patch('torch.cuda.get_device_properties')
-    @patch('torch.cuda.memory_allocated')
-    def test_detect_device_with_cuda(self, mock_memory_allocated, mock_get_properties, mock_cuda_available):
+    @patch("torch.cuda.is_available")
+    @patch("torch.cuda.get_device_properties")
+    @patch("torch.cuda.memory_allocated")
+    def test_detect_device_with_cuda(
+        self, mock_memory_allocated, mock_get_properties, mock_cuda_available
+    ):
         """Test device detection when CUDA is available."""
         mock_cuda_available.return_value = True
         mock_memory_allocated.return_value = 1024 * 1024 * 1024  # 1GB
@@ -133,7 +141,7 @@ class TestDeviceManager:
             memory_free_mb=7500.0,
             compute_capability=(8, 6),
             device_id=0,
-            is_cuda_available=True
+            is_cuda_available=True,
         )
         assert device_manager._is_rtx_3060_ti(rtx_3060_ti_info)
 
@@ -144,7 +152,7 @@ class TestDeviceManager:
             memory_free_mb=9500.0,
             compute_capability=(8, 6),
             device_id=0,
-            is_cuda_available=True
+            is_cuda_available=True,
         )
         assert not device_manager._is_rtx_3060_ti(rtx_3080_info)
 
@@ -157,7 +165,7 @@ class TestDeviceManager:
             memory_free_mb=0,
             compute_capability=(0, 0),
             device_id=-1,
-            is_cuda_available=False
+            is_cuda_available=False,
         )
 
         warmup_time = device_manager.warmup((7, 15, 15))
@@ -172,9 +180,9 @@ class TestDeviceManager:
             memory_free_mb=7500.0,
             compute_capability=(8, 6),
             device_id=0,
-            is_cuda_available=True
+            is_cuda_available=True,
         )
-        device_manager.device = torch.device('cpu')  # Use CPU for testing
+        device_manager.device = torch.device("cpu")  # Use CPU for testing
 
         warmup_time = device_manager.warmup((7, 15, 15))
 
@@ -191,7 +199,7 @@ class TestDeviceManager:
             memory_free_mb=0,
             compute_capability=(0, 0),
             device_id=-1,
-            is_cuda_available=False
+            is_cuda_available=False,
         )
 
         batch_size = device_manager.estimate_batch_size((7, 15, 15))
@@ -206,9 +214,9 @@ class TestDeviceManager:
             memory_free_mb=7500.0,
             compute_capability=(8, 6),
             device_id=0,
-            is_cuda_available=True
+            is_cuda_available=True,
         )
-        device_manager.device = torch.device('cpu')
+        device_manager.device = torch.device("cpu")
 
         # Mock the _test_batch_size method to return predictable results
         def mock_test_batch_size(model, input_shape, batch_size):
@@ -230,9 +238,11 @@ class TestDeviceManager:
         stats = device_manager.get_memory_stats()
         assert stats == {}
 
-    @patch('torch.cuda.memory_allocated')
-    @patch('torch.cuda.memory_reserved')
-    def test_get_memory_stats_with_gpu(self, mock_memory_reserved, mock_memory_allocated):
+    @patch("torch.cuda.memory_allocated")
+    @patch("torch.cuda.memory_reserved")
+    def test_get_memory_stats_with_gpu(
+        self, mock_memory_reserved, mock_memory_allocated
+    ):
         """Test memory stats with mocked GPU."""
         mock_memory_allocated.return_value = 2 * 1024 * 1024 * 1024  # 2GB
         mock_memory_reserved.return_value = 3 * 1024 * 1024 * 1024  # 3GB
@@ -244,7 +254,7 @@ class TestDeviceManager:
             memory_free_mb=6000.0,
             compute_capability=(8, 6),
             device_id=0,
-            is_cuda_available=True
+            is_cuda_available=True,
         )
 
         stats = device_manager.get_memory_stats()
@@ -262,6 +272,7 @@ class TestGlobalFunctions:
         """Test global device manager singleton."""
         # Clean up any existing global state
         import src.neural.device_manager as dm
+
         dm._global_device_manager = None
 
         manager1 = get_device_manager()
@@ -270,13 +281,14 @@ class TestGlobalFunctions:
         assert manager1 is manager2
         assert isinstance(manager1, DeviceManager)
 
-    @patch('torch.cuda.is_available')
+    @patch("torch.cuda.is_available")
     def test_initialize_device_function(self, mock_cuda_available):
         """Test global device initialization function."""
         mock_cuda_available.return_value = False
 
         # Clean up global state
         import src.neural.device_manager as dm
+
         dm._global_device_manager = None
 
         device_info = initialize_device((7, 15, 15))
@@ -288,7 +300,7 @@ class TestGlobalFunctions:
 class TestIntegration:
     """Integration tests for device manager."""
 
-    @patch('torch.cuda.is_available')
+    @patch("torch.cuda.is_available")
     def test_complete_initialization_flow(self, mock_cuda_available):
         """Test complete device initialization flow."""
         mock_cuda_available.return_value = False

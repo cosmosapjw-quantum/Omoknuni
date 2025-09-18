@@ -28,7 +28,7 @@ from contracts.mcts_api import (
     search_with_info,
     evaluate_position,
     get_best_move,
-    MCTSEngine
+    MCTSEngine,
 )
 
 
@@ -67,7 +67,7 @@ class MockGameState(GameState):
         """Mock implementation."""
         return self._current_player
 
-    def copy(self) -> 'GameState':
+    def copy(self) -> "GameState":
         """Mock implementation."""
         return MockGameState(self._is_terminal, self._terminal_value)
 
@@ -77,19 +77,19 @@ class TestGameStateContract:
 
     def test_gamestate_is_abstract(self):
         """Test that GameState is an abstract base class."""
-        assert hasattr(GameState, '__abstractmethods__')
+        assert hasattr(GameState, "__abstractmethods__")
         assert len(GameState.__abstractmethods__) > 0
 
     def test_gamestate_abstract_methods_exist(self):
         """Test that all required abstract methods are defined."""
         expected_methods = {
-            'apply_move_inplace',
-            'get_legal_moves',
-            'is_terminal',
-            'get_terminal_value',
-            'extract_features',
-            'get_current_player',
-            'copy'
+            "apply_move_inplace",
+            "get_legal_moves",
+            "is_terminal",
+            "get_terminal_value",
+            "extract_features",
+            "get_current_player",
+            "copy",
         }
 
         actual_methods = GameState.__abstractmethods__
@@ -154,21 +154,21 @@ class TestSearchFunctionContract:
         params = sig.parameters
 
         # Check required parameters
-        assert 'state' in params
-        assert 'num_simulations' in params
+        assert "state" in params
+        assert "num_simulations" in params
 
         # Check optional parameters with defaults
-        assert 'cpuct' in params
-        assert params['cpuct'].default == 1.25
+        assert "cpuct" in params
+        assert params["cpuct"].default == 1.25
 
-        assert 'num_threads' in params
-        assert params['num_threads'].default == 8
+        assert "num_threads" in params
+        assert params["num_threads"].default == 8
 
-        assert 'add_dirichlet_noise' in params
-        assert params['add_dirichlet_noise'].default is False
+        assert "add_dirichlet_noise" in params
+        assert params["add_dirichlet_noise"].default is False
 
-        assert 'random_seed' in params
-        assert params['random_seed'].default is None
+        assert "random_seed" in params
+        assert params["random_seed"].default is None
 
     def test_search_not_implemented_error(self):
         """Test that search raises NotImplementedError (TDD requirement)."""
@@ -215,15 +215,15 @@ class TestSearchWithInfoContract:
         params = sig.parameters
 
         # Check required parameters
-        assert 'state' in params
-        assert 'num_simulations' in params
+        assert "state" in params
+        assert "num_simulations" in params
 
         # Check optional parameters
-        assert 'cpuct' in params
-        assert params['cpuct'].default == 1.25
+        assert "cpuct" in params
+        assert params["cpuct"].default == 1.25
 
-        assert 'num_threads' in params
-        assert params['num_threads'].default == 8
+        assert "num_threads" in params
+        assert params["num_threads"].default == 8
 
     def test_search_with_info_not_implemented(self):
         """Test that search_with_info raises NotImplementedError."""
@@ -242,7 +242,7 @@ class TestSearchWithInfoContract:
         return_annotation = sig.return_annotation
 
         # Should return Tuple[np.ndarray, dict]
-        assert hasattr(return_annotation, '__origin__')
+        assert hasattr(return_annotation, "__origin__")
         assert return_annotation.__origin__ is tuple
 
 
@@ -262,8 +262,8 @@ class TestEvaluatePositionContract:
 
         # Should have single required parameter
         assert len(params) == 1
-        assert 'state' in params
-        assert params['state'].default == inspect.Parameter.empty
+        assert "state" in params
+        assert params["state"].default == inspect.Parameter.empty
 
     def test_evaluate_position_not_implemented(self):
         """Test that evaluate_position raises NotImplementedError."""
@@ -282,7 +282,7 @@ class TestEvaluatePositionContract:
         return_annotation = sig.return_annotation
 
         # Should return Tuple[np.ndarray, float]
-        assert hasattr(return_annotation, '__origin__')
+        assert hasattr(return_annotation, "__origin__")
         assert return_annotation.__origin__ is tuple
 
 
@@ -301,12 +301,12 @@ class TestGetBestMoveContract:
         params = sig.parameters
 
         # Check required parameters
-        assert 'state' in params
-        assert 'num_simulations' in params
+        assert "state" in params
+        assert "num_simulations" in params
 
         # Check optional parameters
-        assert 'temperature' in params
-        assert params['temperature'].default == 0.0
+        assert "temperature" in params
+        assert params["temperature"].default == 0.0
 
         # Check **search_kwargs
         assert any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
@@ -347,22 +347,19 @@ class TestMCTSEngineContract:
         params = sig.parameters
 
         # Check required parameters (excluding self)
-        assert 'game_type' in params
-        assert 'model_path' in params
+        assert "game_type" in params
+        assert "model_path" in params
 
         # Check optional parameters with defaults
-        assert 'num_threads' in params
-        assert params['num_threads'].default == 8
+        assert "num_threads" in params
+        assert params["num_threads"].default == 8
 
-        assert 'max_tree_nodes' in params
-        assert params['max_tree_nodes'].default == 50_000_000
+        assert "max_tree_nodes" in params
+        assert params["max_tree_nodes"].default == 50_000_000
 
     def test_mcts_engine_initialization_basic(self):
         """Test basic MCTSEngine initialization."""
-        engine = MCTSEngine(
-            game_type="gomoku",
-            model_path="/path/to/model.pth"
-        )
+        engine = MCTSEngine(game_type="gomoku", model_path="/path/to/model.pth")
 
         assert engine.game_type == "gomoku"
         assert engine.model_path == "/path/to/model.pth"
@@ -375,7 +372,7 @@ class TestMCTSEngineContract:
             game_type="chess",
             model_path="/custom/model.pth",
             num_threads=12,
-            max_tree_nodes=100_000_000
+            max_tree_nodes=100_000_000,
         )
 
         assert engine.game_type == "chess"
@@ -388,7 +385,7 @@ class TestMCTSEngineContract:
         engine = MCTSEngine("gomoku", "/path/to/model.pth")
         state = MockGameState()
 
-        assert hasattr(engine, 'search')
+        assert hasattr(engine, "search")
         assert callable(engine.search)
 
         with pytest.raises(NotImplementedError) as exc_info:
@@ -400,7 +397,7 @@ class TestMCTSEngineContract:
         """Test MCTSEngine.reset_tree method exists and raises NotImplementedError."""
         engine = MCTSEngine("gomoku", "/path/to/model.pth")
 
-        assert hasattr(engine, 'reset_tree')
+        assert hasattr(engine, "reset_tree")
         assert callable(engine.reset_tree)
 
         with pytest.raises(NotImplementedError) as exc_info:
@@ -412,7 +409,7 @@ class TestMCTSEngineContract:
         """Test MCTSEngine.get_tree_stats method exists and raises NotImplementedError."""
         engine = MCTSEngine("gomoku", "/path/to/model.pth")
 
-        assert hasattr(engine, 'get_tree_stats')
+        assert hasattr(engine, "get_tree_stats")
         assert callable(engine.get_tree_stats)
 
         with pytest.raises(NotImplementedError) as exc_info:
@@ -428,12 +425,14 @@ class TestMCTSEngineContract:
         search_sig = inspect.signature(MCTSEngine.search)
         search_params = search_sig.parameters
 
-        assert 'self' in search_params
-        assert 'state' in search_params
-        assert 'num_simulations' in search_params
+        assert "self" in search_params
+        assert "state" in search_params
+        assert "num_simulations" in search_params
 
         # Should accept **kwargs
-        assert any(p.kind == inspect.Parameter.VAR_KEYWORD for p in search_params.values())
+        assert any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in search_params.values()
+        )
 
         # Test return annotation
         assert search_sig.return_annotation is np.ndarray
@@ -443,14 +442,14 @@ class TestMCTSEngineContract:
         reset_params = reset_sig.parameters
 
         assert len(reset_params) == 1  # Only self
-        assert 'self' in reset_params
+        assert "self" in reset_params
 
         # Test get_tree_stats signature
         stats_sig = inspect.signature(MCTSEngine.get_tree_stats)
         stats_params = stats_sig.parameters
 
         assert len(stats_params) == 1  # Only self
-        assert 'self' in stats_params
+        assert "self" in stats_params
         assert stats_sig.return_annotation is dict
 
 
@@ -493,12 +492,7 @@ class TestAPIIntegration:
         # This test ensures we have 100% coverage of the contract API
 
         # All functions should be tested
-        functions_to_test = [
-            search,
-            search_with_info,
-            evaluate_position,
-            get_best_move
-        ]
+        functions_to_test = [search, search_with_info, evaluate_position, get_best_move]
 
         for func in functions_to_test:
             assert callable(func)

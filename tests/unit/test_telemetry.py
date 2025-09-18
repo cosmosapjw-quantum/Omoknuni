@@ -55,8 +55,8 @@ class TestMetricsCollectorBasic:
         assert "alphazero_inference_requests_total" in metrics_output
         assert "alphazero_inference_duration_seconds" in metrics_output
 
-    @patch('psutil.virtual_memory')
-    @patch('psutil.cpu_percent')
+    @patch("psutil.virtual_memory")
+    @patch("psutil.cpu_percent")
     def test_get_current_metrics(self, mock_cpu_percent, mock_virtual_memory):
         """Test getting current performance metrics."""
         # Mock system data
@@ -81,7 +81,9 @@ class TestMetricsCollectorBasic:
         # Add simulation times manually for testing (within 10-second window)
         current_time = time.time()
         for i in range(50):
-            collector._simulation_times.append(current_time - 5.0 + i * 0.1)  # 5 sims/sec over 10 seconds
+            collector._simulation_times.append(
+                current_time - 5.0 + i * 0.1
+            )  # 5 sims/sec over 10 seconds
 
         collector._update_simulation_rate()
 
@@ -111,7 +113,7 @@ class TestStructuredLoggingBasic:
             "test_component",
             level=LogLevel.DEBUG,
             enable_console=False,  # Disable console for testing
-            enable_file=False
+            enable_file=False,
         )
 
         assert logger.name == "test_component"
@@ -122,8 +124,7 @@ class TestStructuredLoggingBasic:
         logger = AlphaZeroLogger("test", enable_console=False, enable_file=False)
 
         context_logger = logger.with_context(
-            operation="test_operation",
-            game_type="gomoku"
+            operation="test_operation", game_type="gomoku"
         )
 
         assert context_logger.context.operation == "test_operation"
@@ -131,11 +132,7 @@ class TestStructuredLoggingBasic:
 
     def test_log_context_dataclass(self):
         """Test LogContext dataclass."""
-        context = LogContext(
-            component="test",
-            operation="test_op",
-            game_type="gomoku"
-        )
+        context = LogContext(component="test", operation="test_op", game_type="gomoku")
 
         assert context.component == "test"
         assert context.operation == "test_op"
@@ -158,7 +155,7 @@ class TestStructuredLoggingBasic:
             batch_size=100,
             simulations_per_second=25000.5,
             gpu_utilization=87.3,
-            duration=0.004
+            duration=0.004,
         )
 
     def test_inference_batch_logging_method(self):
@@ -170,7 +167,7 @@ class TestStructuredLoggingBasic:
             batch_size=64,
             inference_time=0.003,
             queue_wait_time=0.001,
-            throughput=21333.3
+            throughput=21333.3,
         )
 
 

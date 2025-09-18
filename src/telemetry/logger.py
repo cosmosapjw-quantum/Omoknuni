@@ -16,6 +16,7 @@ from enum import Enum
 
 class LogLevel(Enum):
     """Log level enumeration."""
+
     DEBUG = "DEBUG"
     INFO = "INFO"
     WARNING = "WARNING"
@@ -26,6 +27,7 @@ class LogLevel(Enum):
 @dataclass
 class LogContext:
     """Structured logging context."""
+
     component: str
     operation: Optional[str] = None
     game_type: Optional[str] = None
@@ -51,8 +53,12 @@ class StructuredFormatter(logging.Formatter):
         }
 
         # Add structured context if available
-        if hasattr(record, 'context') and record.context:
-            context_dict = asdict(record.context) if hasattr(record.context, '__dict__') else record.context
+        if hasattr(record, "context") and record.context:
+            context_dict = (
+                asdict(record.context)
+                if hasattr(record.context, "__dict__")
+                else record.context
+            )
             log_entry["context"] = context_dict
 
         # Add exception info if present
@@ -61,12 +67,31 @@ class StructuredFormatter(logging.Formatter):
 
         # Add extra fields
         for key, value in record.__dict__.items():
-            if key not in log_entry and not key.startswith('_'):
-                if key not in ['name', 'msg', 'args', 'levelname', 'levelno', 'pathname',
-                             'filename', 'module', 'lineno', 'funcName', 'created',
-                             'msecs', 'relativeCreated', 'thread', 'threadName',
-                             'processName', 'process', 'getMessage', 'exc_info',
-                             'exc_text', 'stack_info', 'context']:
+            if key not in log_entry and not key.startswith("_"):
+                if key not in [
+                    "name",
+                    "msg",
+                    "args",
+                    "levelname",
+                    "levelno",
+                    "pathname",
+                    "filename",
+                    "module",
+                    "lineno",
+                    "funcName",
+                    "created",
+                    "msecs",
+                    "relativeCreated",
+                    "thread",
+                    "threadName",
+                    "processName",
+                    "process",
+                    "getMessage",
+                    "exc_info",
+                    "exc_text",
+                    "stack_info",
+                    "context",
+                ]:
                     log_entry[key] = value
 
         return json.dumps(log_entry, default=str)
@@ -87,7 +112,7 @@ class AlphaZeroLogger:
         enable_console: bool = True,
         enable_file: bool = False,
         log_file: Optional[str] = None,
-        structured_format: bool = True
+        structured_format: bool = True,
     ):
         """
         Initialize structured logger.
@@ -105,7 +130,9 @@ class AlphaZeroLogger:
 
         # Set up Python logger
         self.logger = logging.getLogger(name)
-        self.logger.setLevel(getattr(logging, level.value if isinstance(level, LogLevel) else level))
+        self.logger.setLevel(
+            getattr(logging, level.value if isinstance(level, LogLevel) else level)
+        )
 
         # Clear existing handlers to avoid duplicates
         self.logger.handlers.clear()
@@ -118,7 +145,7 @@ class AlphaZeroLogger:
             else:
                 console_handler.setFormatter(
                     logging.Formatter(
-                        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+                        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
                     )
                 )
             self.logger.addHandler(console_handler)
@@ -134,7 +161,7 @@ class AlphaZeroLogger:
             else:
                 file_handler.setFormatter(
                     logging.Formatter(
-                        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+                        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
                     )
                 )
             self.logger.addHandler(file_handler)
@@ -142,7 +169,7 @@ class AlphaZeroLogger:
         # Prevent propagation to avoid duplicate logs
         self.logger.propagate = False
 
-    def with_context(self, **kwargs) -> 'AlphaZeroLogger':
+    def with_context(self, **kwargs) -> "AlphaZeroLogger":
         """Create a new logger instance with additional context."""
         new_logger = AlphaZeroLogger(self.name, enable_console=False, enable_file=False)
         new_logger.logger = self.logger  # Share the same underlying logger
@@ -150,11 +177,13 @@ class AlphaZeroLogger:
         # Update context
         new_context = LogContext(
             component=self.context.component,
-            operation=kwargs.get('operation', self.context.operation),
-            game_type=kwargs.get('game_type', self.context.game_type),
-            thread_id=kwargs.get('thread_id', self.context.thread_id),
-            session_id=kwargs.get('session_id', self.context.session_id),
-            performance_metrics=kwargs.get('performance_metrics', self.context.performance_metrics)
+            operation=kwargs.get("operation", self.context.operation),
+            game_type=kwargs.get("game_type", self.context.game_type),
+            thread_id=kwargs.get("thread_id", self.context.thread_id),
+            session_id=kwargs.get("session_id", self.context.session_id),
+            performance_metrics=kwargs.get(
+                "performance_metrics", self.context.performance_metrics
+            ),
         )
 
         # Add any additional context fields
@@ -167,7 +196,7 @@ class AlphaZeroLogger:
 
     def _log(self, level: LogLevel, message: str, **kwargs) -> None:
         """Internal logging method with context."""
-        extra = {'context': self.context}
+        extra = {"context": self.context}
         extra.update(kwargs)
 
         getattr(self.logger, level.value.lower())(message, extra=extra)
@@ -196,7 +225,7 @@ class AlphaZeroLogger:
         self,
         operation: str,
         duration: float,
-        additional_metrics: Optional[Dict[str, float]] = None
+        additional_metrics: Optional[Dict[str, float]] = None,
     ) -> None:
         """
         Log performance metrics for an operation.
@@ -211,10 +240,11 @@ class AlphaZeroLogger:
             metrics.update(additional_metrics)
 
         performance_logger = self.with_context(
-            operation=operation,
-            performance_metrics=metrics
+            operation=operation, performance_metrics=metrics
         )
-        performance_logger.info(f"Performance: {operation} completed in {duration:.4f}s")
+        performance_logger.info(
+            f"Performance: {operation} completed in {duration:.4f}s"
+        )
 
     def log_simulation_batch(
         self,
@@ -222,7 +252,7 @@ class AlphaZeroLogger:
         batch_size: int,
         simulations_per_second: float,
         gpu_utilization: float,
-        duration: float
+        duration: float,
     ) -> None:
         """
         Log MCTS simulation batch performance.
@@ -238,13 +268,13 @@ class AlphaZeroLogger:
             "batch_size": batch_size,
             "simulations_per_second": simulations_per_second,
             "gpu_utilization_percent": gpu_utilization,
-            "duration_seconds": duration
+            "duration_seconds": duration,
         }
 
         batch_logger = self.with_context(
             operation="simulation_batch",
             game_type=game_type,
-            performance_metrics=metrics
+            performance_metrics=metrics,
         )
         batch_logger.info(
             f"Simulation batch: {batch_size} sims, "
@@ -257,7 +287,7 @@ class AlphaZeroLogger:
         batch_size: int,
         inference_time: float,
         queue_wait_time: float,
-        throughput: float
+        throughput: float,
     ) -> None:
         """
         Log neural network inference batch performance.
@@ -273,12 +303,11 @@ class AlphaZeroLogger:
             "inference_time_seconds": inference_time,
             "queue_wait_seconds": queue_wait_time,
             "throughput_per_second": throughput,
-            "total_time_seconds": inference_time + queue_wait_time
+            "total_time_seconds": inference_time + queue_wait_time,
         }
 
         inference_logger = self.with_context(
-            operation="inference_batch",
-            performance_metrics=metrics
+            operation="inference_batch", performance_metrics=metrics
         )
         inference_logger.info(
             f"Inference batch: {batch_size} positions, "
@@ -294,7 +323,7 @@ _default_config = {
     "level": LogLevel.INFO,
     "enable_console": True,
     "enable_file": False,
-    "structured_format": True
+    "structured_format": True,
 }
 
 
@@ -321,7 +350,7 @@ def configure_logging(
     enable_console: bool = True,
     enable_file: bool = False,
     log_file: Optional[str] = None,
-    structured_format: bool = True
+    structured_format: bool = True,
 ) -> None:
     """
     Configure global logging defaults.
@@ -334,13 +363,15 @@ def configure_logging(
         structured_format: Use structured JSON format
     """
     global _default_config
-    _default_config.update({
-        "level": level,
-        "enable_console": enable_console,
-        "enable_file": enable_file,
-        "log_file": log_file,
-        "structured_format": structured_format
-    })
+    _default_config.update(
+        {
+            "level": level,
+            "enable_console": enable_console,
+            "enable_file": enable_file,
+            "log_file": log_file,
+            "structured_format": structured_format,
+        }
+    )
 
     # Clear existing loggers to pick up new config
     _loggers.clear()

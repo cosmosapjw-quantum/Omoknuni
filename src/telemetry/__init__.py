@@ -9,7 +9,7 @@ from .metrics import (
     MetricsCollector,
     PerformanceMetrics,
     get_metrics_collector,
-    cleanup_metrics
+    cleanup_metrics,
 )
 
 from .logger import (
@@ -18,7 +18,7 @@ from .logger import (
     LogContext,
     get_logger,
     configure_logging,
-    disable_logging
+    disable_logging,
 )
 
 __all__ = [
@@ -27,12 +27,11 @@ __all__ = [
     "PerformanceMetrics",
     "get_metrics_collector",
     "cleanup_metrics",
-
     # Logging
     "AlphaZeroLogger",
     "LogLevel",
     "LogContext",
     "get_logger",
     "configure_logging",
-    "disable_logging"
+    "disable_logging",
 ]

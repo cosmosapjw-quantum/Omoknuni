@@ -21,6 +21,7 @@ from src.telemetry import get_logger
 @dataclass
 class DeviceInfo:
     """Information about detected GPU device."""
+
     name: str
     memory_total_mb: float
     memory_free_mb: float
@@ -52,9 +53,9 @@ class DummyModel(nn.Module):
         self.relu = nn.ReLU(inplace=True)
 
         # Residual blocks
-        self.residual_blocks = nn.ModuleList([
-            self._make_residual_block(128) for _ in range(4)
-        ])
+        self.residual_blocks = nn.ModuleList(
+            [self._make_residual_block(128) for _ in range(4)]
+        )
 
         # Policy head
         self.policy_conv = nn.Conv2d(128, 2, kernel_size=1)
@@ -74,7 +75,7 @@ class DummyModel(nn.Module):
             nn.BatchNorm2d(channels),
             nn.ReLU(inplace=True),
             nn.Conv2d(channels, channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(channels)
+            nn.BatchNorm2d(channels),
         )
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -124,7 +125,7 @@ class DeviceManager:
         self.logger = get_logger("device_manager")
 
         self.device_info: Optional[DeviceInfo] = None
-        self.device: torch.device = torch.device('cpu')
+        self.device: torch.device = torch.device("cpu")
 
         # RTX 3060 Ti specific optimizations
         self.rtx_3060_ti_memory_gb = 8.0
@@ -147,18 +148,24 @@ class DeviceManager:
                 memory_free_mb=0,
                 compute_capability=(0, 0),
                 device_id=-1,
-                is_cuda_available=False
+                is_cuda_available=False,
             )
 
         # Use first GPU device
         device_id = 0
-        self.device = torch.device(f'cuda:{device_id}')
+        self.device = torch.device(f"cuda:{device_id}")
 
         # Get device properties
         props = torch.cuda.get_device_properties(device_id)
         memory_total_mb = props.total_memory / 1024 / 1024
-        memory_free_mb = (torch.cuda.get_device_properties(device_id).total_memory -
-                         torch.cuda.memory_allocated(device_id)) / 1024 / 1024
+        memory_free_mb = (
+            (
+                torch.cuda.get_device_properties(device_id).total_memory
+                - torch.cuda.memory_allocated(device_id)
+            )
+            / 1024
+            / 1024
+        )
 
         device_info = DeviceInfo(
             name=props.name,
@@ -166,7 +173,7 @@ class DeviceManager:
             memory_free_mb=memory_free_mb,
             compute_capability=(props.major, props.minor),
             device_id=device_id,
-            is_cuda_available=True
+            is_cuda_available=True,
         )
 
         self.device_info = device_info
@@ -185,9 +192,15 @@ class DeviceManager:
 
     def _is_rtx_3060_ti(self, device_info: DeviceInfo) -> bool:
         """Check if device is RTX 3060 Ti based on memory and compute capability."""
-        memory_match = abs(device_info.memory_total_mb - self.rtx_3060_ti_memory_gb * 1024) < 512
-        compute_match = device_info.compute_capability == self.rtx_3060_ti_compute_capability
-        name_match = "RTX 3060" in device_info.name or "GeForce RTX 3060" in device_info.name
+        memory_match = (
+            abs(device_info.memory_total_mb - self.rtx_3060_ti_memory_gb * 1024) < 512
+        )
+        compute_match = (
+            device_info.compute_capability == self.rtx_3060_ti_compute_capability
+        )
+        name_match = (
+            "RTX 3060" in device_info.name or "GeForce RTX 3060" in device_info.name
+        )
 
         return memory_match and (compute_match or name_match)
 
@@ -223,7 +236,9 @@ class DeviceManager:
             self.logger.warning("No GPU available for warmup")
             return 0.0
 
-        self.logger.info(f"Starting GPU warmup with {self.warmup_iterations} iterations")
+        self.logger.info(
+            f"Starting GPU warmup with {self.warmup_iterations} iterations"
+        )
 
         # Create dummy model
         dummy_model = DummyModel(input_shape).to(self.device)
@@ -248,15 +263,21 @@ class DeviceManager:
                 warmup_times.append(iteration_time_ms)
 
                 if i == 0:
-                    self.logger.debug(f"First warmup iteration: {iteration_time_ms:.2f}ms")
+                    self.logger.debug(
+                        f"First warmup iteration: {iteration_time_ms:.2f}ms"
+                    )
 
         # Calculate average warmup time
-        avg_warmup_time = sum(warmup_times[1:]) / max(1, len(warmup_times) - 1)  # Skip first iteration
+        avg_warmup_time = sum(warmup_times[1:]) / max(
+            1, len(warmup_times) - 1
+        )  # Skip first iteration
 
         if self.device_info:
             self.device_info.warmup_time_ms = avg_warmup_time
 
-        self.logger.info(f"GPU warmup completed: {avg_warmup_time:.2f}ms average inference time")
+        self.logger.info(
+            f"GPU warmup completed: {avg_warmup_time:.2f}ms average inference time"
+        )
 
         # Clean up
         del dummy_model, dummy_input
@@ -264,8 +285,9 @@ class DeviceManager:
 
         return avg_warmup_time
 
-    def estimate_batch_size(self, input_shape: Tuple[int, int, int],
-                          max_batch_size: int = 256) -> int:
+    def estimate_batch_size(
+        self, input_shape: Tuple[int, int, int], max_batch_size: int = 256
+    ) -> int:
         """
         Estimate optimal batch size using binary search within memory constraints.
 
@@ -319,8 +341,9 @@ class DeviceManager:
 
         return optimal_batch_size
 
-    def _test_batch_size(self, model: nn.Module, input_shape: Tuple[int, int, int],
-                        batch_size: int) -> bool:
+    def _test_batch_size(
+        self, model: nn.Module, input_shape: Tuple[int, int, int], batch_size: int
+    ) -> bool:
         """
         Test if a given batch size fits within memory constraints.
 
@@ -421,7 +444,7 @@ class DeviceManager:
             "allocated_mb": allocated,
             "reserved_mb": reserved,
             "total_mb": self.device_info.memory_total_mb,
-            "utilization_percent": (allocated / self.device_info.memory_total_mb) * 100
+            "utilization_percent": (allocated / self.device_info.memory_total_mb) * 100,
         }
 
 

@@ -79,7 +79,7 @@ class TestTreeMemoryLayout:
             "parent_indices_",
             "first_child_indices_",
             "num_children_",
-            "flags_"
+            "flags_",
         ]
 
         for array_name in expected_arrays:
@@ -119,7 +119,7 @@ class TestTreeMemoryLayout:
             "add_root_node(",
             "validate_tree(",
             "get_memory_usage(",
-            "get_bytes_per_node("
+            "get_bytes_per_node(",
         ]
 
         for method in essential_methods:
@@ -136,10 +136,11 @@ class TestTreeMemoryLayout:
 
         # Should not have raw pointer navigation between nodes
         # (pointers to arrays for SIMD are OK, but not for node navigation)
-        lines = content.split('\n')
+        lines = content.split("\n")
         pointer_navigation_lines = [
-            line for line in lines
-            if '->' in line and 'node' in line.lower() and 'array' not in line.lower()
+            line
+            for line in lines
+            if "->" in line and "node" in line.lower() and "array" not in line.lower()
         ]
 
         # Should have minimal or no pointer navigation between nodes
@@ -155,7 +156,7 @@ class TestTreeMemoryLayout:
             "validate_tree(",
             "get_node_info(",
             "TreeMemoryStats",
-            "get_tree_memory_stats("
+            "get_tree_memory_stats(",
         ]
 
         for feature in validation_features:
@@ -264,7 +265,8 @@ int main() {
                 "-Wextra",
                 "-I.",
                 str(test_cpp_path),
-                "-o", str(test_exe_path)
+                "-o",
+                str(test_exe_path),
             ]
 
             try:
@@ -273,7 +275,7 @@ int main() {
                     cwd=temp_dir,
                     capture_output=True,
                     text=True,
-                    timeout=30
+                    timeout=30,
                 )
 
                 if result.returncode != 0:
@@ -361,7 +363,8 @@ int main() {
                 "-O2",
                 "-I.",
                 str(test_cpp_path),
-                "-o", str(test_exe_path)
+                "-o",
+                str(test_exe_path),
             ]
 
             try:
@@ -371,7 +374,7 @@ int main() {
                     cwd=temp_dir,
                     capture_output=True,
                     text=True,
-                    timeout=30
+                    timeout=30,
                 )
 
                 if compile_result.returncode != 0:
@@ -383,7 +386,7 @@ int main() {
                     cwd=temp_dir,
                     capture_output=True,
                     text=True,
-                    timeout=10
+                    timeout=10,
                 )
 
                 if run_result.returncode == 0:
@@ -428,7 +431,7 @@ class TestTreeAPIConsistency:
             "get_visit_counts_ptr(",
             "get_total_values_ptr(",
             "get_prior_probs_ptr(",
-            "get_virtual_losses_ptr("
+            "get_virtual_losses_ptr(",
         ]
 
         for method in simd_methods:
@@ -443,6 +446,7 @@ class TestTreeAPIConsistency:
         assert "validate_tree(" in content
         assert "NodeInfo" in content
         assert "TreeMemoryStats" in content
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -32,7 +32,7 @@ def test_build_system_integration():
 def test_package_structure_integration():
     """Test that package structure supports proper imports."""
     # Test that all main modules are importable
-    modules_to_test = ['core', 'games', 'neural', 'training', 'telemetry', 'utils']
+    modules_to_test = ["core", "games", "neural", "training", "telemetry", "utils"]
 
     for module_name in modules_to_test:
         try:
@@ -46,11 +46,7 @@ def test_cpp_extensions_structure():
     """Test that C++ extensions are properly structured."""
     project_root = Path(__file__).parent.parent.parent
 
-    cpp_dirs = [
-        "cpp_extensions/mcts",
-        "cpp_extensions/games",
-        "cpp_extensions/utils"
-    ]
+    cpp_dirs = ["cpp_extensions/mcts", "cpp_extensions/games", "cpp_extensions/utils"]
 
     for cpp_dir in cpp_dirs:
         full_path = project_root / cpp_dir
@@ -70,14 +66,20 @@ def test_requirements_consistency():
 
     # Read requirements and check they're parseable
     content = requirements_file.read_text()
-    lines = [line.strip() for line in content.split('\n') if line.strip() and not line.startswith('#')]
+    lines = [
+        line.strip()
+        for line in content.split("\n")
+        if line.strip() and not line.startswith("#")
+    ]
 
     # Should have some core dependencies
-    requirement_names = [line.split('>=')[0].split('==')[0] for line in lines]
-    expected_deps = ['torch', 'numpy', 'pybind11', 'cython']
+    requirement_names = [line.split(">=")[0].split("==")[0] for line in lines]
+    expected_deps = ["torch", "numpy", "pybind11", "cython"]
 
     for dep in expected_deps:
-        assert any(dep in req for req in requirement_names), f"Missing expected dependency: {dep}"
+        assert any(
+            dep in req for req in requirement_names
+        ), f"Missing expected dependency: {dep}"
 
 
 @pytest.mark.slow

@@ -48,7 +48,7 @@ def test_string_operations_benchmark(benchmark):
         data = []
         for i in range(10000):
             s = f"test_string_{i}_benchmark"
-            data.append(s.upper().lower().split('_'))
+            data.append(s.upper().lower().split("_"))
         return len(data)
 
     result = benchmark(string_operations)
@@ -63,10 +63,11 @@ def test_gpu_computation_benchmark(benchmark):
     def gpu_computation():
         try:
             import torch
+
             if torch.cuda.is_available():
                 # Simple GPU computation
-                x = torch.randn(1000, 1000, device='cuda')
-                y = torch.randn(1000, 1000, device='cuda')
+                x = torch.randn(1000, 1000, device="cuda")
+                y = torch.randn(1000, 1000, device="cuda")
                 result = torch.mm(x, y)
                 return result.sum().item()
             else:

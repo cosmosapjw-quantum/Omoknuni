@@ -10,7 +10,7 @@ from .device_manager import (
     DeviceInfo,
     DummyModel,
     get_device_manager,
-    initialize_device
+    initialize_device,
 )
 
 __all__ = [
@@ -18,5 +18,5 @@ __all__ = [
     "DeviceInfo",
     "DummyModel",
     "get_device_manager",
-    "initialize_device"
+    "initialize_device",
 ]

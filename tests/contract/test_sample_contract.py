@@ -22,6 +22,7 @@ class TestGameStateContract:
         try:
             # This will fail until we implement the interface
             from core.game_state import IGameState
+
             assert IGameState is not None
         except ImportError:
             pytest.skip("IGameState not yet implemented (expected for T002)")
@@ -31,6 +32,7 @@ class TestGameStateContract:
         try:
             # This will fail until we implement the interface
             from core.mcts import MCTSEngine
+
             assert MCTSEngine is not None
         except ImportError:
             pytest.skip("MCTSEngine not yet implemented (expected for T002)")
@@ -44,6 +46,7 @@ class TestTelemetryContract:
         try:
             # This will fail until T003 is implemented
             from telemetry.metrics import MetricsCollector
+
             assert MetricsCollector is not None
         except ImportError:
             pytest.skip("MetricsCollector not yet implemented (expected for T002)")
@@ -57,6 +60,7 @@ class TestNeuralNetworkContract:
         try:
             # This will fail until T004 is implemented
             from neural.device_manager import DeviceManager
+
             assert DeviceManager is not None
         except ImportError:
             pytest.skip("DeviceManager not yet implemented (expected for T002)")
