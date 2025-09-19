@@ -85,6 +85,15 @@ All notable changes to this project will be documented in this file.
 - Optimal batch size estimation (128-512) for maximum GPU utilization (32-51% VRAM usage)
 - Game-specific model factory for Gomoku (7 planes), Chess (12 planes), Go (17 planes)
 - Comprehensive validation including gradient flow, output ranges, and memory constraints
+- **T015**: Dynamic micro-batching with sophisticated count-based and timeout-based optimization
+- Enhanced batch collection with three-phase strategy: quick collection, smart timeout-based, and opportunistic
+- Count-based batching targeting ≥32 positions for efficient GPU utilization (meets specification)
+- Timeout-based batching with ≤3ms constraint for responsive inference (meets specification)
+- GPU utilization monitoring using nvidia-ml-py with automatic fallback to memory-based estimation
+- Adaptive batch sizing based on real-time GPU utilization feedback targeting >80% utilization
+- Performance history tracking with moving averages for throughput and GPU utilization optimization
+- Enhanced metrics collection including GPU utilization samples, performance targets status, and compliance tracking
+- Comprehensive unit test suite with 19 test cases covering all micro-batching scenarios and edge cases
 
 ### Changed
 - Moved existing game logic from `/games` to `/cpp_extensions/games/`

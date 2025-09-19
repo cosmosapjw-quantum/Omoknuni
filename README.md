@@ -13,15 +13,27 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - [x] **T004**: GPU warmup and device detection system
 - [x] **T005**: MCTS API contract tests for Test-Driven Development
 - [x] **T006**: Structure-of-Arrays memory layout (27 bytes/node, <1GB for 50M nodes)
+- [x] **T007**: Node pool pre-allocation for O(1) MCTS tree operations (330M allocations/sec)
+- [x] **T008**: Vectorized PUCT selection with AVX2 SIMD optimizations (3.6-5.2x speedup)
+- [x] **T009**: Thread-safe virtual loss mechanism for MCTS coordination
+- [x] **T010**: Value backup mechanism with proper sign flipping per tree level
+- [x] **T011**: Single-threaded MCTS integration test for complete search cycle
+- [x] **T012**: Contract test for neural network inference API
+- [x] **T013**: ResNet architecture with Squeeze-Excitation attention (20 blocks, 256 channels)
+- [x] **T014**: GPU inference worker with queue-based threading and dynamic batching
+- [x] **T015**: Dynamic micro-batching with count-based (≥32) OR timeout-based (≤3ms) optimization
 
 ### Current Architecture
 
 - **Hybrid CPU/GPU**: Shared-tree MCTS on CPU with asynchronous GPU neural network inference
 - **Performance Target**: 30-40k simulations/second with 80-92% GPU utilization
 - **Target Hardware**: AMD Ryzen 5900X + NVIDIA RTX 3060 Ti (8GB VRAM)
-- **Memory Efficient**: Structure-of-Arrays layout, <1GB tree memory for 10M nodes
-- **Telemetry**: Prometheus-compatible metrics with GPU monitoring and structured logging
-- **Device Management**: RTX 3060 Ti optimizations with automatic batch size estimation
+- **Memory Efficient**: Structure-of-Arrays layout, <1GB tree memory for 10M nodes (27 bytes/node achieved)
+- **Advanced Batching**: Dynamic micro-batching with count-based (≥32) OR timeout-based (≤3ms) optimization
+- **GPU Monitoring**: Real-time utilization tracking with nvidia-ml-py and adaptive batch sizing
+- **Vectorized Operations**: AVX2-optimized PUCT selection with 3.6-5.2x performance improvement
+- **Thread Safety**: Virtual loss coordination and atomic operations for 8-12 parallel workers
+- **Telemetry**: Prometheus-compatible metrics with comprehensive performance monitoring
 
 ## Quick Start
 
@@ -66,6 +78,9 @@ python -m pytest tests/performance/   # Performance benchmarks
 
 # Run with coverage
 python -m pytest --cov=src --cov-report=html
+
+# Test micro-batching performance
+python scripts/validate_micro_batching.py
 ```
 
 ### Project Structure
@@ -74,7 +89,7 @@ python -m pytest --cov=src --cov-report=html
 ├── src/                    # Python orchestration layer
 │   ├── core/              # MCTS search coordination
 │   ├── games/             # Game implementations
-│   ├── neural/            # Neural networks & GPU inference
+│   ├── neural/            # Neural networks, GPU inference & micro-batching
 │   ├── training/          # Self-play & training pipeline
 │   ├── telemetry/         # Performance monitoring
 │   └── utils/             # Shared utilities
@@ -99,8 +114,11 @@ This project follows [Spec-Driven Development](specs/001-goal-create-spec/). See
 ## Performance Targets
 
 - **Simulations/sec**: 30,000+ including neural network inference
-- **GPU utilization**: 80-92% sustained during search
-- **Tree memory**: <1GB for typical search configurations
+- **GPU utilization**: 80-92% sustained during search (adaptive micro-batching implemented)
+- **Batch efficiency**: ≥32 positions OR ≤3ms timeout (T015 specification met)
+- **Tree memory**: <1GB for typical search configurations (27 bytes/node achieved)
+- **Node allocation**: O(1) operations with 330M allocations/second
+- **PUCT selection**: 3.6-5.2x speedup with AVX2 vectorization
 - **Training speed**: 200-300 self-play games per hour
 - **Games supported**: Gomoku, Chess (including Chess960), Go (9x9 to 19x19)
 

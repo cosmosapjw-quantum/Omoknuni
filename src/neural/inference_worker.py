@@ -19,6 +19,15 @@ from collections import deque
 import logging
 import psutil
 import os
+from dataclasses import dataclass
+
+# GPU monitoring (optional import)
+try:
+    import pynvml
+    NVML_AVAILABLE = True
+except ImportError:
+    NVML_AVAILABLE = False
+    pynvml = None
 
 # Import contract interfaces
 import sys
@@ -59,6 +68,16 @@ class GPUInferenceWorker(InferenceWorker):
         self.timeout_ms = timeout_ms / 1000.0  # Convert to seconds
         self.use_mixed_precision = use_mixed_precision
 
+        # Dynamic micro-batching parameters
+        self.min_batch_size = max(1, min(32, batch_size))  # Target ≥32 for efficiency
+        self.max_timeout_ms = min(3.0, timeout_ms) / 1000.0  # Target ≤3ms for responsiveness
+        self.target_gpu_utilization = 0.80  # Target >80% GPU utilization
+
+        # Adaptive batching state
+        self._performance_history = deque(maxlen=100)  # Track recent performance
+        self._current_optimal_batch = self.min_batch_size
+        self._gpu_handle = None
+
         # Thread control
         self._stop_event = threading.Event()
         self._worker_thread = None
@@ -80,6 +99,9 @@ class GPUInferenceWorker(InferenceWorker):
 
         # Setup logging
         self.logger = logging.getLogger(f'InferenceWorker[{device}]')
+
+        # Initialize GPU monitoring
+        self._init_gpu_monitoring()
 
         # Initialize model
         self._load_model()
@@ -120,6 +142,36 @@ class GPUInferenceWorker(InferenceWorker):
         except Exception as e:
             self.logger.error(f"Failed to load model: {e}")
             raise
+
+    def _init_gpu_monitoring(self) -> None:
+        """Initialize GPU monitoring for utilization tracking."""
+        if not NVML_AVAILABLE or not self.device.startswith('cuda'):
+            self.logger.info("GPU monitoring not available (no pynvml or CPU device)")
+            return
+
+        try:
+            pynvml.nvmlInit()
+            device_id = int(self.device.split(':')[1]) if ':' in self.device else 0
+            self._gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(device_id)
+            self.logger.info(f"GPU monitoring initialized for device {device_id}")
+        except Exception as e:
+            self.logger.warning(f"Could not initialize GPU monitoring: {e}")
+            self._gpu_handle = None
+
+    def _get_gpu_utilization(self) -> float:
+        """Get current GPU utilization percentage.
+
+        Returns:
+            GPU utilization as percentage (0.0-1.0), or 0.0 if unavailable
+        """
+        if not self._gpu_handle:
+            return 0.0
+
+        try:
+            util = pynvml.nvmlDeviceGetUtilizationRates(self._gpu_handle)
+            return util.gpu / 100.0
+        except Exception:
+            return 0.0
 
     def warmup(self, input_shape: Tuple[int, int, int]) -> None:
         """Warmup GPU with dummy inference calls.
@@ -243,7 +295,10 @@ class GPUInferenceWorker(InferenceWorker):
             self.logger.info("Inference loop ended")
 
     def _collect_batch(self, input_queue: Queue) -> List[InferenceRequest]:
-        """Collect a batch of requests from input queue.
+        """Collect a batch of requests with dynamic micro-batching.
+
+        Uses sophisticated count-based (≥32) OR timeout-based (≤3ms) batching
+        to optimize for target >80% GPU utilization.
 
         Args:
             input_queue: Queue of inference requests
@@ -254,28 +309,123 @@ class GPUInferenceWorker(InferenceWorker):
         batch = []
         start_time = time.time()
 
-        # Try to get first request with timeout
+        # Determine optimal batch size based on recent performance
+        target_batch_size = self._get_optimal_batch_size()
+
+        # Try to get first request with micro-timeout
         try:
-            first_request = input_queue.get(timeout=self.timeout_ms)
+            first_request = input_queue.get(timeout=self.max_timeout_ms)
             batch.append(first_request)
         except Empty:
             return batch
 
-        # Collect additional requests up to batch_size or timeout
-        while len(batch) < self.batch_size:
-            elapsed = time.time() - start_time
-            remaining_timeout = max(0, self.timeout_ms - elapsed)
+        # Phase 1: Quick collection to target batch size
+        # Collect aggressively for first few requests
+        quick_timeout = min(0.001, self.max_timeout_ms / 4)  # 1ms or quarter of max
 
-            if remaining_timeout <= 0:
+        while len(batch) < target_batch_size:
+            elapsed = time.time() - start_time
+
+            # If we're approaching max timeout, be more aggressive
+            if elapsed > self.max_timeout_ms * 0.8:
                 break
 
             try:
-                request = input_queue.get(timeout=remaining_timeout)
+                request = input_queue.get(timeout=quick_timeout)
                 batch.append(request)
             except Empty:
                 break
 
+        # Phase 2: Smart timeout-based collection
+        # If we haven't reached min efficient batch size, wait a bit longer
+        if len(batch) < self.min_batch_size:
+            remaining_timeout = max(0, self.max_timeout_ms - (time.time() - start_time))
+
+            while len(batch) < self.min_batch_size and remaining_timeout > 0:
+                try:
+                    request = input_queue.get(timeout=remaining_timeout)
+                    batch.append(request)
+
+                    # Update remaining timeout
+                    elapsed = time.time() - start_time
+                    remaining_timeout = max(0, self.max_timeout_ms - elapsed)
+
+                except Empty:
+                    break
+
+        # Phase 3: Opportunistic collection
+        # If we have time left and haven't hit max batch size, collect more
+        remaining_time = self.max_timeout_ms - (time.time() - start_time)
+        if remaining_time > 0 and len(batch) < self.batch_size:
+            # Use very short timeout for opportunistic collection
+            opportunistic_timeout = min(0.0005, remaining_time)  # 0.5ms max
+
+            while len(batch) < self.batch_size and remaining_time > 0:
+                try:
+                    request = input_queue.get(timeout=opportunistic_timeout)
+                    batch.append(request)
+                    remaining_time = self.max_timeout_ms - (time.time() - start_time)
+                except Empty:
+                    break
+
         return batch
+
+    def _get_optimal_batch_size(self) -> int:
+        """Determine optimal batch size based on recent performance.
+
+        Returns:
+            Optimal batch size for current conditions
+        """
+        # If no performance history, start with minimum efficient size
+        if not self._performance_history:
+            return self.min_batch_size
+
+        # Get recent GPU utilization if available
+        gpu_util = self._get_gpu_utilization()
+
+        # Analyze recent performance
+        recent_perf = list(self._performance_history)[-10:]  # Last 10 batches
+        if not recent_perf:
+            return self._current_optimal_batch
+
+        avg_throughput = sum(p['throughput'] for p in recent_perf) / len(recent_perf)
+        avg_batch_size = sum(p['batch_size'] for p in recent_perf) / len(recent_perf)
+
+        # Adaptive logic based on GPU utilization and throughput
+        if gpu_util > 0:  # GPU monitoring available
+            if gpu_util < self.target_gpu_utilization * 0.9:  # Below 72%
+                # Increase batch size to improve GPU utilization
+                self._current_optimal_batch = min(
+                    self.batch_size,
+                    int(self._current_optimal_batch * 1.1)
+                )
+            elif gpu_util > self.target_gpu_utilization * 1.1:  # Above 88%
+                # Decrease batch size to avoid overload
+                self._current_optimal_batch = max(
+                    self.min_batch_size,
+                    int(self._current_optimal_batch * 0.9)
+                )
+        else:
+            # No GPU monitoring - use throughput-based adaptation
+            if len(recent_perf) >= 5:
+                # Check if throughput is improving with larger batches
+                recent_5 = recent_perf[-5:]
+                throughput_trend = (recent_5[-1]['throughput'] - recent_5[0]['throughput']) / 5
+
+                if throughput_trend > 0 and avg_batch_size < self.batch_size * 0.8:
+                    # Throughput improving, try larger batches
+                    self._current_optimal_batch = min(
+                        self.batch_size,
+                        int(self._current_optimal_batch * 1.05)
+                    )
+                elif throughput_trend < 0 and avg_batch_size > self.min_batch_size * 1.2:
+                    # Throughput declining, try smaller batches
+                    self._current_optimal_batch = max(
+                        self.min_batch_size,
+                        int(self._current_optimal_batch * 0.95)
+                    )
+
+        return self._current_optimal_batch
 
     def _process_batch(self, requests: List[InferenceRequest]) -> List[InferenceResult]:
         """Process a batch of inference requests.
@@ -370,12 +520,15 @@ class GPUInferenceWorker(InferenceWorker):
         return policies_np, values_np
 
     def _update_metrics(self, batch_size: int, inference_time: float) -> None:
-        """Update performance metrics.
+        """Update performance metrics with GPU utilization tracking.
 
         Args:
             batch_size: Size of processed batch
             inference_time: Time taken for inference (seconds)
         """
+        positions_per_second = batch_size / inference_time if inference_time > 0 else 0
+        gpu_util = self._get_gpu_utilization()
+
         with self._metrics_lock:
             self._metrics['total_requests'] += batch_size
             self._metrics['total_batches'] += 1
@@ -383,15 +536,50 @@ class GPUInferenceWorker(InferenceWorker):
             self._metrics['batch_sizes'].append(batch_size)
             self._metrics['inference_times'].append(inference_time)
 
+            # Add GPU utilization metrics
+            if 'gpu_utilization_samples' not in self._metrics:
+                self._metrics['gpu_utilization_samples'] = deque(maxlen=100)
+
+            if gpu_util > 0:
+                self._metrics['gpu_utilization_samples'].append(gpu_util)
+
+        # Store performance data for adaptive batching
+        perf_data = {
+            'batch_size': batch_size,
+            'inference_time': inference_time,
+            'throughput': positions_per_second,
+            'gpu_utilization': gpu_util,
+            'timestamp': time.time()
+        }
+        self._performance_history.append(perf_data)
+
+        # Enhanced logging with GPU utilization
+        gpu_info = f", GPU: {gpu_util*100:.1f}%" if gpu_util > 0 else ""
+        self.logger.debug(
+            f"Batch processed: {batch_size} positions in {inference_time:.3f}s "
+            f"({positions_per_second:.1f} pos/s{gpu_info})"
+        )
+
+        # Log performance summary periodically
+        if self._metrics['total_batches'] % 50 == 0:
+            with self._metrics_lock:
+                avg_gpu = 0
+                if 'gpu_utilization_samples' in self._metrics and self._metrics['gpu_utilization_samples']:
+                    avg_gpu = sum(self._metrics['gpu_utilization_samples']) / len(self._metrics['gpu_utilization_samples']) * 100
+
+            gpu_status = "" if avg_gpu == 0 else f", avg GPU util: {avg_gpu:.1f}%"
+            avg_throughput = self._metrics['total_requests'] / self._metrics['total_inference_time'] if self._metrics['total_inference_time'] > 0 else 0
+            self.logger.info(
+                f"Performance summary: {avg_throughput:.1f} pos/s, "
+                f"avg batch: {self._metrics['total_requests'] / self._metrics['total_batches']:.1f}{gpu_status}"
+            )
+
     def get_metrics(self) -> Dict[str, float]:
-        """Get inference performance metrics.
+        """Get enhanced inference performance metrics including micro-batching data.
 
         Returns:
-            dict: Metrics including:
-                - 'gpu_utilization': Current GPU usage percentage
-                - 'average_batch_size': Mean batch size over recent window
-                - 'inference_rate': Positions processed per second
-                - 'memory_usage_gb': Current VRAM usage in GB
+            dict: Comprehensive metrics including GPU utilization, adaptive batching info,
+                 and performance targets
         """
         with self._metrics_lock:
             # Calculate averages
@@ -407,29 +595,60 @@ class GPUInferenceWorker(InferenceWorker):
             else:
                 inference_rate = 0.0
 
-            # Get GPU utilization and memory usage
-            gpu_utilization = self._get_gpu_utilization()
+            # GPU utilization metrics
+            current_gpu_util = self._get_gpu_utilization()
+            avg_gpu_util = 0.0
+            if 'gpu_utilization_samples' in self._metrics and self._metrics['gpu_utilization_samples']:
+                avg_gpu_util = sum(self._metrics['gpu_utilization_samples']) / len(self._metrics['gpu_utilization_samples'])
+
             memory_usage_gb = self._get_memory_usage()
 
-            return {
-                'gpu_utilization': gpu_utilization,
+            metrics = {
+                # Core performance metrics
+                'gpu_utilization': current_gpu_util,
+                'avg_gpu_utilization': avg_gpu_util,
                 'average_batch_size': avg_batch_size,
                 'inference_rate': inference_rate,
                 'memory_usage_gb': memory_usage_gb,
                 'total_requests': self._metrics['total_requests'],
                 'total_batches': self._metrics['total_batches'],
-                'total_inference_time': self._metrics['total_inference_time']
+                'total_inference_time': self._metrics['total_inference_time'],
+
+                # Micro-batching configuration
+                'current_optimal_batch': self._current_optimal_batch,
+                'min_batch_size': self.min_batch_size,
+                'max_timeout_ms': self.max_timeout_ms * 1000,
+                'target_gpu_utilization': self.target_gpu_utilization,
+
+                # Performance targets status
+                'meets_batch_target': avg_batch_size >= self.min_batch_size,
+                'meets_gpu_target': avg_gpu_util >= self.target_gpu_utilization,
+                'timeout_compliance': avg_inference_time <= self.max_timeout_ms
             }
 
+            return metrics
+
     def _get_gpu_utilization(self) -> float:
-        """Get current GPU utilization percentage."""
+        """Get current GPU utilization percentage (enhanced version).
+
+        Returns:
+            GPU utilization as percentage (0.0-1.0), or 0.0 if unavailable
+        """
+        # Use nvidia-ml-py if available and initialized
+        if self._gpu_handle:
+            try:
+                util = pynvml.nvmlDeviceGetUtilizationRates(self._gpu_handle)
+                return util.gpu / 100.0
+            except Exception:
+                pass
+
+        # Fallback to memory-based estimation
         try:
             if self.device.startswith('cuda') and torch.cuda.is_available():
-                # Simple memory-based estimation since we don't have nvidia-ml-py
                 device_idx = int(self.device.split(':')[1]) if ':' in self.device else 0
                 memory_used = torch.cuda.memory_allocated(device_idx)
                 memory_total = torch.cuda.get_device_properties(device_idx).total_memory
-                return (memory_used / memory_total) * 100.0
+                return (memory_used / memory_total)  # Return as 0.0-1.0 not percentage
             else:
                 return 0.0
         except Exception:

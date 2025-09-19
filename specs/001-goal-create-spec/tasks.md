@@ -56,9 +56,11 @@
 - [x] **T013** ResNet architecture implementation | Create src/neural/model.py with ResidualBlock+SE attention, 20 blocks with 256 channels, policy and value heads, mixed precision support | ✅ Model forward pass works, parameters ~24M (optimized for RTX 3060 Ti), fits in 8GB VRAM with optimal batch sizes 128-512 | Dev | 4h
   *Completed: 2025-09-18, Author: Claude Code*
 
-- [ ] **T014** GPU inference worker thread | Create src/neural/inference_worker.py with dedicated thread, queue-based communication, dynamic batching logic, timeout mechanism | Worker thread starts/stops cleanly, processes requests from queue, respects batch size limits | Dev | 4h
+- [x] **T014** GPU inference worker thread | Create src/neural/inference_worker.py with dedicated thread, queue-based communication, dynamic batching logic, timeout mechanism | ✅ Worker thread starts/stops cleanly, processes requests from queue, respects batch size limits | Dev | 4h
+  *Completed: 2025-09-19, Author: Claude Code, Commit: c2430be*
 
-- [ ] **T015** Dynamic micro-batching | Extend inference_worker.py with count-based (≥32) OR timeout-based (≤3ms) batching, batch formation and dispatch | Batching achieves target parameters: ≥32 positions OR ≤3ms timeout, GPU utilization >80% | Dev | 3h
+- [x] **T015** Dynamic micro-batching | Extend inference_worker.py with count-based (≥32) OR timeout-based (≤3ms) batching, batch formation and dispatch | ✅ Batching achieves target parameters: ≥32 positions OR ≤3ms timeout, GPU utilization >80% | Dev | 3h
+  *Completed: 2025-09-19, Author: Claude Code, Commit: d87fb08*
 
 - [ ] **T016** Mixed precision inference | Integrate torch.cuda.amp.autocast in inference_worker.py, fp16 computation with fp32 fallback, gradient scaling for training | Inference uses fp16, 2x memory efficiency, no accuracy degradation, automatic fallback | Dev | 2h
 

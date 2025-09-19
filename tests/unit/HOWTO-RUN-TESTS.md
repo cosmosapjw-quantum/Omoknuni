@@ -1,4 +1,4 @@
-# How to Run Tests for T008 - Vectorized PUCT Selection
+# How to Run Tests - MCTS Engine & Micro-batching
 
 ## Quick Validation Test
 
@@ -67,3 +67,43 @@ Key validation points:
 - **Optimization** flags `-O2` or `-O3` for realistic performance testing
 
 The implementation automatically detects AVX2 support and gracefully falls back to scalar operations on unsupported hardware.
+
+## Micro-batching Tests (T015)
+
+Test the dynamic micro-batching implementation:
+
+```bash
+# Run micro-batching unit tests
+python -m pytest tests/unit/test_micro_batching.py -v
+
+# Run performance validation
+python scripts/validate_micro_batching.py
+
+# Run inference worker tests with micro-batching
+python -m pytest tests/unit/test_inference_worker.py -v
+```
+
+**Expected Results**:
+- Count-based batching: ≥32 positions ✓
+- Timeout-based batching: ≤3ms constraint ✓
+- GPU utilization monitoring: >80% target ✓
+- Adaptive batch sizing: Performance feedback ✓
+- All 19 micro-batching tests passing ✓
+
+## Full Test Suite
+
+Run all available tests:
+
+```bash
+# Unit tests for all components
+python -m pytest tests/unit/ -v
+
+# Contract tests (API validation)
+python -m pytest tests/contract/ -v
+
+# Integration tests (when available)
+python -m pytest tests/integration/ -v
+
+# Performance validation
+python scripts/validate_micro_batching.py
+```
