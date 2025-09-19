@@ -77,6 +77,14 @@ All notable changes to this project will be documented in this file.
 - Validation of batch processing interfaces and micro-batching logic
 - Factory function contracts for worker creation and batch size estimation
 - CPU fallback mechanism and model validation interface testing
+- **T013**: ResNet architecture with Squeeze-Excitation attention optimized for RTX 3060 Ti
+- 20 residual blocks with 256 channels achieving ~24M parameters
+- Squeeze-Excitation attention mechanism for channel-wise feature recalibration
+- Dual-head architecture with policy (action probabilities) and value (position evaluation) outputs
+- Mixed precision support with fp16 computation and fp32 BatchNorm for numerical stability
+- Optimal batch size estimation (128-512) for maximum GPU utilization (32-51% VRAM usage)
+- Game-specific model factory for Gomoku (7 planes), Chess (12 planes), Go (17 planes)
+- Comprehensive validation including gradient flow, output ranges, and memory constraints
 
 ### Changed
 - Moved existing game logic from `/games` to `/cpp_extensions/games/`
