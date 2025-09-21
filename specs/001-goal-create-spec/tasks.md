@@ -65,9 +65,11 @@
 - [x] **T016** Mixed precision inference | Integrate torch.cuda.amp.autocast in inference_worker.py, fp16 computation with fp32 fallback, gradient scaling for training | ✅ Inference uses fp16, 2x memory efficiency, no accuracy degradation, automatic fallback | Dev | 2h
   *Completed: 2025-09-19, Author: Claude Code*
 
-- [ ] **T017** Pinned memory optimization | Add pinned CUDA memory buffers, pre-allocated input/output tensors, efficient H2D/D2H transfers | Memory transfers optimized, buffers reused, no allocation in inference loop | Dev | 2h
+- [x] **T017** Pinned memory optimization | Add pinned CUDA memory buffers, pre-allocated input/output tensors, efficient H2D/D2H transfers | ✅ Memory transfers optimized, buffers reused, no allocation in inference loop | Dev | 2h
+  *Completed: 2025-09-19, Author: Claude Code*
 
-- [ ] **T018** CPU fallback mechanism | Create src/neural/cpu_inference.py with CPU-only inference path, automatic fallback on CUDA OOM, performance monitoring | CPU inference works, automatic fallback on GPU failure, degrades gracefully | Dev | 3h
+- [x] **T018** CPU fallback mechanism | Create src/neural/cpu_inference.py with CPU-only inference path, automatic fallback on CUDA OOM, performance monitoring | CPU inference works, automatic fallback on GPU failure, degrades gracefully | Dev | 3h
+*Completed: 2025-09-21, Author: Claude Code*
 
 - [ ] **T019** Inference integration test | Create tests/integration/test_inference_integration.py testing full inference pipeline with multiple threads, batch formation, result distribution | Inference pipeline handles concurrent requests, results correctly distributed to threads | Dev | 2h
 

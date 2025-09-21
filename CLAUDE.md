@@ -81,6 +81,12 @@ python scripts/test_inference.py --model models/gomoku_random.pth --batch-sizes 
 
 # Memory stability test
 python scripts/soak_test.py --duration 3600 --game gomoku
+
+# Validate neural network inference optimizations
+python scripts/validate_micro_batching.py
+python scripts/validate_mixed_precision.py
+python scripts/validate_pinned_memory.py
+python scripts/validate_cpu_fallback.py
 ```
 
 ## Project Structure

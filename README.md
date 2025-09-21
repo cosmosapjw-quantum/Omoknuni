@@ -22,6 +22,9 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - [x] **T013**: ResNet architecture with Squeeze-Excitation attention (20 blocks, 256 channels)
 - [x] **T014**: GPU inference worker with queue-based threading and dynamic batching
 - [x] **T015**: Dynamic micro-batching with count-based (≥32) OR timeout-based (≤3ms) optimization
+- [x] **T016**: Mixed precision inference with fp16 computation and automatic fallback mechanisms
+- [x] **T017**: Pinned memory optimization for efficient GPU data transfers (H2D/D2H optimized)
+- [x] **T018**: CPU fallback mechanism for robust inference reliability
 
 ### Current Architecture
 
@@ -33,6 +36,8 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - **GPU Monitoring**: Real-time utilization tracking with nvidia-ml-py and adaptive batch sizing
 - **Vectorized Operations**: AVX2-optimized PUCT selection with 3.6-5.2x performance improvement
 - **Thread Safety**: Virtual loss coordination and atomic operations for 8-12 parallel workers
+- **Memory Optimization**: Pinned CUDA memory buffers for faster H2D/D2H transfers with automatic fallback
+- **Robust Inference**: CPU fallback mechanism with automatic GPU failure detection and seamless switching
 - **Telemetry**: Prometheus-compatible metrics with comprehensive performance monitoring
 
 ## Quick Start
@@ -81,6 +86,15 @@ python -m pytest --cov=src --cov-report=html
 
 # Test micro-batching performance
 python scripts/validate_micro_batching.py
+
+# Test mixed precision inference
+python scripts/validate_mixed_precision.py
+
+# Test pinned memory optimization
+python scripts/validate_pinned_memory.py
+
+# Test CPU fallback mechanism
+python scripts/validate_cpu_fallback.py
 ```
 
 ### Project Structure
@@ -89,7 +103,7 @@ python scripts/validate_micro_batching.py
 ├── src/                    # Python orchestration layer
 │   ├── core/              # MCTS search coordination
 │   ├── games/             # Game implementations
-│   ├── neural/            # Neural networks, GPU inference & micro-batching
+│   ├── neural/            # Neural networks, GPU inference, micro-batching & CPU fallback
 │   ├── training/          # Self-play & training pipeline
 │   ├── telemetry/         # Performance monitoring
 │   └── utils/             # Shared utilities
@@ -119,6 +133,8 @@ This project follows [Spec-Driven Development](specs/001-goal-create-spec/). See
 - **Tree memory**: <1GB for typical search configurations (27 bytes/node achieved)
 - **Node allocation**: O(1) operations with 330M allocations/second
 - **PUCT selection**: 3.6-5.2x speedup with AVX2 vectorization
+- **Memory transfers**: Optimized H2D/D2H transfers using pinned CUDA memory buffers
+- **Reliability**: Automatic CPU fallback with seamless inference continuation on GPU failures
 - **Training speed**: 200-300 self-play games per hour
 - **Games supported**: Gomoku, Chess (including Chess960), Go (9x9 to 19x19)
 

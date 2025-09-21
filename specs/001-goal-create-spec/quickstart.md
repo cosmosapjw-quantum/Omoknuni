@@ -65,6 +65,12 @@ python -m pytest tests/integration/ -v        # Integration tests
 # Check GPU availability
 python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 python -c "import torch; print(f'GPU: {torch.cuda.get_device_name(0)}')"
+
+# Validate neural network inference optimizations
+python scripts/validate_micro_batching.py      # T015: Dynamic micro-batching
+python scripts/validate_mixed_precision.py    # T016: Mixed precision inference
+python scripts/validate_pinned_memory.py      # T017: Pinned memory optimization
+python scripts/validate_cpu_fallback.py       # T018: CPU fallback mechanism
 ```
 
 ## Quick Test: Gomoku Engine

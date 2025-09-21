@@ -41,6 +41,9 @@ from contracts.inference_api import (
 # Import neural network model
 from src.neural.model import AlphaZeroNet, create_model_for_game
 
+# Import CPU fallback functionality (T018)
+from src.neural.cpu_inference import CPUInferenceWorker, should_fallback_to_cpu, detect_gpu_failure
+
 
 class GPUInferenceWorker(InferenceWorker):
     """GPU-based inference worker with batched processing.
@@ -83,6 +86,19 @@ class GPUInferenceWorker(InferenceWorker):
         self._mixed_precision_fallback_count = 0
         self._baseline_memory_usage = None
 
+        # Pinned memory buffers for optimized H2D/D2H transfers
+        self._pinned_input_buffer = None
+        self._pinned_output_buffers = {}
+        self._current_buffer_capacity = 0
+        self._use_pinned_memory = self.device.startswith('cuda') and torch.cuda.is_available()
+
+        # CPU fallback mechanism (T018)
+        self._cpu_fallback_worker = None
+        self._fallback_enabled = True
+        self._fallback_triggered = False
+        self._fallback_failure_count = 0
+        self._last_gpu_attempt = 0.0
+
         # Thread control
         self._stop_event = threading.Event()
         self._worker_thread = None
@@ -111,6 +127,9 @@ class GPUInferenceWorker(InferenceWorker):
         # Initialize model
         self._load_model()
 
+        # Initialize CPU fallback worker if needed (T018)
+        self._init_cpu_fallback()
+
     def _load_model(self) -> None:
         """Load and initialize the neural network model."""
         try:
@@ -124,24 +143,32 @@ class GPUInferenceWorker(InferenceWorker):
                 load_device = 'cpu'
                 self.logger.warning(f"CUDA device {self.device} requested but CUDA not available, loading model on CPU")
 
-            state_dict = torch.load(self.model_path, map_location=load_device)
+            # Try to load the model directly first (full model save)
+            model_data = torch.load(self.model_path, map_location=load_device, weights_only=False)
 
-            # Extract model configuration from state dict or use defaults
-            # For now, create a default Gomoku model - in practice this would
-            # be extracted from model metadata
-            self.model = create_model_for_game('gomoku')
+            # Check if it's a full model or state_dict
+            if hasattr(model_data, 'state_dict'):  # It's a full model
+                self.model = model_data.to(self.device)
+                self.model.eval()
+                self.logger.info("Model loaded successfully (full model)")
+            elif isinstance(model_data, dict):  # It's a state_dict
+                # Extract model configuration from state dict or use defaults
+                self.model = create_model_for_game('gomoku')
+                self.model = self.model.to(self.device)
+                self.model.eval()
 
-            # Move to device and set eval mode
-            self.model = self.model.to(self.device)
-            self.model.eval()
+                # Initialize lazy layers with dummy input
+                with torch.no_grad():
+                    dummy_input = torch.randn(1, 7, 15, 15, device=self.device)
+                    _ = self.model(dummy_input)
 
-            # Initialize lazy layers with dummy input
-            with torch.no_grad():
-                dummy_input = torch.randn(1, 7, 15, 15, device=self.device)
-                _ = self.model(dummy_input)
-
-            # Now load the actual weights
-            self.model.load_state_dict(state_dict)
+                # Load the actual weights
+                self.model.load_state_dict(model_data)
+                self.logger.info("Model loaded successfully (state_dict)")
+            else:  # It's a direct model instance
+                self.model = model_data.to(self.device)
+                self.model.eval()
+                self.logger.info("Model loaded successfully (direct model)")
 
             # Enable mixed precision with enhanced validation
             self._setup_mixed_precision()
@@ -151,6 +178,60 @@ class GPUInferenceWorker(InferenceWorker):
         except Exception as e:
             self.logger.error(f"Failed to load model: {e}")
             raise
+
+    def _init_cpu_fallback(self) -> None:
+        """Initialize CPU fallback worker for GPU failure scenarios (T018)."""
+        if not self._fallback_enabled or not self.device.startswith('cuda'):
+            return
+
+        try:
+            # Check if GPU fallback is likely needed
+            if detect_gpu_failure():
+                self.logger.warning("GPU failure detected, initializing CPU fallback immediately")
+                self._enable_cpu_fallback()
+            else:
+                self.logger.info("GPU available, CPU fallback on standby")
+
+        except Exception as e:
+            self.logger.warning(f"Could not initialize CPU fallback: {e}")
+
+    def _enable_cpu_fallback(self) -> None:
+        """Enable CPU fallback worker (T018)."""
+        if self._cpu_fallback_worker is not None:
+            return  # Already enabled
+
+        try:
+            self.logger.info("Enabling CPU fallback inference worker")
+            self._cpu_fallback_worker = CPUInferenceWorker(
+                model_path=self.model_path,
+                device='cpu',
+                batch_size=min(4, self.batch_size),  # Smaller batches for CPU
+                timeout_ms=max(10.0, self.timeout_ms * 1000),  # More lenient timeout
+                use_mixed_precision=False  # No mixed precision on CPU
+            )
+
+            # Warmup CPU fallback if we have input shape
+            if self.input_shape is not None:
+                self._cpu_fallback_worker.warmup(self.input_shape)
+
+            self._fallback_triggered = True
+            self.logger.info("CPU fallback worker enabled successfully")
+
+        except Exception as e:
+            self.logger.error(f"Failed to enable CPU fallback: {e}")
+            self._cpu_fallback_worker = None
+
+    def _should_attempt_gpu_retry(self) -> bool:
+        """Check if we should retry GPU inference after fallback (T018)."""
+        if not self._fallback_triggered:
+            return True
+
+        # Allow GPU retry every 30 seconds
+        current_time = time.time()
+        if current_time - self._last_gpu_attempt > 30.0:
+            return True
+
+        return False
 
     def _init_gpu_monitoring(self) -> None:
         """Initialize GPU monitoring for utilization tracking."""
@@ -229,6 +310,152 @@ class GPUInferenceWorker(InferenceWorker):
             self.use_mixed_precision = False
             self._mixed_precision_enabled = False
 
+    def _setup_pinned_memory_buffers(self, batch_size: int, input_shape: Tuple[int, int, int]) -> None:
+        """Setup pinned memory buffers for optimized GPU transfers.
+
+        Args:
+            batch_size: Maximum batch size to allocate for
+            input_shape: (channels, height, width) shape for input tensors
+        """
+        if not self._use_pinned_memory:
+            return
+
+        # Add safety margin for dynamic batching
+        buffer_capacity = int(batch_size * 1.5)
+
+        if buffer_capacity <= self._current_buffer_capacity:
+            return  # Current buffers are sufficient
+
+        try:
+            # Free existing buffers
+            self._cleanup_pinned_buffers()
+
+            # Allocate pinned input buffer
+            input_buffer_shape = (buffer_capacity, *input_shape)
+            self._pinned_input_buffer = torch.empty(
+                input_buffer_shape,
+                dtype=torch.float32,
+                pin_memory=True
+            )
+
+            # Pre-allocate common output buffer sizes
+            # Policy head output: (batch_size, num_actions) - assume max 361 for Go
+            policy_buffer_shape = (buffer_capacity, 361)
+            self._pinned_output_buffers['policy'] = torch.empty(
+                policy_buffer_shape,
+                dtype=torch.float32,
+                pin_memory=True
+            )
+
+            # Value head output: (batch_size, 1)
+            value_buffer_shape = (buffer_capacity, 1)
+            self._pinned_output_buffers['value'] = torch.empty(
+                value_buffer_shape,
+                dtype=torch.float32,
+                pin_memory=True
+            )
+
+            self._current_buffer_capacity = buffer_capacity
+            self.logger.info(f"Pinned memory buffers allocated for batch capacity: {buffer_capacity}")
+
+        except Exception as e:
+            self.logger.warning(f"Failed to allocate pinned memory buffers: {e}")
+            self._use_pinned_memory = False
+            self._cleanup_pinned_buffers()
+
+    def _cleanup_pinned_buffers(self) -> None:
+        """Cleanup pinned memory buffers."""
+        try:
+            if self._pinned_input_buffer is not None:
+                del self._pinned_input_buffer
+                self._pinned_input_buffer = None
+
+            for key in list(self._pinned_output_buffers.keys()):
+                del self._pinned_output_buffers[key]
+            self._pinned_output_buffers.clear()
+
+            self._current_buffer_capacity = 0
+
+        except Exception as e:
+            self.logger.warning(f"Error during pinned buffer cleanup: {e}")
+
+    def _create_batch_tensor_optimized(self, positions: List[np.ndarray]) -> torch.Tensor:
+        """Create batch tensor using pinned memory optimization if available.
+
+        Args:
+            positions: List of numpy arrays representing game positions
+
+        Returns:
+            Batch tensor ready for inference
+        """
+        batch_size = len(positions)
+
+        if (self._use_pinned_memory and
+            self._pinned_input_buffer is not None and
+            batch_size <= self._current_buffer_capacity):
+
+            # Use pinned memory buffer for optimized transfer
+            try:
+                # Copy data to pinned buffer (on host)
+                batch_data = np.stack(positions)
+                input_slice = self._pinned_input_buffer[:batch_size]
+                input_slice.copy_(torch.from_numpy(batch_data))
+
+                # Transfer to GPU using pinned memory (faster H2D transfer)
+                batch_tensor = input_slice.to(self.device, non_blocking=True)
+                return batch_tensor
+
+            except Exception as e:
+                self.logger.warning(f"Pinned memory transfer failed, falling back to standard: {e}")
+
+        # Fallback to standard tensor creation
+        return torch.tensor(
+            np.stack(positions),
+            dtype=torch.float32,
+            device=self.device
+        )
+
+    def _transfer_outputs_optimized(self, policy_logits: torch.Tensor, values: torch.Tensor) -> Tuple[np.ndarray, np.ndarray]:
+        """Transfer outputs from GPU using pinned memory optimization if available.
+
+        Args:
+            policy_logits: Policy output tensor from model
+            values: Value output tensor from model
+
+        Returns:
+            Tuple of (policies_np, values_np) as numpy arrays
+        """
+        batch_size = policy_logits.size(0)
+
+        if (self._use_pinned_memory and
+            'policy' in self._pinned_output_buffers and
+            'value' in self._pinned_output_buffers and
+            batch_size <= self._current_buffer_capacity):
+
+            try:
+                # Use pinned buffers for optimized D2H transfer
+                policy_buffer = self._pinned_output_buffers['policy'][:batch_size, :policy_logits.size(1)]
+                value_buffer = self._pinned_output_buffers['value'][:batch_size]
+
+                # Transfer to pinned memory (faster D2H transfer)
+                policy_buffer.copy_(policy_logits, non_blocking=True)
+                value_buffer.copy_(values, non_blocking=True)
+
+                # Convert to numpy (no copy needed, already on host)
+                policies_np = policy_buffer.numpy()
+                values_np = value_buffer.numpy().squeeze(-1)  # Squeeze after numpy conversion
+
+                return policies_np, values_np
+
+            except Exception as e:
+                self.logger.warning(f"Pinned memory D2H transfer failed, falling back to standard: {e}")
+
+        # Fallback to standard transfer
+        policies_np = policy_logits.cpu().numpy()
+        values_np = values.cpu().numpy().squeeze(-1)
+
+        return policies_np, values_np
+
     def _run_inference_with_precision(self, batch_tensor: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Run inference with mixed precision and automatic fallback.
 
@@ -298,6 +525,19 @@ class GPUInferenceWorker(InferenceWorker):
                 metrics['memory_efficiency_ratio'] = memory_ratio
                 metrics['memory_reduction_achieved'] = memory_ratio < 0.7  # Target ~50% reduction
 
+        # Add pinned memory optimization metrics
+        metrics['pinned_memory_enabled'] = self._use_pinned_memory
+        metrics['pinned_buffer_capacity'] = self._current_buffer_capacity
+        if self._pinned_input_buffer is not None:
+            # Calculate approximate memory usage of pinned buffers
+            input_buffer_size = self._pinned_input_buffer.numel() * self._pinned_input_buffer.element_size()
+            output_buffer_size = sum(
+                buf.numel() * buf.element_size()
+                for buf in self._pinned_output_buffers.values()
+            )
+            total_pinned_mb = (input_buffer_size + output_buffer_size) / (1024**2)
+            metrics['pinned_memory_usage_mb'] = total_pinned_mb
+
         return metrics
 
     def warmup(self, input_shape: Tuple[int, int, int]) -> None:
@@ -314,6 +554,9 @@ class GPUInferenceWorker(InferenceWorker):
 
         self.input_shape = input_shape
         self.logger.info(f"Warming up GPU with input shape {input_shape}")
+
+        # Setup pinned memory buffers for the maximum batch size we'll use
+        self._setup_pinned_memory_buffers(self.batch_size, input_shape)
 
         # Warm up with different batch sizes
         warmup_batches = [1, 8, 16, 32, min(64, self.batch_size)]
@@ -377,6 +620,18 @@ class GPUInferenceWorker(InferenceWorker):
 
         self._is_running = False
         self._worker_thread = None
+
+        # Cleanup pinned memory buffers
+        self._cleanup_pinned_buffers()
+
+        # Cleanup CPU fallback worker (T018)
+        if self._cpu_fallback_worker is not None:
+            try:
+                self._cpu_fallback_worker.stop_worker()
+                self._cpu_fallback_worker = None
+                self.logger.info("CPU fallback worker stopped and cleaned up")
+            except Exception as e:
+                self.logger.warning(f"Error stopping CPU fallback worker: {e}")
 
     def inference_loop(self,
                       input_queue: Queue,
@@ -618,25 +873,59 @@ class GPUInferenceWorker(InferenceWorker):
         if self.model is None:
             raise RuntimeError("Model not loaded")
 
-        # Convert to torch tensor
-        batch_tensor = torch.tensor(
-            np.stack(positions),
-            dtype=torch.float32,
-            device=self.device
-        )
+        # Try GPU inference first if available and not permanently failed (T018)
+        if self._should_attempt_gpu_retry():
+            try:
+                self._last_gpu_attempt = time.time()
 
-        # Run inference with enhanced mixed precision
-        with torch.no_grad():
-            policy_logits, values = self._run_inference_with_precision(batch_tensor)
+                # Create batch tensor using pinned memory optimization
+                batch_tensor = self._create_batch_tensor_optimized(positions)
 
-            # Convert to probabilities
-            policies = torch.softmax(policy_logits, dim=1)
+                # Run inference with enhanced mixed precision
+                with torch.no_grad():
+                    policy_logits, values = self._run_inference_with_precision(batch_tensor)
 
-        # Convert back to numpy
-        policies_np = policies.cpu().numpy()
-        values_np = values.cpu().numpy().squeeze(-1)
+                    # Convert to probabilities
+                    policies = torch.softmax(policy_logits, dim=1)
 
-        return policies_np, values_np
+                # Transfer outputs using pinned memory optimization
+                policies_np, values_np = self._transfer_outputs_optimized(policies, values)
+
+                # GPU inference succeeded, reset fallback if it was triggered
+                if self._fallback_triggered:
+                    self._fallback_failure_count = 0
+                    self.logger.info("GPU inference recovered, continuing with GPU")
+
+                return policies_np, values_np
+
+            except Exception as e:
+                # Check if this error should trigger CPU fallback
+                if should_fallback_to_cpu(e):
+                    self._fallback_failure_count += 1
+                    self.logger.warning(f"GPU inference failed (attempt {self._fallback_failure_count}), "
+                                      f"falling back to CPU: {e}")
+
+                    # Enable CPU fallback if not already enabled
+                    if self._cpu_fallback_worker is None:
+                        self._enable_cpu_fallback()
+                else:
+                    # Non-fallback error, re-raise
+                    raise
+
+        # Use CPU fallback if GPU failed or fallback is already active (T018)
+        if self._cpu_fallback_worker is not None:
+            try:
+                return self._cpu_fallback_worker.batch_inference(positions)
+            except Exception as fallback_error:
+                self.logger.error(f"CPU fallback also failed: {fallback_error}")
+                # Return safe default values as last resort (Gomoku 15x15 = 225 actions)
+                batch_size = len(positions)
+                policies_np = np.ones((batch_size, 225)) / 225  # Uniform distribution
+                values_np = np.zeros(batch_size)
+                return policies_np, values_np
+
+        # No fallback available and GPU failed
+        raise RuntimeError("Both GPU and CPU inference failed")
 
     def _update_metrics(self, batch_size: int, inference_time: float) -> None:
         """Update performance metrics with GPU utilization tracking.
@@ -749,6 +1038,10 @@ class GPUInferenceWorker(InferenceWorker):
             memory_metrics = self._get_memory_efficiency_metrics()
             metrics.update(memory_metrics)
 
+            # Add CPU fallback metrics (T018)
+            fallback_metrics = self._get_cpu_fallback_metrics()
+            metrics.update(fallback_metrics)
+
             return metrics
 
     def _get_gpu_utilization(self) -> float:
@@ -790,6 +1083,32 @@ class GPUInferenceWorker(InferenceWorker):
                 return process.memory_info().rss / (1024**3)
         except Exception:
             return 0.0
+
+    def _get_cpu_fallback_metrics(self) -> Dict[str, Any]:
+        """Get CPU fallback performance metrics (T018).
+
+        Returns:
+            dict: CPU fallback status and performance metrics
+        """
+        metrics = {
+            'cpu_fallback_enabled': self._fallback_enabled,
+            'cpu_fallback_active': self._fallback_triggered,
+            'cpu_fallback_failure_count': self._fallback_failure_count,
+            'cpu_fallback_available': self._cpu_fallback_worker is not None,
+            'last_gpu_attempt': self._last_gpu_attempt
+        }
+
+        # Add CPU fallback worker metrics if available
+        if self._cpu_fallback_worker is not None:
+            try:
+                cpu_metrics = self._cpu_fallback_worker.get_metrics()
+                # Prefix CPU metrics to avoid conflicts
+                for key, value in cpu_metrics.items():
+                    metrics[f'cpu_{key}'] = value
+            except Exception as e:
+                self.logger.warning(f"Failed to get CPU fallback metrics: {e}")
+
+        return metrics
 
     def is_running(self) -> bool:
         """Check if worker thread is running."""
