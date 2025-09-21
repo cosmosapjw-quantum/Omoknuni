@@ -62,7 +62,8 @@
 - [x] **T015** Dynamic micro-batching | Extend inference_worker.py with count-based (≥32) OR timeout-based (≤3ms) batching, batch formation and dispatch | ✅ Batching achieves target parameters: ≥32 positions OR ≤3ms timeout, GPU utilization >80% | Dev | 3h
   *Completed: 2025-09-19, Author: Claude Code, Commit: d87fb08*
 
-- [ ] **T016** Mixed precision inference | Integrate torch.cuda.amp.autocast in inference_worker.py, fp16 computation with fp32 fallback, gradient scaling for training | Inference uses fp16, 2x memory efficiency, no accuracy degradation, automatic fallback | Dev | 2h
+- [x] **T016** Mixed precision inference | Integrate torch.cuda.amp.autocast in inference_worker.py, fp16 computation with fp32 fallback, gradient scaling for training | ✅ Inference uses fp16, 2x memory efficiency, no accuracy degradation, automatic fallback | Dev | 2h
+  *Completed: 2025-09-19, Author: Claude Code*
 
 - [ ] **T017** Pinned memory optimization | Add pinned CUDA memory buffers, pre-allocated input/output tensors, efficient H2D/D2H transfers | Memory transfers optimized, buffers reused, no allocation in inference loop | Dev | 2h
 

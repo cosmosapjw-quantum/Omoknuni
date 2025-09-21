@@ -78,6 +78,11 @@ class GPUInferenceWorker(InferenceWorker):
         self._current_optimal_batch = self.min_batch_size
         self._gpu_handle = None
 
+        # Mixed precision state
+        self._mixed_precision_enabled = False
+        self._mixed_precision_fallback_count = 0
+        self._baseline_memory_usage = None
+
         # Thread control
         self._stop_event = threading.Event()
         self._worker_thread = None
@@ -113,7 +118,13 @@ class GPUInferenceWorker(InferenceWorker):
                 raise FileNotFoundError(f"Model not found: {self.model_path}")
 
             # Load model state dict
-            state_dict = torch.load(self.model_path, map_location=self.device)
+            # If device is CUDA but CUDA is not available, fallback to CPU loading
+            load_device = self.device
+            if self.device.startswith('cuda') and not torch.cuda.is_available():
+                load_device = 'cpu'
+                self.logger.warning(f"CUDA device {self.device} requested but CUDA not available, loading model on CPU")
+
+            state_dict = torch.load(self.model_path, map_location=load_device)
 
             # Extract model configuration from state dict or use defaults
             # For now, create a default Gomoku model - in practice this would
@@ -132,10 +143,8 @@ class GPUInferenceWorker(InferenceWorker):
             # Now load the actual weights
             self.model.load_state_dict(state_dict)
 
-            # Enable mixed precision if requested and using CUDA
-            if self.use_mixed_precision and self.device.startswith('cuda'):
-                from src.neural.model import enable_mixed_precision
-                self.model = enable_mixed_precision(self.model)
+            # Enable mixed precision with enhanced validation
+            self._setup_mixed_precision()
 
             self.logger.info(f"Model loaded successfully on {self.device}")
 
@@ -173,6 +182,124 @@ class GPUInferenceWorker(InferenceWorker):
         except Exception:
             return 0.0
 
+    def _setup_mixed_precision(self) -> None:
+        """Setup and validate mixed precision inference."""
+        if not self.use_mixed_precision:
+            self.logger.info("Mixed precision disabled by configuration")
+            return
+
+        if not self.device.startswith('cuda'):
+            self.logger.info("Mixed precision not available on CPU device, using fp32")
+            self.use_mixed_precision = False
+            return
+
+        try:
+            # Check CUDA and device capability
+            if not torch.cuda.is_available():
+                self.logger.warning("CUDA not available, disabling mixed precision")
+                self.use_mixed_precision = False
+                return
+
+            device_idx = int(self.device.split(':')[1]) if ':' in self.device else 0
+            device_capability = torch.cuda.get_device_capability(device_idx)
+
+            # Tensor cores available on compute capability 7.0+ (V100, RTX 20/30/40 series)
+            if device_capability[0] < 7:
+                self.logger.warning(
+                    f"Device compute capability {device_capability[0]}.{device_capability[1]} "
+                    f"may not benefit from mixed precision. Tensor cores require 7.0+"
+                )
+
+            # Apply mixed precision optimizations to model
+            from src.neural.model import enable_mixed_precision
+            self.model = enable_mixed_precision(self.model)
+
+            # Record baseline memory usage for efficiency monitoring
+            torch.cuda.empty_cache()
+            self._baseline_memory_usage = torch.cuda.memory_allocated(device_idx)
+
+            self._mixed_precision_enabled = True
+            self.logger.info(
+                f"Mixed precision enabled on {self.device} "
+                f"(compute capability: {device_capability[0]}.{device_capability[1]})"
+            )
+
+        except Exception as e:
+            self.logger.error(f"Failed to setup mixed precision: {e}")
+            self.use_mixed_precision = False
+            self._mixed_precision_enabled = False
+
+    def _run_inference_with_precision(self, batch_tensor: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Run inference with mixed precision and automatic fallback.
+
+        Args:
+            batch_tensor: Input tensor batch
+
+        Returns:
+            Tuple of (policy_logits, values)
+        """
+        if self._mixed_precision_enabled and self.device.startswith('cuda'):
+            try:
+                with torch.amp.autocast('cuda', dtype=torch.float16):
+                    policy_logits, values = self.model(batch_tensor)
+                return policy_logits, values
+
+            except RuntimeError as e:
+                # Handle mixed precision failures (e.g., unsupported operations)
+                if "autocast" in str(e).lower() or "half" in str(e).lower():
+                    self._mixed_precision_fallback_count += 1
+                    self.logger.warning(
+                        f"Mixed precision failed, falling back to fp32: {e} "
+                        f"(fallback count: {self._mixed_precision_fallback_count})"
+                    )
+
+                    # Disable mixed precision after too many failures
+                    if self._mixed_precision_fallback_count >= 3:
+                        self.logger.warning("Disabling mixed precision due to repeated failures")
+                        self._mixed_precision_enabled = False
+                        self.use_mixed_precision = False
+                else:
+                    raise  # Re-raise non-precision related errors
+
+        # Fallback to fp32
+        # Ensure tensor is on the same device as the model if there's a device mismatch
+        try:
+            model_device = next(self.model.parameters()).device
+            if batch_tensor.device != model_device:
+                batch_tensor = batch_tensor.to(model_device)
+        except StopIteration:
+            # Model has no parameters (e.g., in tests), skip device check
+            pass
+
+        policy_logits, values = self.model(batch_tensor)
+        return policy_logits, values
+
+    def _get_memory_efficiency_metrics(self) -> Dict[str, float]:
+        """Calculate memory efficiency metrics for mixed precision.
+
+        Returns:
+            Dictionary with memory efficiency statistics
+        """
+        metrics = {
+            'mixed_precision_active': self._mixed_precision_enabled,
+            'mixed_precision_fallback_count': self._mixed_precision_fallback_count
+        }
+
+        if self.device.startswith('cuda') and torch.cuda.is_available():
+            device_idx = int(self.device.split(':')[1]) if ':' in self.device else 0
+            current_memory = torch.cuda.memory_allocated(device_idx)
+            max_memory = torch.cuda.max_memory_allocated(device_idx)
+
+            metrics['current_memory_mb'] = current_memory / (1024**2)
+            metrics['max_memory_mb'] = max_memory / (1024**2)
+
+            if self._baseline_memory_usage is not None:
+                memory_ratio = current_memory / self._baseline_memory_usage
+                metrics['memory_efficiency_ratio'] = memory_ratio
+                metrics['memory_reduction_achieved'] = memory_ratio < 0.7  # Target ~50% reduction
+
+        return metrics
+
     def warmup(self, input_shape: Tuple[int, int, int]) -> None:
         """Warmup GPU with dummy inference calls.
 
@@ -197,11 +324,7 @@ class GPUInferenceWorker(InferenceWorker):
 
                 # Warmup runs
                 for _ in range(3):
-                    if self.use_mixed_precision and self.device.startswith('cuda'):
-                        with torch.amp.autocast('cuda'):
-                            _ = self.model(dummy_input)
-                    else:
-                        _ = self.model(dummy_input)
+                    _ = self._run_inference_with_precision(dummy_input)
 
                 # Synchronize GPU
                 if self.device.startswith('cuda'):
@@ -502,13 +625,9 @@ class GPUInferenceWorker(InferenceWorker):
             device=self.device
         )
 
-        # Run inference
+        # Run inference with enhanced mixed precision
         with torch.no_grad():
-            if self.use_mixed_precision and self.device.startswith('cuda'):
-                with torch.amp.autocast('cuda'):
-                    policy_logits, values = self.model(batch_tensor)
-            else:
-                policy_logits, values = self.model(batch_tensor)
+            policy_logits, values = self._run_inference_with_precision(batch_tensor)
 
             # Convert to probabilities
             policies = torch.softmax(policy_logits, dim=1)
@@ -625,6 +744,10 @@ class GPUInferenceWorker(InferenceWorker):
                 'meets_gpu_target': avg_gpu_util >= self.target_gpu_utilization,
                 'timeout_compliance': avg_inference_time <= self.max_timeout_ms
             }
+
+            # Add mixed precision metrics
+            memory_metrics = self._get_memory_efficiency_metrics()
+            metrics.update(memory_metrics)
 
             return metrics
 
