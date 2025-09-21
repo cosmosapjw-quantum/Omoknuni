@@ -15,6 +15,9 @@ set(GAMES_SOURCES
     go/go_state.cpp
     go/go_rules.cpp
 
+    # Game adapter interface
+    interface.cpp
+
     # Python bindings
     python_bindings.cpp
 )

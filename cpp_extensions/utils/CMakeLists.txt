@@ -4,7 +4,7 @@
 set(UTILS_SOURCES
     # Core game infrastructure
     igamestate.cpp
-    game_export.cpp
+    # game_export.cpp  # Moved to games/interface.cpp for T023
 
     # Utility functions
     zobrist_hash.cpp

@@ -71,6 +71,12 @@ python scripts/validate_micro_batching.py      # T015: Dynamic micro-batching
 python scripts/validate_mixed_precision.py    # T016: Mixed precision inference
 python scripts/validate_pinned_memory.py      # T017: Pinned memory optimization
 python scripts/validate_cpu_fallback.py       # T018: CPU fallback mechanism
+
+# Test unified game interface (T023)
+python -m pytest tests/unit/test_game_adapter_interface.py -v
+
+# Test inference integration pipeline (T019)
+python -m pytest tests/integration/test_inference_integration.py -v
 ```
 
 ## Quick Test: Gomoku Engine
