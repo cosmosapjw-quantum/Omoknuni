@@ -77,6 +77,58 @@ python -m pytest tests/unit/test_game_adapter_interface.py -v
 
 # Test inference integration pipeline (T019)
 python -m pytest tests/integration/test_inference_integration.py -v
+
+# Test Python bindings for games (T024)
+python -m pytest tests/unit/test_python_bindings.py -v
+
+# Run Python bindings demonstration
+python examples/python_bindings_demo.py
+```
+
+## Python Bindings Test
+
+### 1. Test Game Creation and Interface
+```bash
+# Test all game types and basic functionality
+python -c "
+import sys
+sys.path.insert(0, 'build/cpp_extensions/games')
+import alphazero_py
+import numpy as np
+
+# Test game creation
+for game_type in [alphazero_py.GameType.GOMOKU, alphazero_py.GameType.CHESS, alphazero_py.GameType.GO]:
+    game = alphazero_py.create_game(game_type)
+    game_name = alphazero_py.game_type_to_string(game_type)
+    print(f'{game_name}: {game.get_board_size()}x{game.get_board_size()}, actions: {game.get_action_space_size()}')
+
+# Test numpy integration
+gomoku = alphazero_py.create_game(alphazero_py.GameType.GOMOKU)
+tensor = gomoku.get_tensor_representation()
+print(f'Tensor: {tensor.shape}, dtype: {tensor.dtype}, contiguous: {tensor.flags.c_contiguous}')
+"
+```
+
+Expected output:
+```
+gomoku: 15x15, actions: 225
+chess: 8x8, actions: 20480
+go: 19x19, actions: 362
+Tensor: (3, 15, 15), dtype: float32, contiguous: True
+✓ Python bindings working correctly
+```
+
+### 2. Performance Benchmark
+```bash
+# Run comprehensive Python bindings demonstration
+python examples/python_bindings_demo.py
+```
+
+Expected performance output:
+```
+Created 1000 games in 0.5s (2000+ games/s) ✓
+Extracted 1000 tensors in 0.004s (250k+ tensors/s) ✓
+Made/undid 1000 moves in 0.007s (140k+ moves/s) ✓
 ```
 
 ## Quick Test: Gomoku Engine

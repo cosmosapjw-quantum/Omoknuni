@@ -24,6 +24,27 @@
 namespace alphazero {
 namespace core {
 
+// Utility functions for GameType conversion
+std::string gameTypeToString(GameType type) {
+    switch (type) {
+        case GameType::CHESS: return "chess";
+        case GameType::GO: return "go";
+        case GameType::GOMOKU: return "gomoku";
+        case GameType::UNKNOWN:
+        default: return "unknown";
+    }
+}
+
+GameType stringToGameType(const std::string& str) {
+    std::string lower = str;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+
+    if (lower == "chess") return GameType::CHESS;
+    if (lower == "go") return GameType::GO;
+    if (lower == "gomoku") return GameType::GOMOKU;
+    return GameType::UNKNOWN;
+}
+
 // GameRegistry implementation
 GameRegistry& GameRegistry::instance() {
     static GameRegistry instance;

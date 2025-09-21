@@ -87,7 +87,8 @@
 - [x] **T023** [P] Game adapter interface | Create cpp_extensions/games/interface.cpp with unified GameState interface, game type detection, polymorphic dispatch | ✅ All games implement common interface, game switching works without code changes | Dev | 2h
   *Completed: 2025-09-21, Author: Claude Code*
 
-- [ ] **T024** [P] Python bindings for games | Create cpp_extensions/games/python_bindings.cpp with pybind11 bindings for all games, numpy array compatibility | Python can instantiate any game, call methods, get numpy arrays for features | Dev | 3h
+- [x] **T024** [P] Python bindings for games | Create cpp_extensions/games/python_bindings.cpp with pybind11 bindings for all games, numpy array compatibility | ✅ Python can instantiate any game, call methods, get numpy arrays for features | Dev | 3h
+  *Completed: 2025-09-22, Author: Claude Code*
 
 - [ ] **T025** [P] Game rule unit tests | Create tests/unit/test_game_rules.py with comprehensive rule verification for all games, edge cases, performance tests | All game rules verified correct, edge cases handled, no illegal moves possible | Dev | 3h
 

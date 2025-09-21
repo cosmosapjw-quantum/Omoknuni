@@ -23,22 +23,22 @@ set(GAMES_SOURCES
 )
 
 # Create pybind11 module
-pybind11_add_module(games_core ${GAMES_SOURCES})
+pybind11_add_module(alphazero_py ${GAMES_SOURCES})
 
 # Link libraries
-target_link_libraries(games_core PRIVATE
+target_link_libraries(alphazero_py PRIVATE
     OpenMP::OpenMP_CXX
     utils_core
 )
 
 # Include directories
-target_include_directories(games_core PRIVATE
+target_include_directories(alphazero_py PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/cpp_extensions/utils
 )
 
 # Compiler definitions
-target_compile_definitions(games_core PRIVATE
+target_compile_definitions(alphazero_py PRIVATE
     VERSION_INFO="${PROJECT_VERSION}"
     PYBIND11_DETAILED_ERROR_MESSAGES
 )

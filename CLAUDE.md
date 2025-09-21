@@ -26,6 +26,7 @@ The codebase follows a hybrid approach with Python orchestration and C++/pybind1
 ### Core Components
 - **MCTS Engine** (`cpp_extensions/mcts/`): C++17 implementation with atomic operations, virtual loss coordination, AVX2-vectorized PUCT selection (3.6-5.2x speedup)
 - **Game Adapters** (`cpp_extensions/games/`): Uniform interface for Gomoku/Chess/Go with in-place move application and feature extraction
+- **Python Bindings** (`cpp_extensions/games/python_bindings.cpp`): pybind11 module with numpy array compatibility, 250k+ tensor extractions/second
 - **Neural Network** (`src/neural/`): ResNet with Squeeze-Excitation blocks (20 blocks, 256 channels), mixed precision fp16
 - **Training Pipeline** (`src/training/`): Experience replay buffer using memory-mapped files, AdamW optimizer with cosine scheduling
 
@@ -69,6 +70,12 @@ python -m pytest tests/performance/ -v
 
 # Memory leak detection (1-hour soak test)
 python -m pytest tests/soak/ -v
+
+# Test Python bindings specifically
+python -m pytest tests/unit/test_python_bindings.py -v
+
+# Run Python bindings demo
+python examples/python_bindings_demo.py
 ```
 
 ### Performance Validation
