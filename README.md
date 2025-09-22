@@ -47,6 +47,10 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - **Standard Format Support**: Export/import in established formats (PGN, SGF, custom notation)
 - **Python Bindings**: pybind11 integration with numpy array compatibility for neural network feature extraction
 - **High-Performance Interop**: 250k+ tensor extractions/second, C-contiguous memory layout for zero-copy operations
+- **Enhanced Tensor Representations**: Advanced feature planes for superior positional understanding
+  - **Gomoku**: 36 planes with threat detection, run-length analysis, and rule variations
+  - **Chess**: 30 planes with castling rights, en passant, and 8-pair move history
+  - **Go**: 25 planes with proper move history separation and capture patterns
 - **Telemetry**: Prometheus-compatible metrics with comprehensive performance monitoring
 
 ## Quick Start
@@ -162,6 +166,10 @@ This project follows [Spec-Driven Development](specs/001-goal-create-spec/). See
 - **Reliability**: Automatic CPU fallback with seamless inference continuation on GPU failures
 - **Training speed**: 200-300 self-play games per hour
 - **Games supported**: Gomoku, Chess (including Chess960), Go (9x9 to 19x19)
+- **Tensor representations**: Enhanced feature planes for stronger tactical play
+  - Gomoku: 36 planes (threat detection, run-length analysis, rule variations)
+  - Chess: 30 planes (castling, en passant, 8-pair move history)
+  - Go: 25 planes (proper move history separation, capture patterns)
 
 ## Development Philosophy
 

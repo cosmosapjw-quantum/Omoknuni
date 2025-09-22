@@ -173,6 +173,18 @@ private:
     // Rule-specific helpers
     bool is_pro_long_opening_move_valid(int action, int total_stones_on_board) const;
 
+    // Enhanced tensor representation helpers
+    void computeAllowedMovesMask(std::vector<std::vector<float>>& mask_plane) const;
+    void computeThreatPlanes(std::vector<std::vector<std::vector<float>>>& tensor, int start_plane) const;
+    void computeRunLengthPlanes(std::vector<std::vector<std::vector<float>>>& tensor, int start_plane) const;
+
+    // Threat detection helpers
+    bool hasImmediateFive(int player, int r, int c) const;
+    bool hasFourThreat(int player, int r, int c) const;
+    bool hasOpenThree(int player, int r, int c) const;
+    int countConsecutive(int player, int r, int c, int dr, int dc) const;
+    int getRunLengthToFive(int player, int r, int c, int dr, int dc) const;
+
     // GPU acceleration support
 public:
     // Static methods for GPU initialization

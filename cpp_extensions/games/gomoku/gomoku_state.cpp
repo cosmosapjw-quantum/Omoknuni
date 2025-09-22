@@ -186,28 +186,107 @@ int GomokuState::getActionSpaceSize() const {
 }
 
 std::vector<std::vector<std::vector<float>>> GomokuState::getTensorRepresentation() const {
-    // CRITICAL FIX: Don't cache tensors to prevent memory accumulation
-    // Each call creates a fresh tensor to avoid holding memory during MCTS
-    
-    auto tensor = std::vector<std::vector<std::vector<float>>>(
-        3, std::vector<std::vector<float>>(
-            board_size_, std::vector<float>(board_size_, 0.0f)));
-    
-    int p_idx_current = current_player_ - 1;      
-    int p_idx_opponent = 1 - p_idx_current; 
+    // ENHANCED GOMOKU REPRESENTATION: 36-plane feature representation for stronger play
+    // Planes 0-1: Stone planes (current player, opponent)
+    // Planes 2-17: History planes (16 total - 8 pairs for each player)
+    // Plane 18: Player indicator (black/white asymmetry)
+    // Plane 19: Is_renju rule variation
+    // Plane 20: Is_omok rule variation
+    // Plane 21: Allowed moves mask
+    // Planes 22-23: Immediate five threats (current/opponent)
+    // Planes 24-25: Four threats (current/opponent)
+    // Planes 26-27: Open three threats (current/opponent)
+    // Planes 28-35: Run-length analysis (8 planes - 4 directions × 2 sides)
 
+    auto tensor = std::vector<std::vector<std::vector<float>>>(
+        36, std::vector<std::vector<float>>(
+            board_size_, std::vector<float>(board_size_, 0.0f)));
+
+    int p_idx_current = current_player_ - 1;
+    int p_idx_opponent = 1 - p_idx_current;
+
+    // Planes 0-1: Stone planes
     for (int r = 0; r < board_size_; ++r) {
         for (int c = 0; c < board_size_; ++c) {
             int action = coords_to_action(r, c);
             if (is_bit_set(p_idx_current, action)) {
-                tensor[0][r][c] = 1.0f; 
+                tensor[0][r][c] = 1.0f;
             } else if (is_bit_set(p_idx_opponent, action)) {
-                tensor[1][r][c] = 1.0f; 
+                tensor[1][r][c] = 1.0f;
             }
-            tensor[2][r][c] = (current_player_ == BLACK) ? 1.0f : 0.0f;
         }
     }
-    
+
+    // Planes 2-17: Enhanced history planes (8 pairs for each player)
+    int history_len = move_history_.size();
+    std::vector<int> current_player_moves;
+    std::vector<int> opponent_player_moves;
+
+    // Separate moves by player (considering current turn)
+    for (int k = 0; k < history_len; ++k) {
+        int move_action = move_history_[history_len - 1 - k];
+        if (k % 2 == 0) {
+            // Most recent move was by opponent (since current player is about to move)
+            if (opponent_player_moves.size() < 8) {
+                opponent_player_moves.push_back(move_action);
+            }
+        } else {
+            // This move was by current player
+            if (current_player_moves.size() < 8) {
+                current_player_moves.push_back(move_action);
+            }
+        }
+    }
+
+    // Fill current player history planes (2, 4, 6, 8, 10, 12, 14, 16)
+    for (size_t i = 0; i < current_player_moves.size(); ++i) {
+        auto [r, c] = action_to_coords_pair(current_player_moves[i]);
+        if (r >= 0 && r < board_size_ && c >= 0 && c < board_size_) {
+            tensor[2 + i * 2][r][c] = 1.0f;
+        }
+    }
+
+    // Fill opponent player history planes (3, 5, 7, 9, 11, 13, 15, 17)
+    for (size_t i = 0; i < opponent_player_moves.size(); ++i) {
+        auto [r, c] = action_to_coords_pair(opponent_player_moves[i]);
+        if (r >= 0 && r < board_size_ && c >= 0 && c < board_size_) {
+            tensor[3 + i * 2][r][c] = 1.0f;
+        }
+    }
+
+    // Plane 18: Player indicator (1.0 for black/first player, 0.0 for white/second player)
+    float player_indicator = (current_player_ == BLACK) ? 1.0f : 0.0f;
+    for (int r = 0; r < board_size_; ++r) {
+        for (int c = 0; c < board_size_; ++c) {
+            tensor[18][r][c] = player_indicator;
+        }
+    }
+
+    // Plane 19: Is_renju rule variation
+    float renju_indicator = use_renju_ ? 1.0f : 0.0f;
+    for (int r = 0; r < board_size_; ++r) {
+        for (int c = 0; c < board_size_; ++c) {
+            tensor[19][r][c] = renju_indicator;
+        }
+    }
+
+    // Plane 20: Is_omok rule variation
+    float omok_indicator = use_omok_ ? 1.0f : 0.0f;
+    for (int r = 0; r < board_size_; ++r) {
+        for (int c = 0; c < board_size_; ++c) {
+            tensor[20][r][c] = omok_indicator;
+        }
+    }
+
+    // Plane 21: Allowed moves mask
+    computeAllowedMovesMask(tensor[21]);
+
+    // Planes 22-27: Threat detection planes
+    computeThreatPlanes(tensor, 22);
+
+    // Planes 28-35: Run-length analysis planes
+    computeRunLengthPlanes(tensor, 28);
+
     return tensor;
 }
 
@@ -1340,6 +1419,228 @@ std::vector<std::vector<uint64_t>> GomokuState::getBitboards() const {
     // Return a copy of the internal bitboards
     // For Gomoku: [black_bitboards, white_bitboards]
     return player_bitboards_;
+}
+
+// Enhanced tensor representation helper implementations
+
+void GomokuState::computeAllowedMovesMask(std::vector<std::vector<float>>& mask_plane) const {
+    // Compute legal moves mask - 1.0 for legal moves, 0.0 for occupied or invalid positions
+    for (int r = 0; r < board_size_; ++r) {
+        for (int c = 0; c < board_size_; ++c) {
+            int action = coords_to_action(r, c);
+            if (action >= 0 && action < getActionSpaceSize() && !is_occupied(action)) {
+                // Check if move is truly legal (considering rule variations)
+                if (is_move_valid_internal(action, false)) {
+                    mask_plane[r][c] = 1.0f;
+                }
+            }
+        }
+    }
+}
+
+void GomokuState::computeThreatPlanes(std::vector<std::vector<std::vector<float>>>& tensor, int start_plane) const {
+    // Planes 22-23: Immediate five threats (current/opponent)
+    // Planes 24-25: Four threats (current/opponent)
+    // Planes 26-27: Open three threats (current/opponent)
+
+    int p_idx_current = current_player_ - 1;
+    int p_idx_opponent = 1 - p_idx_current;
+
+    for (int r = 0; r < board_size_; ++r) {
+        for (int c = 0; c < board_size_; ++c) {
+            // Skip if position is occupied
+            int action = coords_to_action(r, c);
+            if (is_occupied(action)) continue;
+
+            // Check immediate five threats
+            if (hasImmediateFive(current_player_, r, c)) {
+                tensor[start_plane][r][c] = 1.0f;
+            }
+            if (hasImmediateFive(p_idx_opponent + 1, r, c)) {
+                tensor[start_plane + 1][r][c] = 1.0f;
+            }
+
+            // Check four threats
+            if (hasFourThreat(current_player_, r, c)) {
+                tensor[start_plane + 2][r][c] = 1.0f;
+            }
+            if (hasFourThreat(p_idx_opponent + 1, r, c)) {
+                tensor[start_plane + 3][r][c] = 1.0f;
+            }
+
+            // Check open three threats
+            if (hasOpenThree(current_player_, r, c)) {
+                tensor[start_plane + 4][r][c] = 1.0f;
+            }
+            if (hasOpenThree(p_idx_opponent + 1, r, c)) {
+                tensor[start_plane + 5][r][c] = 1.0f;
+            }
+        }
+    }
+}
+
+void GomokuState::computeRunLengthPlanes(std::vector<std::vector<std::vector<float>>>& tensor, int start_plane) const {
+    // Planes 28-35: Run-length analysis (4 directions × 2 sides)
+    // Directions: horizontal, vertical, diagonal /, diagonal \
+    // For each direction, compute run-length to five from both sides
+
+    const int directions[4][2] = {{0,1}, {1,0}, {1,1}, {1,-1}}; // horizontal, vertical, diag/, diag\
+
+    for (int r = 0; r < board_size_; ++r) {
+        for (int c = 0; c < board_size_; ++c) {
+            int action = coords_to_action(r, c);
+            if (is_occupied(action)) continue; // Only analyze empty positions
+
+            for (int dir = 0; dir < 4; ++dir) {
+                int dr = directions[dir][0];
+                int dc = directions[dir][1];
+
+                // Compute run-length to five in both directions
+                int length_positive = getRunLengthToFive(current_player_, r, c, dr, dc);
+                int length_negative = getRunLengthToFive(current_player_, r, c, -dr, -dc);
+
+                // Normalize to 0-1 range (5 means can make five in one move)
+                float positive_value = std::min(1.0f, length_positive / 5.0f);
+                float negative_value = std::min(1.0f, length_negative / 5.0f);
+
+                tensor[start_plane + dir * 2][r][c] = positive_value;
+                tensor[start_plane + dir * 2 + 1][r][c] = negative_value;
+            }
+        }
+    }
+}
+
+bool GomokuState::hasImmediateFive(int player, int r, int c) const {
+    // Check if placing a stone at (r,c) immediately creates five in a row
+    const int directions[4][2] = {{0,1}, {1,0}, {1,1}, {1,-1}};
+
+    for (int dir = 0; dir < 4; ++dir) {
+        int dr = directions[dir][0];
+        int dc = directions[dir][1];
+
+        // Count consecutive stones in both directions
+        int count = 1; // Count the stone we would place
+        count += countConsecutive(player, r, c, dr, dc);
+        count += countConsecutive(player, r, c, -dr, -dc);
+
+        if (count >= 5) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool GomokuState::hasFourThreat(int player, int r, int c) const {
+    // Check if placing a stone at (r,c) creates a four that threatens to make five
+    const int directions[4][2] = {{0,1}, {1,0}, {1,1}, {1,-1}};
+
+    for (int dir = 0; dir < 4; ++dir) {
+        int dr = directions[dir][0];
+        int dc = directions[dir][1];
+
+        int count = 1;
+        count += countConsecutive(player, r, c, dr, dc);
+        count += countConsecutive(player, r, c, -dr, -dc);
+
+        if (count == 4) {
+            // Check if there's space to extend to five
+            int nr1 = r + (count) * dr, nc1 = c + (count) * dc;
+            int nr2 = r - (count) * dr, nc2 = c - (count) * dc;
+
+            bool can_extend = false;
+            if (nr1 >= 0 && nr1 < board_size_ && nc1 >= 0 && nc1 < board_size_) {
+                int action1 = coords_to_action(nr1, nc1);
+                if (!is_occupied(action1)) can_extend = true;
+            }
+            if (nr2 >= 0 && nr2 < board_size_ && nc2 >= 0 && nc2 < board_size_) {
+                int action2 = coords_to_action(nr2, nc2);
+                if (!is_occupied(action2)) can_extend = true;
+            }
+
+            if (can_extend) return true;
+        }
+    }
+    return false;
+}
+
+bool GomokuState::hasOpenThree(int player, int r, int c) const {
+    // Check if placing a stone at (r,c) creates an open three (can become four in two ways)
+    const int directions[4][2] = {{0,1}, {1,0}, {1,1}, {1,-1}};
+
+    for (int dir = 0; dir < 4; ++dir) {
+        int dr = directions[dir][0];
+        int dc = directions[dir][1];
+
+        int count = 1;
+        count += countConsecutive(player, r, c, dr, dc);
+        count += countConsecutive(player, r, c, -dr, -dc);
+
+        if (count == 3) {
+            // Check if both ends are open (can extend in both directions)
+            int nr1 = r + 2 * dr, nc1 = c + 2 * dc;
+            int nr2 = r - 2 * dr, nc2 = c - 2 * dc;
+
+            bool open1 = (nr1 >= 0 && nr1 < board_size_ && nc1 >= 0 && nc1 < board_size_ &&
+                         !is_occupied(coords_to_action(nr1, nc1)));
+            bool open2 = (nr2 >= 0 && nr2 < board_size_ && nc2 >= 0 && nc2 < board_size_ &&
+                         !is_occupied(coords_to_action(nr2, nc2)));
+
+            if (open1 && open2) return true;
+        }
+    }
+    return false;
+}
+
+int GomokuState::countConsecutive(int player, int r, int c, int dr, int dc) const {
+    // Count consecutive stones of the same player in one direction from (r,c)
+    int count = 0;
+    int nr = r + dr, nc = c + dc;
+
+    while (nr >= 0 && nr < board_size_ && nc >= 0 && nc < board_size_) {
+        int action = coords_to_action(nr, nc);
+        if (is_bit_set(player - 1, action)) {
+            count++;
+            nr += dr;
+            nc += dc;
+        } else {
+            break;
+        }
+    }
+    return count;
+}
+
+int GomokuState::getRunLengthToFive(int player, int r, int c, int dr, int dc) const {
+    // Calculate how many moves needed to create five in a row in this direction
+    // This is a simplified version - could be enhanced with more sophisticated analysis
+
+    int consecutive = 0;
+    int gaps = 0;
+    int total_length = 0;
+    int nr = r, nc = c;
+
+    // Scan up to 5 positions in this direction
+    for (int i = 0; i < 5; ++i) {
+        if (nr < 0 || nr >= board_size_ || nc < 0 || nc >= board_size_) {
+            break;
+        }
+
+        int action = coords_to_action(nr, nc);
+        if (is_bit_set(player - 1, action)) {
+            consecutive++;
+        } else if (!is_occupied(action)) {
+            gaps++;
+        } else {
+            // Blocked by opponent - can't extend further
+            break;
+        }
+
+        total_length++;
+        nr += dr;
+        nc += dc;
+    }
+
+    // Simple heuristic: return potential based on consecutive stones and available space
+    return consecutive + std::min(gaps, 5 - consecutive);
 }
 
 } // namespace gomoku

@@ -47,6 +47,83 @@ Node allocation: 330M allocations/second via free list
 5. **Terminal**: Set terminal flag, compute exact terminal_value
 6. **Deallocation**: Add to free list for O(1) reuse
 
+## Enhanced Tensor Representations
+
+### Gomoku Tensor (36 planes, 15×15)
+**Enhanced with tactical analysis for superior positional understanding**
+
+**Planes 0-1**: Stone planes
+- Plane 0: Current player stones (1.0 where current player has stones)
+- Plane 1: Opponent stones (1.0 where opponent has stones)
+
+**Planes 2-17**: Move history (8 pairs per player)
+- Planes 2,4,6,8,10,12,14,16: Current player's last 8 moves (most recent first)
+- Planes 3,5,7,9,11,13,15,17: Opponent's last 8 moves (most recent first)
+
+**Plane 18**: Player indicator
+- 1.0 if current player is black/first player, 0.0 if white/second player
+
+**Planes 19-20**: Rule variations
+- Plane 19: 1.0 if using Renju rules, 0.0 otherwise
+- Plane 20: 1.0 if using Omok rules, 0.0 otherwise
+
+**Plane 21**: Allowed moves mask
+- 1.0 for legal moves, 0.0 for occupied or forbidden positions
+
+**Planes 22-27**: Threat detection
+- Planes 22-23: Immediate five threats (current player, opponent)
+- Planes 24-25: Four threats (current player, opponent)
+- Planes 26-27: Open three threats (current player, opponent)
+
+**Planes 28-35**: Run-length analysis (4 directions × 2 sides)
+- Planes 28-29: Horizontal direction (positive, negative)
+- Planes 30-31: Vertical direction (positive, negative)
+- Planes 32-33: Diagonal / direction (positive, negative)
+- Planes 34-35: Diagonal \ direction (positive, negative)
+
+### Chess Tensor (30 planes, 8×8)
+**Enhanced with complete game state and move history**
+
+**Planes 0-11**: Piece types × 2 colors
+- Planes 0-5: White pieces (pawn, knight, bishop, rook, queen, king)
+- Planes 6-11: Black pieces (pawn, knight, bishop, rook, queen, king)
+
+**Plane 12**: Castling rights
+- Encoded as floating point value representing available castling options
+
+**Plane 13**: En passant target square
+- 1.0 at target square if en passant capture available, 0.0 otherwise
+
+**Planes 14-29**: Move history (8 pairs per player)
+- Planes 14,16,18,20,22,24,26,28: Current player's last 8 moves (destination squares)
+- Planes 15,17,19,21,23,25,27,29: Opponent's last 8 moves (destination squares)
+
+### Go Tensor (25 planes, 19×19)
+**Enhanced with proper move history separation and capture analysis**
+
+**Planes 0-1**: Stone positions
+- Plane 0: Current player stones
+- Plane 1: Opponent stones
+
+**Plane 2**: Ko position
+- 1.0 at ko point if applicable, 0.0 otherwise
+
+**Planes 3-18**: Move history (8 pairs per player)
+- Planes 3,5,7,9,11,13,15,17: Current player's last 8 moves
+- Planes 4,6,8,10,12,14,16,18: Opponent's last 8 moves
+
+**Planes 19-22**: Capture patterns (group liberties)
+- Plane 19: Groups with 1 liberty (atari)
+- Plane 20: Groups with 2 liberties
+- Plane 21: Groups with 3 liberties
+- Plane 22: Groups with 4+ liberties
+
+**Plane 23**: Legal move indicator
+- 1.0 for legal moves, 0.0 for illegal positions
+
+**Plane 24**: Player turn indicator
+- 1.0 for first player (black), 0.0 for second player (white)
+
 ### GameState Interface
 **Purpose**: Abstract game representation supporting multiple board games
 
@@ -96,7 +173,10 @@ Node allocation: 330M allocations/second via free list
 **Constraints**:
 - `batch_size` in range [1, 256] (GPU memory limited)
 - `positions` aligned to 16-byte boundaries
-- Feature planes `C` varies by game (7 for Gomoku, 12 for Chess, 17 for Go)
+- Feature planes `C` varies by game:
+  - **Gomoku**: 36 planes (enhanced with threat detection, run-length analysis, rule variations)
+  - **Chess**: 30 planes (enhanced with castling, en passant, 8-pair move history)
+  - **Go**: 25 planes (enhanced with proper move history separation, capture patterns)
 
 ### InferenceResult
 **Purpose**: Neural network output for batched positions

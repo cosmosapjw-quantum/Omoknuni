@@ -42,3 +42,9 @@ target_compile_definitions(alphazero_py PRIVATE
     VERSION_INFO="${PROJECT_VERSION}"
     PYBIND11_DETAILED_ERROR_MESSAGES
 )
+
+# Install the module to the Python package
+install(TARGETS alphazero_py
+    COMPONENT python_modules
+    DESTINATION src
+)

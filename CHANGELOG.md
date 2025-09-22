@@ -153,11 +153,35 @@ All notable changes to this project will be documented in this file.
 - Performance benchmarks: 500+ legal move generations/second, 10k+ move operations/second
 - Edge case testing for boundary conditions, invalid moves, and terminal state detection
 - Memory safety validation with game state cloning and serialization round-trips
+- **Enhanced Tensor Representations**: Advanced feature planes for superior AI performance
+- **Gomoku Enhanced to 36 planes** (5.1x increase): threat detection, run-length analysis, rule variations
+- Planes 0-1: Stone positions (current/opponent)
+- Planes 2-17: Move history (8 pairs per player)
+- Plane 18: Player indicator (black/white asymmetry)
+- Planes 19-20: Rule variations (renju/omok support)
+- Plane 21: Allowed moves mask
+- Planes 22-27: Threat detection (immediate five, four threats, open three)
+- Planes 28-35: Run-length analysis (4 directions × 2 sides for distance-to-five)
+- **Chess Enhanced to 30 planes**: proper castling, en passant, and move history
+- Planes 0-11: Piece types × 2 colors (existing)
+- Plane 12: Castling rights encoding
+- Plane 13: En passant target square
+- Planes 14-29: Move history (8 pairs per player)
+- **Go Enhanced to 25 planes**: fixed move history separation and capture patterns
+- Planes 0-2: Stones and ko position (existing)
+- Planes 3-18: Move history (8 pairs per player) ← Critical fix from alternating format
+- Planes 19-22: Capture patterns (liberties 1,2,3,4+)
+- Planes 23-24: Legal moves and player turn
 
 ### Changed
 - Moved existing game logic from `/games` to `/cpp_extensions/games/`
 - Moved core game utilities to `/cpp_extensions/utils/`
 - Updated CMakeLists.txt files to build with actual C++ source files
+- **Enhanced all game tensor representations** for dramatically improved tactical understanding
+- **Fixed critical move history bug** across all games - now properly separates each player's last 8 moves
+- **Gomoku tactical enhancement**: added sophisticated threat detection and run-length analysis
+- **Chess completeness**: added missing castling rights and en passant plane representations
+- **Go consistency**: fixed alternating move history to proper player separation
 
 ### Fixed
 

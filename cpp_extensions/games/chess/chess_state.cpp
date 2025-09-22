@@ -691,17 +691,24 @@ std::vector<std::vector<std::vector<float>>> ChessState::getTensorRepresentation
     if (!tensor_cache_dirty_.load(std::memory_order_relaxed) && !cached_tensor_repr_.empty()) {
         return cached_tensor_repr_;
     }
-    
-    // Create tensor directly without pooling
+
+    // T021 SPEC COMPLIANCE: Standard AlphaZero Chess tensor representation
+    // Planes 0-11: piece types × 2 colors (white/black pieces)
+    // Plane 12: Castling rights (4 values across board)
+    // Plane 13: En passant target square
+    // Planes 14-29: Move history (8 pairs for each player)
+    const int total_planes = 30;
+    const int board_size = 8;
+
     auto tensor = std::vector<std::vector<std::vector<float>>>(
-        12, std::vector<std::vector<float>>(8, std::vector<float>(8, 0.0f)));
-    
-    // Fill tensor with piece positions
+        total_planes, std::vector<std::vector<float>>(board_size, std::vector<float>(board_size, 0.0f)));
+
+    // Planes 0-11: Fill tensor with piece positions
     for (int square = 0; square < NUM_SQUARES; ++square) {
         int rank = getRank(square);
         int file = getFile(square);
         Piece piece = board_[square];
-        
+
         if (piece.type != PieceType::NONE) {
             int planeIdx = -1;
             if (piece.color == PieceColor::WHITE) {
@@ -725,17 +732,76 @@ std::vector<std::vector<std::vector<float>>> ChessState::getTensorRepresentation
                     default: break;
                 }
             }
-            
+
             if (planeIdx >= 0) {
                 tensor[planeIdx][rank][file] = 1.0f;
             }
         }
     }
-    
+
+    // Plane 12: Castling rights (fill entire board with castling availability)
+    float castling_value = 0.0f;
+    if (castling_rights_.white_kingside) castling_value += 0.25f;
+    if (castling_rights_.white_queenside) castling_value += 0.25f;
+    if (castling_rights_.black_kingside) castling_value += 0.25f;
+    if (castling_rights_.black_queenside) castling_value += 0.25f;
+
+    for (int rank = 0; rank < board_size; ++rank) {
+        for (int file = 0; file < board_size; ++file) {
+            tensor[12][rank][file] = castling_value;
+        }
+    }
+
+    // Plane 13: En passant target square
+    if (en_passant_square_ >= 0 && en_passant_square_ < NUM_SQUARES) {
+        int ep_rank = getRank(en_passant_square_);
+        int ep_file = getFile(en_passant_square_);
+        tensor[13][ep_rank][ep_file] = 1.0f;
+    }
+
+    // Planes 14-29: Move history (8 pairs for each player)
+    int history_len = move_history_.size();
+    std::vector<ChessMove> current_player_moves;
+    std::vector<ChessMove> opponent_moves;
+
+    // Separate moves by player (alternating turns)
+    for (int k = 0; k < history_len; ++k) {
+        const MoveInfo& moveInfo = move_history_[history_len - 1 - k];
+        if (k % 2 == 0) {
+            // Most recent move was by opponent (since current player is about to move)
+            opponent_moves.push_back(moveInfo.move);
+        } else {
+            // This move was by current player
+            current_player_moves.push_back(moveInfo.move);
+        }
+    }
+
+    // Fill move history planes (using destination squares)
+    const int num_history_pairs = 8;
+    for (int i = 0; i < num_history_pairs && i < static_cast<int>(current_player_moves.size()); ++i) {
+        const ChessMove& move = current_player_moves[i];
+        int to_rank = getRank(move.to_square);
+        int to_file = getFile(move.to_square);
+
+        if (to_rank >= 0 && to_rank < board_size && to_file >= 0 && to_file < board_size) {
+            tensor[14 + i * 2][to_rank][to_file] = 1.0f; // Planes 14, 16, 18, ..., 28
+        }
+    }
+
+    for (int i = 0; i < num_history_pairs && i < static_cast<int>(opponent_moves.size()); ++i) {
+        const ChessMove& move = opponent_moves[i];
+        int to_rank = getRank(move.to_square);
+        int to_file = getFile(move.to_square);
+
+        if (to_rank >= 0 && to_rank < board_size && to_file >= 0 && to_file < board_size) {
+            tensor[15 + i * 2][to_rank][to_file] = 1.0f; // Planes 15, 17, 19, ..., 29
+        }
+    }
+
     // PERFORMANCE FIX: Cache the computed tensor
     cached_tensor_repr_ = tensor;
     tensor_cache_dirty_.store(false, std::memory_order_relaxed);
-    
+
     return tensor;
 }
 

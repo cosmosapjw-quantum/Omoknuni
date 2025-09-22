@@ -555,41 +555,132 @@ int GoState::getActionSpaceSize() const {
 }
 
 std::vector<std::vector<std::vector<float>>> GoState::getTensorRepresentation() const {
-    // PERFORMANCE FIX: Use cached tensor if available and not dirty
-    if (!tensor_cache_dirty_.load(std::memory_order_relaxed) && !cached_tensor_repr_.empty()) {
-        return cached_tensor_repr_;
-    }
-    
-    // Create tensor directly without pooling
+    // T022 SPEC COMPLIANCE: 25-plane representation for Go (enhanced with proper move history)
+    // Plane 0: Current player stones
+    // Plane 1: Opponent stones
+    // Plane 2: Ko position (if any)
+    // Planes 3-18: Move history (16 total - 8 pairs for each player)
+    // Planes 19-22: Capture patterns (liberties 1, 2, 3, 4+)
+    // Plane 23: Legal move indicator
+    // Plane 24: Player turn indicator
+
     auto tensor = std::vector<std::vector<std::vector<float>>>(
-        3, std::vector<std::vector<float>>(board_size_, std::vector<float>(board_size_, 0.0f)));
-    
-    // Fill first two planes with stone positions
+        25, std::vector<std::vector<float>>(board_size_, std::vector<float>(board_size_, 0.0f)));
+
+    // Planes 0-1: Current player and opponent stones
     for (int y = 0; y < board_size_; ++y) {
         for (int x = 0; x < board_size_; ++x) {
             int pos = y * board_size_ + x;
             int stone = getStone(pos);
-            
-            if (stone == 1) {
-                tensor[0][y][x] = 1.0f;  // Black stones
-            } else if (stone == 2) {
-                tensor[1][y][x] = 1.0f;  // White stones
+
+            if (stone == current_player_) {
+                tensor[0][y][x] = 1.0f;  // Current player stones
+            } else if (stone == (3 - current_player_)) {
+                tensor[1][y][x] = 1.0f;  // Opponent stones
             }
         }
     }
-    
-    // Third plane: current player
+
+    // Plane 2: Ko position
+    if (ko_point_ >= 0 && ko_point_ < board_size_ * board_size_) {
+        int ko_y = ko_point_ / board_size_;
+        int ko_x = ko_point_ % board_size_;
+        if (ko_y >= 0 && ko_y < board_size_ && ko_x >= 0 && ko_x < board_size_) {
+            tensor[2][ko_y][ko_x] = 1.0f;
+        }
+    }
+
+    // Planes 3-18: Move history (16 total - 8 pairs for each player)
+    int history_len = move_history_.size();
+    std::vector<int> current_player_moves;
+    std::vector<int> opponent_player_moves;
+
+    // Separate moves by player (considering current turn)
+    for (int k = 0; k < history_len; ++k) {
+        int move_action = move_history_[history_len - 1 - k];
+        if (k % 2 == 0) {
+            // Most recent move was by opponent (since current player is about to move)
+            if (opponent_player_moves.size() < 8) {
+                opponent_player_moves.push_back(move_action);
+            }
+        } else {
+            // This move was by current player
+            if (current_player_moves.size() < 8) {
+                current_player_moves.push_back(move_action);
+            }
+        }
+    }
+
+    // Fill current player history planes (3, 5, 7, 9, 11, 13, 15, 17)
+    for (size_t i = 0; i < current_player_moves.size(); ++i) {
+        int action = current_player_moves[i];
+        if (action >= 0 && action < board_size_ * board_size_) { // Skip pass moves
+            int y = action / board_size_;
+            int x = action % board_size_;
+            if (y >= 0 && y < board_size_ && x >= 0 && x < board_size_) {
+                tensor[3 + i * 2][y][x] = 1.0f;
+            }
+        }
+    }
+
+    // Fill opponent player history planes (4, 6, 8, 10, 12, 14, 16, 18)
+    for (size_t i = 0; i < opponent_player_moves.size(); ++i) {
+        int action = opponent_player_moves[i];
+        if (action >= 0 && action < board_size_ * board_size_) { // Skip pass moves
+            int y = action / board_size_;
+            int x = action % board_size_;
+            if (y >= 0 && y < board_size_ && x >= 0 && x < board_size_) {
+                tensor[4 + i * 2][y][x] = 1.0f;
+            }
+        }
+    }
+
+    // Planes 19-22: Capture patterns (groups with 1, 2, 3, 4+ liberties)
+    for (int y = 0; y < board_size_; ++y) {
+        for (int x = 0; x < board_size_; ++x) {
+            int pos = y * board_size_ + x;
+            int stone = getStone(pos);
+            if (stone != 0) { // Has a stone
+                // Find all groups for this player and check if current position belongs to any
+                std::vector<StoneGroup> groups = rules_->findGroups(stone);
+                for (const auto& group : groups) {
+                    // Check if current position is in this group
+                    if (group.stones.find(pos) != group.stones.end()) {
+                        int liberties = group.liberties.size();
+                        if (liberties == 1) {
+                            tensor[19][y][x] = 1.0f; // 1 liberty (atari)
+                        } else if (liberties == 2) {
+                            tensor[20][y][x] = 1.0f; // 2 liberties
+                        } else if (liberties == 3) {
+                            tensor[21][y][x] = 1.0f; // 3 liberties
+                        } else if (liberties >= 4) {
+                            tensor[22][y][x] = 1.0f; // 4+ liberties
+                        }
+                        break; // Found the group containing this position
+                    }
+                }
+            }
+        }
+    }
+
+    // Plane 23: Legal move indicator
+    for (int y = 0; y < board_size_; ++y) {
+        for (int x = 0; x < board_size_; ++x) {
+            int pos = y * board_size_ + x;
+            if (isLegalMove(pos)) { // Use the GoState method
+                tensor[23][y][x] = 1.0f;
+            }
+        }
+    }
+
+    // Plane 24: Player turn indicator
     float playerValue = (current_player_ == 1) ? 1.0f : 0.0f;
     for (int y = 0; y < board_size_; ++y) {
         for (int x = 0; x < board_size_; ++x) {
-            tensor[2][y][x] = playerValue;
+            tensor[24][y][x] = playerValue;
         }
     }
-    
-    // PERFORMANCE FIX: Cache the computed tensor
-    cached_tensor_repr_ = tensor;
-    tensor_cache_dirty_.store(false, std::memory_order_relaxed);
-    
+
     return tensor;
 }
 
