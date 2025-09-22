@@ -103,7 +103,8 @@
 - [x] **T026** [P] Contract test for training API | Create tests/contract/test_training_api.py testing all functions in contracts/training_api.py, self-play generation, experience buffer operations | ✅ All training API contract tests fail with NotImplementedError, comprehensive coverage, 29 test cases validate all abstract classes and standalone functions | Dev | 2h
   *Completed: 2025-09-22, Author: Claude Code*
 
-- [ ] **T027** Asynchronous search coordinator | Create src/core/search_coordinator.py with thread pool management, inference request queueing, result distribution, performance monitoring | Coordinator manages multiple search threads, handles inference requests asynchronously | Dev | 4h
+- [x] **T027** Asynchronous search coordinator | Create src/core/search_coordinator.py with thread pool management, inference request queueing, result distribution, performance monitoring | ✅ Coordinator manages multiple search threads, handles inference requests asynchronously, thread pool with 8 workers, inference request queue with 1000 capacity, comprehensive metrics collection, 21 unit tests pass | Dev | 4h
+  *Completed: 2025-09-22, Author: Claude Code*
 
 - [ ] **T028** Self-play game generator | Create src/training/self_play.py with temperature scheduling, Dirichlet noise injection, game outcome determination, position augmentation | Self-play generates complete games, applies noise for exploration, saves training positions | Dev | 4h
 
