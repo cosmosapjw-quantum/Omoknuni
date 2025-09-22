@@ -32,6 +32,7 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - [x] **T023**: Game adapter interface with unified polymorphic dispatch across all games
 - [x] **T024**: Python bindings for games with pybind11 and numpy array compatibility
 - [x] **T025**: Game rule unit tests with comprehensive verification for all games
+- [x] **T026**: Contract test for training API with comprehensive coverage
 
 ### Current Architecture
 

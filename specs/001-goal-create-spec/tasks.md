@@ -100,7 +100,8 @@
 
 ## PHASE 4 — Self-Play & Replay
 
-- [ ] **T026** [P] Contract test for training API | Create tests/contract/test_training_api.py testing all functions in contracts/training_api.py, self-play generation, experience buffer operations | All training API contract tests fail with NotImplementedError, comprehensive coverage | Dev | 2h
+- [x] **T026** [P] Contract test for training API | Create tests/contract/test_training_api.py testing all functions in contracts/training_api.py, self-play generation, experience buffer operations | ✅ All training API contract tests fail with NotImplementedError, comprehensive coverage, 29 test cases validate all abstract classes and standalone functions | Dev | 2h
+  *Completed: 2025-09-22, Author: Claude Code*
 
 - [ ] **T027** Asynchronous search coordinator | Create src/core/search_coordinator.py with thread pool management, inference request queueing, result distribution, performance monitoring | Coordinator manages multiple search threads, handles inference requests asynchronously | Dev | 4h
 
