@@ -128,6 +128,30 @@ All notable changes to this project will be documented in this file.
 - Error handling and recovery scenario testing with worker restart capability
 - Mixed precision inference testing and CPU fallback integration validation
 - Queue capacity and backpressure testing for robust pipeline operation
+- **T020**: Gomoku game implementation with enhanced 36-plane tensor representation
+- Complete 15×15 Gomoku implementation with sophisticated threat detection and run-length analysis
+- Enhanced tensor representation with 36 planes: stones, move history (8 pairs per player), rule variations
+- Threat detection planes for immediate five, four threats, and open three analysis
+- Run-length analysis across 4 directions for distance-to-five calculations with border awareness
+- Player indicator and rule variation support (Renju/Omok) with allowed moves masking
+- Comprehensive win detection for horizontal, vertical, and diagonal five-in-a-row patterns
+- Legal move validation with move making/undoing and player alternation
+- Performance: 500+ tensor extractions per second with enhanced feature representation
+- **T021**: Chess game implementation with enhanced 30-plane tensor representation
+- Complete chess implementation with all standard rules including castling and en passant
+- Enhanced tensor representation with 30 planes: piece types × 2 colors, castling rights, en passant
+- Proper move history tracking with 8 pairs per player for opening theory learning
+- Support for standard chess positions and move validation with Chess960 compatibility
+- Comprehensive piece movement rules with special moves (castling, en passant, promotion)
+- Performance: 500+ tensor extractions per second with complete game state representation
+- **T022**: Go game implementation with enhanced 25-plane tensor representation
+- Complete Go implementation supporting variable board sizes (9×9 to 19×19) with capture detection
+- Enhanced tensor representation with 25 planes: stones, ko position, proper move history separation
+- Fixed critical move history bug with 8 separate planes per player instead of alternating format
+- Capture pattern analysis with liberty counting (1, 2, 3, 4+ liberties) for tactical understanding
+- Ko rule implementation preventing simple repetition with legal move validation
+- Stone placement, capture mechanics, and game state management with move undo support
+- Performance: 500+ tensor extractions per second with enhanced positional features
 - **T023**: Game adapter interface for unified multi-game support
 - Complete game adapter interface with GameFactory, GameRegistry, and GameSerializer classes
 - Polymorphic dispatch enabling MCTS to work with any game without implementation knowledge

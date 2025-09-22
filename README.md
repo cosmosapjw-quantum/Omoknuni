@@ -26,6 +26,9 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - [x] **T017**: Pinned memory optimization for efficient GPU data transfers (H2D/D2H optimized)
 - [x] **T018**: CPU fallback mechanism for robust inference reliability
 - [x] **T019**: Inference integration test for full pipeline validation
+- [x] **T020**: Gomoku game implementation with enhanced 36-plane tensor representation
+- [x] **T021**: Chess game implementation with enhanced 30-plane tensor representation
+- [x] **T022**: Go game implementation with enhanced 25-plane tensor representation
 - [x] **T023**: Game adapter interface with unified polymorphic dispatch across all games
 - [x] **T024**: Python bindings for games with pybind11 and numpy array compatibility
 - [x] **T025**: Game rule unit tests with comprehensive verification for all games
