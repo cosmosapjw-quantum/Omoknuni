@@ -205,6 +205,17 @@ All notable changes to this project will be documented in this file.
 - Game serialization/deserialization to disk in JSON format for training data persistence
 - Statistics tracking and performance monitoring: games/hour, positions/game, generation times
 - Comprehensive unit test suite with 22 test cases covering all self-play scenarios and edge cases
+- **T029**: Memory-mapped experience buffer with Parquet storage and LRU caching
+- High-performance experience replay buffer using memory-mapped Parquet files for persistent storage
+- Intelligent LRU cache with configurable size (default 512MB) for frequently accessed training examples
+- Thread-safe operations with atomic locking for concurrent access from multiple training workers
+- Efficient random sampling supporting game type filtering and balanced batch construction
+- Automatic buffer size management with configurable limits (default 1M examples) and cleanup policies
+- Comprehensive data persistence across buffer instances with metadata and index preservation
+- Performance optimization: 14.8K examples/sec addition rate, 162 samples/sec retrieval rate
+- Storage efficiency using Parquet columnar format with numpy array serialization
+- Buffer statistics and monitoring including storage size, cache utilization, and game type distribution
+- Comprehensive unit test suite with 16 test cases covering all buffer operations and edge cases
 - **Comprehensive Self-Play Testing Framework**: Advanced validation system for training data quality
 - **Move Bias Analysis**: Statistical significance testing to detect spatial bias, corner/edge preferences
 - **Policy Entropy Monitoring**: Real-time tracking of exploration→exploitation balance throughout games

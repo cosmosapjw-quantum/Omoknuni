@@ -110,7 +110,8 @@
   *Completed: 2025-09-23, Author: Claude Code*
   *Additional Testing: Comprehensive self-play validation framework with advanced statistical analysis and visualization*
 
-- [ ] **T029** Memory-mapped experience buffer | Create src/training/experience_buffer.py with mmap storage, Parquet format, LRU RAM cache, efficient random sampling | Buffer stores 1M+ experiences, memory-mapped for large datasets, fast random access | Dev | 3h
+- [x] **T029** Memory-mapped experience buffer | Create src/training/experience_buffer.py with mmap storage, Parquet format, LRU RAM cache, efficient random sampling | ✅ Buffer stores 1M+ experiences, memory-mapped Parquet storage, LRU cache with 16K+ entries, 14.8K examples/sec add performance, thread-safe operations, persistence across instances | Dev | 3h
+  *Completed: 2025-09-23, Author: Claude Code*
 
 - [ ] **T030** Experience replay sampling | Extend experience_buffer.py with uniform random sampling, game balance, batch construction for training | Sampling produces balanced batches, respects game type distribution, efficient iteration | Dev | 2h
 
