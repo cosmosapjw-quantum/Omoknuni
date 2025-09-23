@@ -25,6 +25,8 @@ import math
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union, Tuple
 from collections import defaultdict, deque
+from dataclasses import dataclass
+import warnings
 
 # Import contracts and model
 import sys
@@ -34,6 +36,370 @@ from contracts.training_api import ModelTrainer, TrainingExample
 from src.neural.model import AlphaZeroNet, create_model_for_game
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class StabilityConfig:
+    """Configuration for training stability monitoring."""
+
+    # NaN detection
+    check_nan_frequency: int = 1  # Check every N steps
+    nan_recovery_lr_factor: float = 0.1  # LR reduction on NaN recovery
+
+    # Gradient monitoring
+    gradient_norm_window: int = 50  # Window for gradient norm tracking
+    gradient_explosion_threshold: float = 10.0  # Threshold for gradient explosion
+    gradient_norm_patience: int = 20  # Steps to wait before intervention
+
+    # Loss convergence tracking
+    loss_window: int = 100  # Window for loss convergence analysis
+    plateau_threshold: float = 1e-5  # Minimum improvement to avoid plateau
+    plateau_patience: int = 50  # Steps to wait before early stopping
+    divergence_threshold: float = 2.0  # Loss increase factor indicating divergence
+
+    # Early stopping
+    enable_early_stopping: bool = True
+    min_improvement: float = 1e-4  # Minimum validation improvement
+    early_stop_patience: int = 100  # Steps to wait before stopping
+
+    # Recovery mechanisms
+    enable_automatic_recovery: bool = True
+    max_recovery_attempts: int = 3
+    recovery_lr_decay: float = 0.5  # LR decay on recovery
+
+
+class TrainingStabilityMonitor:
+    """
+    Comprehensive training stability monitoring and recovery system.
+
+    Features:
+    - NaN detection in gradients, parameters, and losses
+    - Gradient norm monitoring and explosion detection
+    - Loss convergence tracking and plateau detection
+    - Early stopping based on validation metrics
+    - Automatic recovery mechanisms
+    """
+
+    def __init__(self, config: StabilityConfig = None):
+        """Initialize stability monitor with configuration."""
+        self.config = config or StabilityConfig()
+        self.step_count = 0
+        self.recovery_count = 0
+
+        # Gradient monitoring
+        self.gradient_norms = deque(maxlen=self.config.gradient_norm_window)
+        self.gradient_explosion_count = 0
+
+        # Loss tracking
+        self.train_losses = deque(maxlen=self.config.loss_window)
+        self.val_losses = deque(maxlen=self.config.loss_window)
+        self.best_val_loss = float('inf')
+        self.no_improvement_count = 0
+
+        # Stability flags
+        self.is_stable = True
+        self.last_nan_step = -1
+        self.last_explosion_step = -1
+
+        # Recovery state
+        self.original_lr = None
+        self.recovery_checkpoint = None
+
+        logger.info(f"Training stability monitor initialized with config: {self.config}")
+
+    def check_nan_values(self, model: nn.Module, loss: torch.Tensor,
+                        gradients: Optional[List[torch.Tensor]] = None) -> bool:
+        """
+        Check for NaN values in model parameters, loss, and gradients.
+
+        Args:
+            model: PyTorch model to check
+            loss: Current loss tensor
+            gradients: Optional list of gradient tensors
+
+        Returns:
+            bool: True if NaN detected, False otherwise
+        """
+        # Check loss
+        if torch.isnan(loss) or torch.isinf(loss):
+            logger.warning(f"NaN/Inf detected in loss at step {self.step_count}: {loss.item()}")
+            return True
+
+        # Check model parameters
+        for name, param in model.named_parameters():
+            if torch.isnan(param).any() or torch.isinf(param).any():
+                logger.warning(f"NaN/Inf detected in parameter {name} at step {self.step_count}")
+                return True
+
+        # Check gradients
+        if gradients:
+            for i, grad in enumerate(gradients):
+                if grad is not None and (torch.isnan(grad).any() or torch.isinf(grad).any()):
+                    logger.warning(f"NaN/Inf detected in gradient {i} at step {self.step_count}")
+                    return True
+
+        # Check gradients from model if not provided
+        if gradients is None:
+            for name, param in model.named_parameters():
+                if param.grad is not None:
+                    if torch.isnan(param.grad).any() or torch.isinf(param.grad).any():
+                        logger.warning(f"NaN/Inf detected in gradient for {name} at step {self.step_count}")
+                        return True
+
+        return False
+
+    def update_gradient_norms(self, model: nn.Module) -> float:
+        """
+        Update gradient norm tracking and detect explosions.
+
+        Args:
+            model: PyTorch model with gradients
+
+        Returns:
+            float: Current gradient norm
+        """
+        total_norm = 0.0
+        param_count = 0
+
+        for param in model.parameters():
+            if param.grad is not None:
+                param_norm = param.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
+                param_count += 1
+
+        if param_count > 0:
+            total_norm = total_norm ** (1. / 2)
+            self.gradient_norms.append(total_norm)
+
+            # Check for gradient explosion
+            if total_norm > self.config.gradient_explosion_threshold:
+                self.gradient_explosion_count += 1
+                if self.gradient_explosion_count > self.config.gradient_norm_patience:
+                    logger.warning(f"Gradient explosion detected at step {self.step_count}: "
+                                 f"norm={total_norm:.4f}, threshold={self.config.gradient_explosion_threshold}")
+                    self.last_explosion_step = self.step_count
+                    return total_norm
+            else:
+                self.gradient_explosion_count = 0
+
+        return total_norm
+
+    def update_loss_tracking(self, train_loss: float, val_loss: Optional[float] = None) -> bool:
+        """
+        Update loss tracking and detect convergence issues.
+
+        Args:
+            train_loss: Current training loss
+            val_loss: Optional validation loss
+
+        Returns:
+            bool: True if early stopping should be triggered
+        """
+        self.train_losses.append(train_loss)
+
+        if val_loss is not None:
+            self.val_losses.append(val_loss)
+
+            # Check for best validation loss improvement
+            if val_loss < self.best_val_loss - self.config.min_improvement:
+                self.best_val_loss = val_loss
+                self.no_improvement_count = 0
+            else:
+                self.no_improvement_count += 1
+
+        # Check for loss divergence
+        if len(self.train_losses) >= 10:
+            recent_avg = np.mean(list(self.train_losses)[-10:])
+            older_avg = np.mean(list(self.train_losses)[-20:-10]) if len(self.train_losses) >= 20 else recent_avg
+
+            if recent_avg > older_avg * self.config.divergence_threshold:
+                logger.warning(f"Loss divergence detected at step {self.step_count}: "
+                             f"recent={recent_avg:.4f}, older={older_avg:.4f}")
+                return True
+
+        # Check for early stopping
+        if (self.config.enable_early_stopping and
+            self.no_improvement_count >= self.config.early_stop_patience):
+            logger.info(f"Early stopping triggered at step {self.step_count}: "
+                       f"no improvement for {self.no_improvement_count} steps")
+            return True
+
+        return False
+
+    def check_plateau(self) -> bool:
+        """
+        Check if training has plateaued.
+
+        Returns:
+            bool: True if plateau detected
+        """
+        if len(self.train_losses) < self.config.loss_window:
+            return False
+
+        losses = np.array(self.train_losses)
+
+        # Calculate slope of recent losses
+        steps = np.arange(len(losses))
+        slope = np.polyfit(steps, losses, 1)[0]
+
+        # Check if improvement rate is below threshold
+        improvement_rate = abs(slope)
+        if improvement_rate < self.config.plateau_threshold:
+            logger.info(f"Training plateau detected at step {self.step_count}: "
+                       f"improvement_rate={improvement_rate:.6f}")
+            return True
+
+        return False
+
+    def attempt_recovery(self, optimizer: torch.optim.Optimizer,
+                        scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None) -> bool:
+        """
+        Attempt automatic recovery from training instability.
+
+        Args:
+            optimizer: Training optimizer to modify
+            scheduler: Optional learning rate scheduler
+
+        Returns:
+            bool: True if recovery was attempted
+        """
+        if not self.config.enable_automatic_recovery:
+            return False
+
+        if self.recovery_count >= self.config.max_recovery_attempts:
+            logger.error(f"Maximum recovery attempts ({self.config.max_recovery_attempts}) reached")
+            return False
+
+        self.recovery_count += 1
+        logger.info(f"Attempting training recovery #{self.recovery_count}")
+
+        # Store original learning rate if not already stored
+        if self.original_lr is None:
+            self.original_lr = optimizer.param_groups[0]['lr']
+
+        # Reduce learning rate
+        new_lr = optimizer.param_groups[0]['lr'] * self.config.recovery_lr_decay
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = new_lr
+
+        logger.info(f"Reduced learning rate to {new_lr:.6f} for recovery")
+
+        # Reset gradient explosion counter
+        self.gradient_explosion_count = 0
+
+        # Clear recent unstable history
+        if len(self.gradient_norms) > 10:
+            # Keep only the first half of gradient norms
+            stable_norms = list(self.gradient_norms)[:len(self.gradient_norms)//2]
+            self.gradient_norms.clear()
+            self.gradient_norms.extend(stable_norms)
+
+        return True
+
+    def step(self, model: nn.Module, loss: torch.Tensor, optimizer: torch.optim.Optimizer,
+             scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
+             val_loss: Optional[float] = None) -> Dict[str, Any]:
+        """
+        Main stability monitoring step.
+
+        Args:
+            model: PyTorch model
+            loss: Current training loss
+            optimizer: Training optimizer
+            scheduler: Optional learning rate scheduler
+            val_loss: Optional validation loss
+
+        Returns:
+            dict: Stability monitoring results and recommendations
+        """
+        self.step_count += 1
+        results = {
+            'step': self.step_count,
+            'is_stable': True,
+            'should_stop': False,
+            'recovery_attempted': False,
+            'warnings': []
+        }
+
+        # Check for NaN values
+        if self.step_count % self.config.check_nan_frequency == 0:
+            has_nan = self.check_nan_values(model, loss)
+            if has_nan:
+                results['is_stable'] = False
+                results['warnings'].append('NaN detected')
+                self.last_nan_step = self.step_count
+
+                if self.attempt_recovery(optimizer, scheduler):
+                    results['recovery_attempted'] = True
+                else:
+                    results['should_stop'] = True
+
+        # Update gradient norm monitoring
+        grad_norm = self.update_gradient_norms(model)
+        results['gradient_norm'] = grad_norm
+
+        # Update loss tracking
+        should_stop = self.update_loss_tracking(loss.item(), val_loss)
+        if should_stop:
+            results['should_stop'] = True
+            results['warnings'].append('Early stopping triggered')
+
+        # Check for plateau
+        if self.check_plateau():
+            results['warnings'].append('Training plateau detected')
+
+        # Update stability flag
+        self.is_stable = results['is_stable']
+
+        return results
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get comprehensive stability monitoring statistics."""
+        stats = {
+            'step_count': self.step_count,
+            'recovery_count': self.recovery_count,
+            'is_stable': self.is_stable,
+            'last_nan_step': self.last_nan_step,
+            'last_explosion_step': self.last_explosion_step,
+        }
+
+        # Gradient statistics
+        if self.gradient_norms:
+            grad_norms = np.array(self.gradient_norms)
+            stats.update({
+                'gradient_norm_mean': np.mean(grad_norms),
+                'gradient_norm_std': np.std(grad_norms),
+                'gradient_norm_max': np.max(grad_norms),
+                'gradient_explosion_count': self.gradient_explosion_count,
+            })
+
+        # Loss statistics
+        if self.train_losses:
+            train_losses = np.array(self.train_losses)
+            stats.update({
+                'train_loss_mean': np.mean(train_losses),
+                'train_loss_std': np.std(train_losses),
+            })
+
+            # Only calculate trend if we have enough data points and no NaN values
+            if len(train_losses) >= 2 and not np.any(np.isnan(train_losses)):
+                try:
+                    stats['train_loss_trend'] = np.polyfit(range(len(train_losses)), train_losses, 1)[0]
+                except np.linalg.LinAlgError:
+                    stats['train_loss_trend'] = 0.0
+            else:
+                stats['train_loss_trend'] = 0.0
+
+        if self.val_losses:
+            val_losses = np.array(self.val_losses)
+            stats.update({
+                'val_loss_mean': np.mean(val_losses),
+                'val_loss_std': np.std(val_losses),
+                'best_val_loss': self.best_val_loss,
+                'no_improvement_count': self.no_improvement_count,
+            })
+
+        return stats
 
 
 class AlphaZeroTrainer(ModelTrainer):
@@ -56,7 +422,8 @@ class AlphaZeroTrainer(ModelTrainer):
                  use_mixed_precision: bool = True,
                  gradient_clip_norm: float = 1.0,
                  lr_schedule_t_max: int = 1000,
-                 lr_min_ratio: float = 0.1):
+                 lr_min_ratio: float = 0.1,
+                 stability_config: Optional[StabilityConfig] = None):
         """
         Initialize AlphaZero model trainer.
 
@@ -69,6 +436,7 @@ class AlphaZeroTrainer(ModelTrainer):
             gradient_clip_norm: Maximum gradient norm for clipping (0 to disable)
             lr_schedule_t_max: Period for cosine annealing schedule
             lr_min_ratio: Minimum learning rate as ratio of initial LR
+            stability_config: Configuration for training stability monitoring
         """
         self.model_path = model_path
         self.learning_rate = learning_rate
@@ -112,9 +480,13 @@ class AlphaZeroTrainer(ModelTrainer):
         self.loss_history = deque(maxlen=1000)  # Keep last 1000 losses
         self.metrics_history = defaultdict(lambda: deque(maxlen=100))
 
+        # Training stability monitoring
+        self.stability_monitor = TrainingStabilityMonitor(stability_config)
+
         logger.info(f"Trainer initialized - Model: {self.model.__class__.__name__}, "
                    f"Parameters: {self._count_parameters():,}, "
-                   f"Mixed Precision: {use_mixed_precision}")
+                   f"Mixed Precision: {use_mixed_precision}, "
+                   f"Stability Monitoring: Enabled")
 
     def _load_model(self) -> AlphaZeroNet:
         """Load model from checkpoint or create new model."""
@@ -316,6 +688,35 @@ class AlphaZeroTrainer(ModelTrainer):
             total_norm = total_norm ** (1. / 2)
             metrics['gradient_norm'] = total_norm
 
+        # Run stability monitoring
+        stability_results = self.stability_monitor.step(
+            model=self.model,
+            loss=loss,
+            optimizer=self.optimizer,
+            scheduler=self.scheduler
+        )
+
+        # Add stability metrics
+        metrics.update({
+            'stability_is_stable': stability_results['is_stable'],
+            'stability_should_stop': stability_results['should_stop'],
+            'stability_recovery_attempted': stability_results['recovery_attempted'],
+            'stability_gradient_norm': stability_results.get('gradient_norm', 0.0),
+            'stability_warnings': len(stability_results['warnings']),
+        })
+
+        # Log stability warnings
+        if stability_results['warnings']:
+            logger.warning(f"Step {self.step_count}: Stability warnings: {stability_results['warnings']}")
+
+        # Handle early stopping or recovery
+        if stability_results['should_stop']:
+            logger.error(f"Training should stop due to stability issues at step {self.step_count}")
+            metrics['stability_stop_training'] = True
+
+        if stability_results['recovery_attempted']:
+            logger.info(f"Training recovery attempted at step {self.step_count}")
+
         return metrics
 
     def validate(self, validation_data: List[TrainingExample]) -> Dict[str, float]:
@@ -364,6 +765,16 @@ class AlphaZeroTrainer(ModelTrainer):
         # Store validation metrics
         for key, value in avg_metrics.items():
             self.metrics_history[key].append(value)
+
+        # Update stability monitoring with validation loss
+        if 'val_total_loss' in avg_metrics:
+            # Update the stability monitor step count to match trainer step count
+            self.stability_monitor.step_count = self.step_count
+            # Update loss tracking with validation loss
+            self.stability_monitor.update_loss_tracking(
+                self.loss_history[-1] if self.loss_history else 0.0,
+                avg_metrics['val_total_loss']
+            )
 
         return avg_metrics
 
@@ -450,6 +861,11 @@ class AlphaZeroTrainer(ModelTrainer):
                 recent_values = list(history)
                 stats[f'{metric_name}_mean'] = np.mean(recent_values)
                 stats[f'{metric_name}_recent'] = recent_values[-1] if recent_values else 0.0
+
+        # Add stability monitoring statistics
+        stability_stats = self.stability_monitor.get_statistics()
+        for key, value in stability_stats.items():
+            stats[f'stability_{key}'] = value
 
         return stats
 

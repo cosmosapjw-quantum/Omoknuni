@@ -41,6 +41,7 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - [x] **T032**: Model trainer implementation with AdamW optimizer and mixed precision training
 - [x] **T033**: Training loop orchestration with comprehensive cycle management
 - [x] **T034**: Model evaluation system with head-to-head comparison and ELO rating
+- [x] **T035**: Training stability monitoring with NaN detection and automatic recovery
 
 ### Current Architecture
 
@@ -99,6 +100,14 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
   - **Performance Optimized**: Fast Glicko-2 implementation with iteration limits and relaxed convergence for production use
   - **Multi-Game Support**: Unified evaluation interface for Gomoku, Chess, and Go with game-specific optimizations
   - **Result Persistence**: JSON serialization for evaluation history, rating progression, and detailed analysis
+- **Training Stability Monitoring**: Comprehensive stability system with automatic recovery capabilities
+  - **NaN Detection**: Real-time detection of NaN values in model parameters, gradients, and loss functions
+  - **Gradient Explosion Monitoring**: Automatic detection and intervention for gradient explosion events
+  - **Loss Convergence Tracking**: Monitoring of training progress with divergence and plateau detection
+  - **Early Stopping**: Intelligent stopping based on validation metrics and improvement thresholds
+  - **Automatic Recovery**: Learning rate reduction and gradient history cleanup for training recovery
+  - **Statistical Analysis**: Trend analysis and convergence assessment using polynomial regression
+  - **Comprehensive Logging**: Detailed stability warnings and recovery attempt notifications
 - **Telemetry**: Prometheus-compatible metrics with comprehensive performance monitoring
 
 ## Quick Start
@@ -198,6 +207,9 @@ python -m pytest tests/unit/test_training_loop.py -v
 
 # Test advanced model evaluation system with Glicko-2 rating and statistical analysis
 python -m pytest tests/unit/test_evaluator.py -v
+
+# Test training stability monitoring with NaN detection and automatic recovery
+python -m pytest tests/unit/test_training_stability.py -v
 
 # Run comprehensive self-play testing (all games and variations)
 python scripts/test_self_play_comprehensive.py --quick-test --games 5 --output results/

@@ -132,7 +132,8 @@
 - [x] **T034** Advanced model evaluation system with Glicko-2 rating | Create src/training/evaluator.py with sophisticated Glicko-2 rating system, baseline anchoring, random move generator, head-to-head comparison, statistical analysis | ✅ Advanced Glicko-2 implementation with uncertainty/volatility tracking, baseline anchoring system, RandomMoveGenerator for fast evaluation, performance-optimized with iteration limits, 34+ unit tests pass, contract compliance | Dev | 4h
   *Completed: 2025-09-24, Author: Claude Code*
 
-- [ ] **T035** Training stability monitoring | Extend trainer.py with NaN detection, gradient norm monitoring, loss convergence tracking, early stopping | Training stable, detects divergence, automatic recovery, comprehensive monitoring | Dev | 2h
+- [x] **T035** Training stability monitoring | Extend trainer.py with NaN detection, gradient norm monitoring, loss convergence tracking, early stopping | ✅ Training stable, detects divergence, automatic recovery, comprehensive monitoring, TrainingStabilityMonitor class with 27 comprehensive test cases | Dev | 2h
+  *Completed: 2025-09-24, Author: Claude Code*
 
 - [ ] **T036** Checkpoint management | Create src/training/checkpoint_manager.py with automatic saving, best model selection, model versioning, cleanup policies | Checkpoints saved automatically, best model tracking, old checkpoints cleaned up | Dev | 2h
 
