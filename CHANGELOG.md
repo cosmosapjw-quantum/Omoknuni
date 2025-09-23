@@ -195,6 +195,26 @@ All notable changes to this project will be documented in this file.
 - Graceful shutdown with pending search cancellation and resource cleanup
 - Factory function for configurable coordinator creation with custom parameters
 - Comprehensive unit test suite with 21 test cases covering all functionality including thread safety
+- **T028**: Self-play game generator with temperature scheduling and Dirichlet noise
+- Complete self-play game generation with temperature-based move selection and exploration noise
+- Game-specific parameter tuning: Dirichlet alpha values (Gomoku: 0.3, Chess: 0.2, Go: 0.03)
+- Temperature scheduling for training stability: high exploration early, deterministic late in games
+- Position augmentation and training example creation with proper value assignment from game outcomes
+- Parallel game generation support with configurable worker threads for batch processing
+- Integration with MCTS search coordinator and GPU/CPU inference workers
+- Game serialization/deserialization to disk in JSON format for training data persistence
+- Statistics tracking and performance monitoring: games/hour, positions/game, generation times
+- Comprehensive unit test suite with 22 test cases covering all self-play scenarios and edge cases
+- **Comprehensive Self-Play Testing Framework**: Advanced validation system for training data quality
+- **Move Bias Analysis**: Statistical significance testing to detect spatial bias, corner/edge preferences
+- **Policy Entropy Monitoring**: Real-time tracking of exploration→exploitation balance throughout games
+- **Game Variation Testing**: Comprehensive validation of Renju/Omok, Chess960, and Go rule variations
+- **Terminal Detection Validation**: Robust testing of win/draw/timeout conditions across all game types
+- **MCTS Health Indicators**: Convergence quality assessment, temperature scheduling effectiveness
+- **Statistical Analysis Tools**: Chi-square tests for uniformity, bias detection with p-value reporting
+- **Automated Visualization**: Health score comparisons, bias analysis plots, entropy pattern analysis
+- **Production-Ready Validation**: System health scoring with actionable recommendations for improvement
+- **Edge Case Testing**: Maximum moves, early termination, corrupted data handling validation
 - **Enhanced Tensor Representations**: Advanced feature planes for superior AI performance
 - **Gomoku Enhanced to 36 planes** (5.1x increase): threat detection, run-length analysis, rule variations
 - Planes 0-1: Stone positions (current/opponent)

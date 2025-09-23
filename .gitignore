@@ -81,4 +81,4 @@ tmp/
 temp/
 
 # Profiling
-*.prof
+*.profresults/

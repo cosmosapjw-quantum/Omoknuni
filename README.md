@@ -34,6 +34,7 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - [x] **T025**: Game rule unit tests with comprehensive verification for all games
 - [x] **T026**: Contract test for training API with comprehensive coverage
 - [x] **T027**: Asynchronous search coordinator with thread pool management
+- [x] **T028**: Self-play game generator with comprehensive testing and validation
 
 ### Current Architecture
 
@@ -56,6 +57,11 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
   - **Gomoku**: 36 planes with threat detection, run-length analysis, and rule variations
   - **Chess**: 30 planes with castling rights, en passant, and 8-pair move history
   - **Go**: 25 planes with proper move history separation and capture patterns
+- **Self-Play Training**: Complete game generation with temperature scheduling and Dirichlet noise
+  - **Temperature Control**: Configurable exploration→exploitation transitions
+  - **Game Variations**: Support for Renju/Omok, Chess960, Chinese/Japanese/Korean Go rules
+  - **Bias Detection**: Statistical analysis to ensure fair move distributions
+  - **Policy Health**: Entropy monitoring and MCTS convergence validation
 - **Telemetry**: Prometheus-compatible metrics with comprehensive performance monitoring
 
 ## Quick Start
@@ -128,6 +134,45 @@ python examples/python_bindings_demo.py
 
 # Test comprehensive game rules across all games
 python -m pytest tests/unit/test_game_rules.py -v
+
+# Test self-play game generation
+python -m pytest tests/unit/test_self_play.py -v
+
+# Test comprehensive self-play analysis
+python -m pytest tests/integration/test_self_play_comprehensive.py -v
+
+# Test terminal detection and game variations
+python -m pytest tests/integration/test_terminal_detection_variations.py -v
+
+# Run comprehensive self-play testing (all games and variations)
+python scripts/test_self_play_comprehensive.py --quick-test --games 5 --output results/
+
+# Run full comprehensive test with visualizations
+python scripts/test_self_play_comprehensive.py --games 20 --output results/full_test
+```
+
+### Self-Play Training & Testing
+
+The engine includes comprehensive self-play testing to ensure training data quality:
+
+```bash
+# Quick self-play validation across all games
+python scripts/test_self_play_comprehensive.py --quick-test
+
+# Full comprehensive analysis with move bias detection
+python scripts/test_self_play_comprehensive.py --games 50 --output results/comprehensive
+
+# Analyze existing results
+python scripts/test_self_play_comprehensive.py --analyze-only results/analysis_results.json
+```
+
+**Self-Play Features:**
+- **Move Bias Analysis**: Statistical tests to detect spatial bias, corner/edge preferences
+- **Policy Entropy Monitoring**: Tracks exploration→exploitation balance throughout games
+- **Game Variation Testing**: Validates Renju/Omok, Chess960, and Go rule variations
+- **Terminal Detection**: Comprehensive validation of win/draw/timeout conditions
+- **Health Metrics**: MCTS convergence quality, temperature scheduling effectiveness
+- **Visualization**: Automated generation of bias analysis and entropy pattern plots
 ```
 
 ### Project Structure
@@ -137,7 +182,7 @@ python -m pytest tests/unit/test_game_rules.py -v
 │   ├── core/              # MCTS search coordination
 │   ├── games/             # Game implementations
 │   ├── neural/            # Neural networks, GPU inference, micro-batching & CPU fallback
-│   ├── training/          # Self-play & training pipeline
+│   ├── training/          # Self-play & training pipeline (T028 comprehensive testing)
 │   ├── telemetry/         # Performance monitoring
 │   └── utils/             # Shared utilities
 ├── cpp_extensions/        # Performance-critical C++ code
@@ -146,9 +191,11 @@ python -m pytest tests/unit/test_game_rules.py -v
 │   └── utils/            # Memory management & vectorization
 ├── tests/                # Comprehensive test suite
 │   ├── contract/         # API contract validation
-│   ├── integration/      # End-to-end system tests
-│   ├── unit/            # Component unit tests (including Python bindings)
+│   ├── integration/      # End-to-end system tests (including comprehensive self-play)
+│   ├── unit/            # Component unit tests (including Python bindings & self-play)
 │   └── performance/     # Benchmarking & regression tests
+├── scripts/              # Testing and validation scripts
+│   └── test_self_play_comprehensive.py  # Full self-play analysis with visualizations
 └── examples/             # Usage demonstrations and tutorials
 ```
 
@@ -171,6 +218,11 @@ This project follows [Spec-Driven Development](specs/001-goal-create-spec/). See
 - **Reliability**: Automatic CPU fallback with seamless inference continuation on GPU failures
 - **Training speed**: 200-300 self-play games per hour
 - **Games supported**: Gomoku, Chess (including Chess960), Go (9x9 to 19x19)
+- **Self-Play Quality**: Comprehensive testing validates training data integrity
+  - Move bias detection with statistical significance testing
+  - Policy entropy monitoring (exploration→exploitation balance)
+  - Terminal detection accuracy across all game variations
+  - Temperature scheduling effectiveness validation
 - **Tensor representations**: Enhanced feature planes for stronger tactical play
   - Gomoku: 36 planes (threat detection, run-length analysis, rule variations)
   - Chess: 30 planes (castling, en passant, 8-pair move history)

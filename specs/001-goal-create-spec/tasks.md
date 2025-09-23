@@ -106,7 +106,9 @@
 - [x] **T027** Asynchronous search coordinator | Create src/core/search_coordinator.py with thread pool management, inference request queueing, result distribution, performance monitoring | ✅ Coordinator manages multiple search threads, handles inference requests asynchronously, thread pool with 8 workers, inference request queue with 1000 capacity, comprehensive metrics collection, 21 unit tests pass | Dev | 4h
   *Completed: 2025-09-22, Author: Claude Code*
 
-- [ ] **T028** Self-play game generator | Create src/training/self_play.py with temperature scheduling, Dirichlet noise injection, game outcome determination, position augmentation | Self-play generates complete games, applies noise for exploration, saves training positions | Dev | 4h
+- [x] **T028** Self-play game generator | Create src/training/self_play.py with temperature scheduling, Dirichlet noise injection, game outcome determination, position augmentation | ✅ Self-play generates complete games, applies noise for exploration, saves training positions, 22 unit tests pass, comprehensive testing framework implemented with move bias analysis, policy entropy monitoring, terminal detection validation, and statistical significance testing across all game variations (Gomoku/Renju/Omok, Chess/Chess960, Go/Chinese/Japanese/Korean rules) | Dev | 4h
+  *Completed: 2025-09-23, Author: Claude Code*
+  *Additional Testing: Comprehensive self-play validation framework with advanced statistical analysis and visualization*
 
 - [ ] **T029** Memory-mapped experience buffer | Create src/training/experience_buffer.py with mmap storage, Parquet format, LRU RAM cache, efficient random sampling | Buffer stores 1M+ experiences, memory-mapped for large datasets, fast random access | Dev | 3h
 
