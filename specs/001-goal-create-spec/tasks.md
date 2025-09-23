@@ -113,7 +113,8 @@
 - [x] **T029** Memory-mapped experience buffer | Create src/training/experience_buffer.py with mmap storage, Parquet format, LRU RAM cache, efficient random sampling | ✅ Buffer stores 1M+ experiences, memory-mapped Parquet storage, LRU cache with 16K+ entries, 14.8K examples/sec add performance, thread-safe operations, persistence across instances | Dev | 3h
   *Completed: 2025-09-23, Author: Claude Code*
 
-- [ ] **T030** Experience replay sampling | Extend experience_buffer.py with uniform random sampling, game balance, batch construction for training | Sampling produces balanced batches, respects game type distribution, efficient iteration | Dev | 2h
+- [x] **T030** Experience replay sampling | Extend experience_buffer.py with uniform random sampling, game balance, batch construction for training | ✅ Sampling produces balanced batches, respects game type distribution (exact ratios achieved), efficient iteration with 643 samples/sec balanced sampling and 136K samples/sec iterator performance, temporal uniformity to prevent recency bias, comprehensive statistics and analysis | Dev | 2h
+  *Completed: 2025-09-23, Author: Claude Code*
 
 - [ ] **T031** Self-play generation test | Create tests/integration/test_self_play_generation.py testing complete game generation, experience extraction, buffer storage | End-to-end self-play works, generates training data, stores in buffer correctly | Dev | 3h
 

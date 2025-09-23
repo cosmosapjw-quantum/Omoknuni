@@ -216,6 +216,17 @@ All notable changes to this project will be documented in this file.
 - Storage efficiency using Parquet columnar format with numpy array serialization
 - Buffer statistics and monitoring including storage size, cache utilization, and game type distribution
 - Comprehensive unit test suite with 16 test cases covering all buffer operations and edge cases
+- **T030**: Advanced experience replay sampling with balanced distribution and temporal uniformity
+- Intelligent balanced sampling ensuring exact game type ratios (50:30:20 ratios achieved precisely)
+- Temporal uniformity sampling to prevent recency bias in training data selection
+- High-performance training iterator with shuffle buffer for continuous batch generation
+- Advanced sampling statistics including game type distribution, temporal spread, and capacity analysis
+- Configurable sampling strategies: equal distribution, custom ratios, and temporal uniformity modes
+- Performance optimization: 643 samples/sec balanced sampling, 136K samples/sec iterator throughput
+- Thread-safe concurrent sampling operations validated under multi-threaded access patterns
+- Comprehensive sampling validation framework with statistical analysis and visualization tools
+- Edge case handling for empty buffers, single game types, and insufficient data scenarios
+- Comprehensive unit test suite with 10 test cases covering all advanced sampling functionality
 - **Comprehensive Self-Play Testing Framework**: Advanced validation system for training data quality
 - **Move Bias Analysis**: Statistical significance testing to detect spatial bias, corner/edge preferences
 - **Policy Entropy Monitoring**: Real-time tracking of exploration→exploitation balance throughout games

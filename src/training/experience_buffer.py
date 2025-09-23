@@ -10,15 +10,16 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Iterator, Tuple
 import mmap
 import os
 import pickle
 import random
 import time
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 import logging
 from threading import Lock
+import math
 
 from specs.contracts.training_api import (
     ExperienceBuffer, TrainingExample, GameResult
@@ -325,6 +326,328 @@ class MemoryMappedExperienceBuffer(ExperienceBuffer):
 
             logger.debug(f"Sampled {len(examples)} examples (cache hits: {cache_hits}/{sample_size})")
             return examples
+
+    def sample_balanced_batch(self,
+                            batch_size: int,
+                            game_type_ratios: Optional[Dict[str, float]] = None,
+                            temporal_uniformity: bool = True) -> List[TrainingExample]:
+        """Sample training batch with balanced game type distribution.
+
+        Args:
+            batch_size: Number of examples to sample
+            game_type_ratios: Desired ratios for each game type (None = equal distribution)
+            temporal_uniformity: Whether to sample uniformly across time periods
+
+        Returns:
+            List of training examples with balanced distribution
+        """
+        with self.lock:
+            if not self.index:
+                return []
+
+            # Get available game types
+            available_games = set(entry[2] for entry in self.index)
+            if not available_games:
+                return []
+
+            # Determine target ratios
+            if game_type_ratios is None:
+                # Equal distribution across all available game types
+                target_ratios = {game_type: 1.0 / len(available_games)
+                               for game_type in available_games}
+            else:
+                # Normalize provided ratios
+                total_ratio = sum(game_type_ratios.values())
+                target_ratios = {game_type: ratio / total_ratio
+                               for game_type, ratio in game_type_ratios.items()
+                               if game_type in available_games}
+
+            # Group indices by game type
+            game_type_indices = defaultdict(list)
+            for i, entry in enumerate(self.index):
+                game_type = entry[2]
+                if game_type in target_ratios:
+                    game_type_indices[game_type].append((i, entry))
+
+            # Calculate samples per game type
+            samples_per_type = {}
+            total_allocated = 0
+
+            for game_type, ratio in target_ratios.items():
+                if game_type in game_type_indices:
+                    target_count = max(1, int(batch_size * ratio))
+                    available_count = len(game_type_indices[game_type])
+                    actual_count = min(target_count, available_count)
+                    samples_per_type[game_type] = actual_count
+                    total_allocated += actual_count
+
+            # If we allocated fewer than requested, distribute remainder
+            if total_allocated < batch_size:
+                remaining = batch_size - total_allocated
+                game_types_with_capacity = [
+                    gt for gt in game_type_indices.keys()
+                    if len(game_type_indices[gt]) > samples_per_type.get(gt, 0)
+                ]
+
+                for _ in range(remaining):
+                    if not game_types_with_capacity:
+                        break
+
+                    # Add one to the game type with the largest capacity
+                    best_game_type = max(game_types_with_capacity,
+                                       key=lambda gt: len(game_type_indices[gt]) - samples_per_type.get(gt, 0))
+                    samples_per_type[best_game_type] += 1
+
+                    # Remove from capacity list if at max
+                    if len(game_type_indices[best_game_type]) <= samples_per_type[best_game_type]:
+                        game_types_with_capacity.remove(best_game_type)
+
+            # Sample from each game type
+            sampled_indices = []
+            for game_type, sample_count in samples_per_type.items():
+                if sample_count == 0:
+                    continue
+
+                available_indices = game_type_indices[game_type]
+
+                if temporal_uniformity:
+                    # Sample uniformly across time periods
+                    sampled = self._sample_temporally_uniform(available_indices, sample_count)
+                else:
+                    # Simple random sampling
+                    sampled = random.sample(available_indices, sample_count)
+
+                sampled_indices.extend(sampled)
+
+            # Load examples (reuse existing loading logic)
+            examples = []
+            cache_hits = 0
+
+            for idx, entry in sampled_indices:
+                game_id, move_number, game_type, file_offset = entry
+                cache_key = f"{game_id}_{move_number}"
+
+                # Try cache first
+                cached_example = self.cache.get(cache_key)
+                if cached_example:
+                    examples.append(cached_example)
+                    cache_hits += 1
+                    continue
+
+                # Load from Parquet file
+                try:
+                    table = pq.read_table(self._parquet_file)
+                    if file_offset >= len(table):
+                        logger.warning(f"File offset {file_offset} out of bounds for table length {len(table)}")
+                        continue
+
+                    row = table.slice(file_offset, 1).to_pandas().iloc[0]
+
+                    # Reconstruct numpy arrays
+                    state = np.frombuffer(row['state_data'], dtype=np.float32).reshape(row['state_shape'])
+                    policy = np.frombuffer(row['policy_data'], dtype=np.float32).reshape(row['policy_shape'])
+
+                    # Create TrainingExample
+                    example = TrainingExample(
+                        state=state,
+                        policy=policy,
+                        value=row['value'],
+                        game_type=row['game_type'],
+                        move_number=row['move_number'],
+                        game_id=row['game_id']
+                    )
+
+                    # Cache the example
+                    self.cache.put(cache_key, example)
+                    examples.append(example)
+
+                except Exception as e:
+                    logger.warning(f"Failed to load example at offset {file_offset}: {e}")
+                    continue
+
+            logger.debug(f"Sampled balanced batch: {len(examples)} examples "
+                        f"(cache hits: {cache_hits}/{len(sampled_indices)})")
+
+            # Log distribution for debugging
+            if logger.isEnabledFor(logging.DEBUG):
+                actual_distribution = defaultdict(int)
+                for example in examples:
+                    actual_distribution[example.game_type] += 1
+                logger.debug(f"Batch distribution: {dict(actual_distribution)}")
+
+            return examples
+
+    def _sample_temporally_uniform(self,
+                                 available_indices: List[Tuple[int, Tuple]],
+                                 sample_count: int) -> List[Tuple[int, Tuple]]:
+        """Sample uniformly across temporal periods to avoid recency bias.
+
+        Args:
+            available_indices: List of (index, entry) tuples
+            sample_count: Number of samples to draw
+
+        Returns:
+            List of sampled (index, entry) tuples
+        """
+        if sample_count >= len(available_indices):
+            return available_indices
+
+        if sample_count == 0:
+            return []
+
+        # Sort by file offset (which correlates with time)
+        sorted_indices = sorted(available_indices, key=lambda x: x[1][3])  # x[1][3] is file_offset
+
+        # Divide into temporal buckets
+        num_buckets = min(sample_count * 2, len(sorted_indices))  # At least as many buckets as samples
+        bucket_size = len(sorted_indices) / num_buckets
+
+        sampled = []
+        samples_per_bucket = max(1, sample_count // num_buckets)
+        remaining_samples = sample_count
+
+        for bucket_idx in range(num_buckets):
+            if remaining_samples <= 0:
+                break
+
+            # Define bucket boundaries
+            start_idx = int(bucket_idx * bucket_size)
+            end_idx = int((bucket_idx + 1) * bucket_size)
+            if bucket_idx == num_buckets - 1:  # Last bucket gets remainder
+                end_idx = len(sorted_indices)
+
+            bucket_items = sorted_indices[start_idx:end_idx]
+            if not bucket_items:
+                continue
+
+            # Sample from this bucket
+            bucket_samples = min(samples_per_bucket, len(bucket_items), remaining_samples)
+            if bucket_samples > 0:
+                bucket_sampled = random.sample(bucket_items, bucket_samples)
+                sampled.extend(bucket_sampled)
+                remaining_samples -= bucket_samples
+
+        # If we still need more samples, randomly fill from remaining
+        if remaining_samples > 0:
+            already_sampled = set(sampled)
+            remaining_candidates = [idx_entry for idx_entry in sorted_indices
+                                  if idx_entry not in already_sampled]
+            if remaining_candidates:
+                additional_samples = min(remaining_samples, len(remaining_candidates))
+                additional = random.sample(remaining_candidates, additional_samples)
+                sampled.extend(additional)
+
+        return sampled
+
+    def create_training_iterator(self,
+                               batch_size: int,
+                               game_type_ratios: Optional[Dict[str, float]] = None,
+                               shuffle_buffer_size: int = 10000,
+                               temporal_uniformity: bool = True) -> Iterator[List[TrainingExample]]:
+        """Create an iterator for continuous training batch generation.
+
+        Args:
+            batch_size: Size of each training batch
+            game_type_ratios: Desired ratios for each game type
+            shuffle_buffer_size: Size of shuffle buffer for randomization
+            temporal_uniformity: Whether to maintain temporal uniformity
+
+        Yields:
+            Training batches with balanced distribution
+        """
+        shuffle_buffer = []
+
+        while True:
+            # Fill shuffle buffer if needed
+            while len(shuffle_buffer) < shuffle_buffer_size:
+                # Sample a large batch to fill buffer
+                buffer_batch_size = min(batch_size * 4, shuffle_buffer_size - len(shuffle_buffer))
+                if buffer_batch_size <= 0:
+                    break
+
+                new_examples = self.sample_balanced_batch(
+                    batch_size=buffer_batch_size,
+                    game_type_ratios=game_type_ratios,
+                    temporal_uniformity=temporal_uniformity
+                )
+
+                if not new_examples:
+                    break  # No more examples available
+
+                shuffle_buffer.extend(new_examples)
+                random.shuffle(shuffle_buffer)  # Maintain randomness
+
+            # Yield batches from shuffle buffer
+            if len(shuffle_buffer) >= batch_size:
+                batch = shuffle_buffer[:batch_size]
+                shuffle_buffer = shuffle_buffer[batch_size:]
+                yield batch
+            else:
+                # Not enough examples left, yield what we have if any
+                if shuffle_buffer:
+                    yield shuffle_buffer
+                    shuffle_buffer.clear()
+                break
+
+    def get_sampling_stats(self) -> Dict[str, Any]:
+        """Get detailed statistics about sampling capability.
+
+        Returns:
+            dict: Statistics including game type distribution, temporal spread, etc.
+        """
+        with self.lock:
+            if not self.index:
+                return {
+                    'total_examples': 0,
+                    'game_type_distribution': {},
+                    'game_type_percentages': {},
+                    'temporal_spread': {},
+                    'temporal_range': {'min_offset': 0, 'max_offset': 0, 'range': 0},
+                    'sampling_capability': {
+                        'max_balanced_batch_size': 0,
+                        'min_examples_per_type': 0,
+                        'max_examples_per_type': 0
+                    }
+                }
+
+            # Game type distribution
+            game_type_counts = defaultdict(int)
+            for entry in self.index:
+                game_type_counts[entry[2]] += 1
+
+            # Temporal analysis (based on file offsets as proxy for time)
+            file_offsets = [entry[3] for entry in self.index]
+            min_offset, max_offset = min(file_offsets), max(file_offsets)
+
+            # Divide into temporal buckets for analysis
+            num_buckets = 10
+            bucket_size = (max_offset - min_offset) / num_buckets if max_offset > min_offset else 1
+            temporal_distribution = defaultdict(int)
+
+            for offset in file_offsets:
+                bucket = int((offset - min_offset) / bucket_size)
+                bucket = min(bucket, num_buckets - 1)  # Ensure last bucket gets all remainder
+                temporal_distribution[f"bucket_{bucket}"] += 1
+
+            return {
+                'total_examples': len(self.index),
+                'game_type_distribution': dict(game_type_counts),
+                'game_type_percentages': {
+                    game_type: (count / len(self.index)) * 100
+                    for game_type, count in game_type_counts.items()
+                },
+                'temporal_spread': dict(temporal_distribution),
+                'temporal_range': {
+                    'min_offset': min_offset,
+                    'max_offset': max_offset,
+                    'range': max_offset - min_offset
+                },
+                'sampling_capability': {
+                    'max_balanced_batch_size': min(game_type_counts.values()) * len(game_type_counts) if game_type_counts else 0,
+                    'min_examples_per_type': min(game_type_counts.values()) if game_type_counts else 0,
+                    'max_examples_per_type': max(game_type_counts.values()) if game_type_counts else 0
+                }
+            }
 
     def get_stats(self) -> Dict[str, Any]:
         """Get buffer statistics.

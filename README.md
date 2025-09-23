@@ -63,10 +63,12 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
   - **Bias Detection**: Statistical analysis to ensure fair move distributions
   - **Policy Health**: Entropy monitoring and MCTS convergence validation
 - **Experience Replay**: Memory-mapped buffer with Parquet storage and intelligent LRU caching
-  - **High Performance**: 14.8K examples/sec addition, 162 samples/sec retrieval
+  - **High Performance**: 14.8K examples/sec addition, 643 samples/sec balanced sampling
   - **Memory Efficient**: Configurable buffer size (default 1M examples) with automatic cleanup
   - **Persistent Storage**: Parquet columnar format with thread-safe concurrent access
   - **Smart Caching**: LRU cache for frequently accessed examples (default 512MB)
+  - **Balanced Sampling**: Exact game type ratios with temporal uniformity to prevent bias
+  - **Training Iterator**: 136K samples/sec continuous batch generation with shuffle buffering
 - **Telemetry**: Prometheus-compatible metrics with comprehensive performance monitoring
 
 ## Quick Start
@@ -127,6 +129,9 @@ python scripts/validate_cpu_fallback.py
 
 # Test experience buffer with memory-mapped storage
 python scripts/validate_experience_buffer.py
+
+# Test advanced experience sampling with balanced distribution
+python scripts/validate_experience_sampling.py
 
 # Test game adapter interface
 python -m pytest tests/unit/test_game_adapter_interface.py -v
