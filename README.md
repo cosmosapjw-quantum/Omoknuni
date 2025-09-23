@@ -38,6 +38,7 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - [x] **T029**: Memory-mapped experience buffer for high-performance training data storage
 - [x] **T030**: Advanced experience replay sampling with balanced distribution and temporal uniformity
 - [x] **T031**: Self-play generation integration tests with realistic GPU/CPU inference validation
+- [x] **T032**: Model trainer implementation with AdamW optimizer and mixed precision training
 
 ### Current Architecture
 
@@ -72,6 +73,13 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
   - **Smart Caching**: LRU cache for frequently accessed examples (default 512MB)
   - **Balanced Sampling**: Exact game type ratios with temporal uniformity to prevent bias
   - **Training Iterator**: 136K samples/sec continuous batch generation with shuffle buffering
+- **Model Training**: Production-ready neural network trainer with advanced optimization
+  - **AdamW Optimizer**: Configurable weight decay for improved generalization and training stability
+  - **Cosine LR Scheduling**: Annealing with warm restarts for optimal convergence patterns
+  - **Mixed Precision**: PyTorch AMP integration for 2x memory efficiency on RTX 3060 Ti
+  - **Gradient Clipping**: Training stability with configurable norm thresholds
+  - **Checkpoint Management**: Full model and training state persistence with automatic game type detection
+  - **Training Metrics**: Loss history, performance statistics, and validation tracking
 - **Telemetry**: Prometheus-compatible metrics with comprehensive performance monitoring
 
 ## Quick Start
@@ -162,6 +170,9 @@ python -m pytest tests/integration/test_terminal_detection_variations.py -v
 
 # Test realistic self-play integration with actual GPU/CPU inference workers
 python -m pytest tests/integration/test_self_play_realistic.py -v
+
+# Test neural network model trainer with AdamW optimizer and mixed precision
+python -m pytest tests/unit/test_trainer.py -v
 
 # Run comprehensive self-play testing (all games and variations)
 python scripts/test_self_play_comprehensive.py --quick-test --games 5 --output results/

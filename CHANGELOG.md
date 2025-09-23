@@ -227,6 +227,24 @@ All notable changes to this project will be documented in this file.
 - Comprehensive sampling validation framework with statistical analysis and visualization tools
 - Edge case handling for empty buffers, single game types, and insufficient data scenarios
 - Comprehensive unit test suite with 10 test cases covering all advanced sampling functionality
+- **T031**: Self-play generation integration tests with realistic GPU/CPU inference validation
+- Comprehensive realistic integration tests using actual inference workers instead of naive mocks
+- Enhanced feature planes validation with 36-channel tensors for Gomoku AI training
+- GPU/CPU consistency testing to ensure inference parity across different hardware
+- Critical bug fixes: CPU worker zero-policy normalization, GPU model loading, interface consistency
+- Multi-threaded stress testing with concurrent inference requests and proper error handling
+- Memory efficiency validation and robust error handling with corrupted/missing model files
+- Real training data integration with experience buffer storage and retrieval validation
+- **T032**: Model trainer implementation with AdamW optimizer and mixed precision training
+- Complete AlphaZeroTrainer class implementing ModelTrainer contract with production-ready features
+- AdamW optimizer with configurable weight decay for improved generalization and training stability
+- Cosine annealing learning rate schedule with warm restarts for optimal convergence patterns
+- Mixed precision training using PyTorch AMP for 2x memory efficiency on RTX 3060 Ti
+- Gradient clipping for training stability with configurable norm thresholds
+- Comprehensive checkpoint management with full model and training state persistence
+- Automatic game type detection from model checkpoints supporting all enhanced tensor representations
+- Training metrics and validation tracking with loss history and performance statistics
+- Comprehensive unit test suite with 17 test cases covering all trainer functionality and edge cases
 - **Comprehensive Self-Play Testing Framework**: Advanced validation system for training data quality
 - **Move Bias Analysis**: Statistical significance testing to detect spatial bias, corner/edge preferences
 - **Policy Entropy Monitoring**: Real-time tracking of exploration→exploitation balance throughout games
