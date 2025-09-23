@@ -42,6 +42,7 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - [x] **T033**: Training loop orchestration with comprehensive cycle management
 - [x] **T034**: Model evaluation system with head-to-head comparison and ELO rating
 - [x] **T035**: Training stability monitoring with NaN detection and automatic recovery
+- [x] **T036**: Checkpoint management system with automatic saving, best model tracking, and retention policies
 
 ### Current Architecture
 

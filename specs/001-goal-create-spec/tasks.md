@@ -135,7 +135,8 @@
 - [x] **T035** Training stability monitoring | Extend trainer.py with NaN detection, gradient norm monitoring, loss convergence tracking, early stopping | ✅ Training stable, detects divergence, automatic recovery, comprehensive monitoring, TrainingStabilityMonitor class with 27 comprehensive test cases | Dev | 2h
   *Completed: 2025-09-24, Author: Claude Code*
 
-- [ ] **T036** Checkpoint management | Create src/training/checkpoint_manager.py with automatic saving, best model selection, model versioning, cleanup policies | Checkpoints saved automatically, best model tracking, old checkpoints cleaned up | Dev | 2h
+- [x] **T036** Checkpoint management | Create src/training/checkpoint_manager.py with automatic saving, best model selection, model versioning, cleanup policies | ✅ Checkpoints saved automatically, best model tracking, old checkpoints cleaned up | Dev | 2h
+  *Completed: 2025-09-24, Author: Claude Code*
 
 - [ ] **T037** Training pipeline integration test | Create tests/integration/test_training_pipeline.py testing full pipeline from self-play through model updates | Complete training iteration works, model improves measurably, checkpoints saved | Dev | 3h
 

@@ -277,6 +277,14 @@ All notable changes to this project will be documented in this file.
 - Plateau detection using polynomial trend analysis to identify when training stagnates
 - Integration with AlphaZeroTrainer providing real-time stability metrics and recovery recommendations
 - Comprehensive test suite with 27 test cases covering all stability monitoring features and edge cases
+- **T036**: Comprehensive checkpoint management system with automatic saving and retention policies
+- CheckpointManager class with automatic versioning, best model tracking, and configurable cleanup policies
+- CheckpointMetadata dataclass for tracking comprehensive training and evaluation metrics
+- RetentionPolicy for flexible checkpoint cleanup based on recency, performance, milestones, and time-based criteria
+- Best model tracking with configurable metrics (min/max modes) and automatic best model copying
+- Version numbering system with metadata persistence using JSON serialization
+- Storage statistics and disk space monitoring with automatic cleanup triggers
+- Comprehensive test suite with 29 test cases covering all checkpoint management functionality
 - **Comprehensive Self-Play Testing Framework**: Advanced validation system for training data quality
 - **Move Bias Analysis**: Statistical significance testing to detect spatial bias, corner/edge preferences
 - **Policy Entropy Monitoring**: Real-time tracking of exploration→exploitation balance throughout games
