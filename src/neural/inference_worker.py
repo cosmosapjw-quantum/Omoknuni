@@ -152,19 +152,47 @@ class GPUInferenceWorker(InferenceWorker):
                 self.model.eval()
                 self.logger.info("Model loaded successfully (full model)")
             elif isinstance(model_data, dict):  # It's a state_dict
-                # Extract model configuration from state dict or use defaults
-                self.model = create_model_for_game('gomoku')
+                # Detect game type from state dict
+                first_conv_weight = None
+                for key, tensor in model_data.items():
+                    if 'conv' in key.lower() and 'weight' in key:
+                        first_conv_weight = tensor
+                        break
+
+                if first_conv_weight is not None:
+                    input_channels = first_conv_weight.shape[1]
+                    if input_channels == 36:
+                        game_type = 'gomoku'
+                        input_shape = (36, 15, 15)
+                    elif input_channels == 30:
+                        game_type = 'chess'
+                        input_shape = (30, 8, 8)
+                    elif input_channels == 25:
+                        game_type = 'go'
+                        input_shape = (25, 19, 19)
+                    else:
+                        game_type = 'gomoku'
+                        input_shape = (36, 15, 15)
+                else:
+                    game_type = 'gomoku'
+                    input_shape = (36, 15, 15)
+
+                # Create model with detected game type
+                self.model = create_model_for_game(game_type)
+
+                # Load the actual weights FIRST
+                self.model.load_state_dict(model_data)
+
+                # Then move to device and initialize
                 self.model = self.model.to(self.device)
                 self.model.eval()
 
-                # Initialize lazy layers with dummy input
+                # Initialize lazy layers with correct dummy input shape
                 with torch.no_grad():
-                    dummy_input = torch.randn(1, 7, 15, 15, device=self.device)
+                    dummy_input = torch.randn(1, *input_shape, device=self.device)
                     _ = self.model(dummy_input)
 
-                # Load the actual weights
-                self.model.load_state_dict(model_data)
-                self.logger.info("Model loaded successfully (state_dict)")
+                self.logger.info(f"Model loaded successfully (state_dict, game: {game_type})")
             else:  # It's a direct model instance
                 self.model = model_data.to(self.device)
                 self.model.eval()

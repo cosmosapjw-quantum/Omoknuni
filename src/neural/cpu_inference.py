@@ -117,16 +117,16 @@ class CPUInferenceWorker(InferenceWorker):
 
             if first_conv_weight is not None:
                 input_channels = first_conv_weight.shape[1]
-                if input_channels == 7:
+                if input_channels == 36:
                     game_type = 'gomoku'
-                elif input_channels == 12:
+                elif input_channels == 30:
                     game_type = 'chess'
-                elif input_channels == 17:
+                elif input_channels == 25:
                     game_type = 'go'
                 else:
-                    game_type = 'gomoku'  # Default fallback
+                    game_type = 'gomoku'
             else:
-                game_type = 'gomoku'  # Default if we can't determine
+                game_type = 'gomoku'
 
             self.model = create_model_for_game(game_type)
             self.model.load_state_dict(state_dict)
@@ -284,8 +284,11 @@ class CPUInferenceWorker(InferenceWorker):
                 with torch.no_grad():
                     policy_logits, value = self.model(input_tensor)
 
+                # Apply softmax to convert logits to normalized probabilities
+                policy_probs = torch.softmax(policy_logits, dim=1)
+
                 # Convert and collect results
-                policies.append(policy_logits.cpu().numpy().squeeze(0))
+                policies.append(policy_probs.cpu().numpy().squeeze(0))
                 values.append(value.cpu().numpy().squeeze())
 
             # Stack results

@@ -35,6 +35,9 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - [x] **T026**: Contract test for training API with comprehensive coverage
 - [x] **T027**: Asynchronous search coordinator with thread pool management
 - [x] **T028**: Self-play game generator with comprehensive testing and validation
+- [x] **T029**: Memory-mapped experience buffer for high-performance training data storage
+- [x] **T030**: Advanced experience replay sampling with balanced distribution and temporal uniformity
+- [x] **T031**: Self-play generation integration tests with realistic GPU/CPU inference validation
 
 ### Current Architecture
 
@@ -156,6 +159,9 @@ python -m pytest tests/integration/test_self_play_comprehensive.py -v
 
 # Test terminal detection and game variations
 python -m pytest tests/integration/test_terminal_detection_variations.py -v
+
+# Test realistic self-play integration with actual GPU/CPU inference workers
+python -m pytest tests/integration/test_self_play_realistic.py -v
 
 # Run comprehensive self-play testing (all games and variations)
 python scripts/test_self_play_comprehensive.py --quick-test --games 5 --output results/

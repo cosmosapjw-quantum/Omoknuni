@@ -116,7 +116,8 @@
 - [x] **T030** Experience replay sampling | Extend experience_buffer.py with uniform random sampling, game balance, batch construction for training | ✅ Sampling produces balanced batches, respects game type distribution (exact ratios achieved), efficient iteration with 643 samples/sec balanced sampling and 136K samples/sec iterator performance, temporal uniformity to prevent recency bias, comprehensive statistics and analysis | Dev | 2h
   *Completed: 2025-09-23, Author: Claude Code*
 
-- [ ] **T031** Self-play generation test | Create tests/integration/test_self_play_generation.py testing complete game generation, experience extraction, buffer storage | End-to-end self-play works, generates training data, stores in buffer correctly | Dev | 3h
+- [x] **T031** Self-play generation integration tests | Create tests/integration/test_self_play_realistic.py testing complete game generation with actual GPU/CPU inference workers, experience extraction, buffer storage | ✅ Comprehensive realistic integration tests with actual inference workers, enhanced 36-channel feature planes for Gomoku, GPU/CPU consistency validation, critical bug fixes: CPU worker zero-policy normalization, model loading interface fixes, proper error handling | Dev | 5h
+  *Completed: 2025-09-23, Author: Claude Code*
 
 ---
 

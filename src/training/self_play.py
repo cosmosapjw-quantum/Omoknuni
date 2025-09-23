@@ -127,8 +127,9 @@ class SelfPlayGameGenerator(SelfPlayGenerator):
             # Initialize GPU inference worker
             from src.neural.device_manager import DeviceManager
             device_manager = DeviceManager()
+            device_info = device_manager.detect_device()
 
-            if device_manager.has_cuda():
+            if device_info.is_cuda_available:
                 from src.neural.inference_worker import GPUInferenceWorker
                 self.inference_worker = GPUInferenceWorker(
                     model_path=self.model_path,

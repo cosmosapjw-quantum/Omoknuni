@@ -449,22 +449,22 @@ def create_model_for_game(game: str, **kwargs) -> AlphaZeroNet:
     }
     default_kwargs.update(kwargs)
 
-    # Game-specific configurations
+    # Game-specific configurations with ENHANCED feature planes
     if game == 'gomoku':
         return AlphaZeroNet(
-            input_channels=7,   # 7 feature planes as per research.md
+            input_channels=36,  # Enhanced Gomoku: 36 planes with threat detection, run-length analysis
             num_actions=225,    # 15x15 board
             **default_kwargs
         )
     elif game == 'chess':
         return AlphaZeroNet(
-            input_channels=12,  # 12 feature planes as per research.md
+            input_channels=30,  # Enhanced Chess: 30 planes with proper move history, castling, en passant
             num_actions=4096,   # 64 squares * 64 possible moves (simplified)
             **default_kwargs
         )
     elif game == 'go':
         return AlphaZeroNet(
-            input_channels=17,  # 17 feature planes as per research.md
+            input_channels=25,  # Enhanced Go: 25 planes with proper move history separation
             num_actions=361,    # 19x19 board
             **default_kwargs
         )
