@@ -294,6 +294,19 @@ All notable changes to this project will be documented in this file.
 - Error handling and recovery scenario testing for pipeline resilience
 - Resource cleanup validation and memory usage monitoring during training cycles
 - Comprehensive test suite with 6+ test cases covering pipeline functionality and edge cases
+- **T038**: Comprehensive thread count optimization script for MCTS performance tuning
+- ThreadOptimizer class with systematic parameter sweep for thread counts 1-16
+- Real component integration using actual MCTS, GPU/CPU inference workers, and C++ game modules
+- Performance measurement including throughput, search times, and contention detection
+- Efficiency scoring algorithm combining throughput, contention, and utilization metrics
+- System resource monitoring with CPU utilization and memory usage tracking
+- Contention analysis through timing variance measurement and statistical evaluation
+- Automated optimization recommendations based on hardware characteristics and performance patterns
+- Report generation with JSON serialization and optional visualization plots
+- Command-line interface with quick-test, full-sweep, and configurable optimization modes
+- **API Compatibility Fixes**: Added SearchCoordinator-compatible methods to inference workers
+- Enhanced GPUInferenceWorker and CPUInferenceWorker with start(), stop(), and running property
+- Comprehensive test suite with real component integration validation (200+ test cases)
 - **Comprehensive Self-Play Testing Framework**: Advanced validation system for training data quality
 - **Move Bias Analysis**: Statistical significance testing to detect spatial bias, corner/edge preferences
 - **Policy Entropy Monitoring**: Real-time tracking of exploration→exploitation balance throughout games

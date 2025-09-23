@@ -44,6 +44,7 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - [x] **T035**: Training stability monitoring with NaN detection and automatic recovery
 - [x] **T036**: Checkpoint management system with automatic saving, best model tracking, and retention policies
 - [x] **T037**: Training pipeline integration test with full end-to-end validation
+- [x] **T038**: Thread count optimization script with parameter sweep, contention detection, and real component integration
 
 ### Current Architecture
 
@@ -233,6 +234,12 @@ python scripts/test_self_play_comprehensive.py --games 50 --output results/compr
 
 # Analyze existing results
 python scripts/test_self_play_comprehensive.py --analyze-only results/analysis_results.json
+
+# Optimize thread count for MCTS performance
+python scripts/tune_threads.py --game gomoku --quick-test
+
+# Full thread optimization with parameter sweep
+python scripts/tune_threads.py --game gomoku --simulations 200 --max-threads 16
 ```
 
 **Self-Play Features:**
@@ -242,6 +249,14 @@ python scripts/test_self_play_comprehensive.py --analyze-only results/analysis_r
 - **Terminal Detection**: Comprehensive validation of win/draw/timeout conditions
 - **Health Metrics**: MCTS convergence quality, temperature scheduling effectiveness
 - **Visualization**: Automated generation of bias analysis and entropy pattern plots
+
+**Thread Optimization:**
+- **Parameter Sweep**: Systematic testing of thread counts 1-16 with performance measurement
+- **Contention Detection**: Real-time analysis of threading efficiency and resource contention
+- **Performance Profiling**: Throughput measurement, search timing, and system resource monitoring
+- **Optimization Algorithms**: Automated recommendations based on hardware characteristics
+- **Real Component Integration**: Uses actual MCTS, inference workers, and game modules
+- **Comprehensive Reporting**: JSON serialization with optional visualization plots
 ```
 
 ### Project Structure

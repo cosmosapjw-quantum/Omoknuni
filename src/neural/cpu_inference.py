@@ -403,6 +403,36 @@ class CPUInferenceWorker(InferenceWorker):
         self.worker_thread = None
         self.logger.info("CPU inference worker stopped")
 
+    @property
+    def running(self) -> bool:
+        """Running property for SearchCoordinator compatibility."""
+        return self.worker_thread is not None and self.worker_thread.is_alive()
+
+    def is_running(self) -> bool:
+        """Check if worker thread is running."""
+        return self.running
+
+    def start(self) -> None:
+        """Start the inference worker with default queues for SearchCoordinator compatibility."""
+        if self.running:
+            return
+
+        # Create default queues for SearchCoordinator interface
+        from queue import Queue
+        input_queue = Queue(maxsize=1000)
+        output_queues = [Queue() for _ in range(8)]  # Default to 8 output queues
+
+        # Store queues for internal use
+        self._input_queue = input_queue
+        self._output_queues = output_queues
+
+        # Start the worker
+        self.start_worker(input_queue, output_queues)
+
+    def stop(self) -> None:
+        """Stop the inference worker for SearchCoordinator compatibility."""
+        self.stop_worker()
+
 
 class CPUFallbackInference:
     """CPU fallback for GPU inference failures.
