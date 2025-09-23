@@ -138,7 +138,8 @@
 - [x] **T036** Checkpoint management | Create src/training/checkpoint_manager.py with automatic saving, best model selection, model versioning, cleanup policies | ✅ Checkpoints saved automatically, best model tracking, old checkpoints cleaned up | Dev | 2h
   *Completed: 2025-09-24, Author: Claude Code*
 
-- [ ] **T037** Training pipeline integration test | Create tests/integration/test_training_pipeline.py testing full pipeline from self-play through model updates | Complete training iteration works, model improves measurably, checkpoints saved | Dev | 3h
+- [x] **T037** Training pipeline integration test | Create tests/integration/test_training_pipeline.py testing full pipeline from self-play through model updates | ✅ Complete training iteration works, model improves measurably, checkpoints saved | Dev | 3h
+  *Completed: 2025-09-24, Author: Claude Code*
 
 ---
 

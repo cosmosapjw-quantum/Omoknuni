@@ -285,6 +285,15 @@ All notable changes to this project will be documented in this file.
 - Version numbering system with metadata persistence using JSON serialization
 - Storage statistics and disk space monitoring with automatic cleanup triggers
 - Comprehensive test suite with 29 test cases covering all checkpoint management functionality
+- **T037**: Comprehensive training pipeline integration test for full end-to-end validation
+- TrainingPipelineIntegrationTest class testing complete pipeline from self-play through model updates
+- Mock game implementation for realistic training example generation with proper tensor shapes
+- Training iteration validation with measurable model improvement and loss reduction
+- Checkpoint creation and management integration testing with retention policies
+- Experience buffer integration with game result addition and training batch sampling
+- Error handling and recovery scenario testing for pipeline resilience
+- Resource cleanup validation and memory usage monitoring during training cycles
+- Comprehensive test suite with 6+ test cases covering pipeline functionality and edge cases
 - **Comprehensive Self-Play Testing Framework**: Advanced validation system for training data quality
 - **Move Bias Analysis**: Statistical significance testing to detect spatial bias, corner/edge preferences
 - **Policy Entropy Monitoring**: Real-time tracking of exploration→exploitation balance throughout games
