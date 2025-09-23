@@ -245,6 +245,17 @@ All notable changes to this project will be documented in this file.
 - Automatic game type detection from model checkpoints supporting all enhanced tensor representations
 - Training metrics and validation tracking with loss history and performance statistics
 - Comprehensive unit test suite with 17 test cases covering all trainer functionality and edge cases
+- **T033**: Training loop orchestration with comprehensive cycle management
+- Complete training loop system coordinating self-play → experience → training cycles
+- Comprehensive configuration system with TrainingConfig dataclass for all training parameters
+- Automatic checkpoint management with configurable frequency and cleanup policies
+- Graceful shutdown handling with signal processing and resource cleanup
+- Performance monitoring with games/hour, training steps/minute, and memory usage tracking
+- Early stopping detection based on evaluation performance with configurable patience
+- Training time limit enforcement with automatic progress estimation
+- Recovery capabilities with training state persistence and restoration
+- Parallel self-play game generation with configurable worker threads
+- Comprehensive unit test suite with 23 test cases covering all orchestration functionality
 - **Comprehensive Self-Play Testing Framework**: Advanced validation system for training data quality
 - **Move Bias Analysis**: Statistical significance testing to detect spatial bias, corner/edge preferences
 - **Policy Entropy Monitoring**: Real-time tracking of exploration→exploitation balance throughout games
