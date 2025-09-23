@@ -256,6 +256,19 @@ All notable changes to this project will be documented in this file.
 - Recovery capabilities with training state persistence and restoration
 - Parallel self-play game generation with configurable worker threads
 - Comprehensive unit test suite with 23 test cases covering all orchestration functionality
+- **T034**: Advanced model evaluation system with Glicko-2 rating and comprehensive analysis
+- Complete ModelEvaluator class with sophisticated model strength assessment using Glicko-2 algorithm
+- Glicko-2 rating system with uncertainty (RD) and volatility tracking for accurate strength progression
+- Baseline anchoring system with two baseline players (random moves and uniform policy) for scale stability
+- RandomMoveGenerator for pure random legal moves without MCTS for fast baseline evaluation
+- Anchored recentering mechanism to maintain rating scale consistency over time
+- Performance-optimized Glicko-2 implementation with iteration limits and relaxed convergence
+- Statistical significance testing with Wilson confidence intervals and binomial tests
+- Head-to-head game evaluation using parallel self-play generators with comprehensive metrics
+- Backward compatibility with simple ELO interface while providing advanced Glicko-2 features
+- Full test suite with 30+ test cases covering all evaluation functionality and advanced features
+- Contract function implementation of evaluate_model_strength from training API with extended result format
+- Support for all game types (Gomoku, Chess, Go) with game-specific optimizations and configurable parameters
 - **Comprehensive Self-Play Testing Framework**: Advanced validation system for training data quality
 - **Move Bias Analysis**: Statistical significance testing to detect spatial bias, corner/edge preferences
 - **Policy Entropy Monitoring**: Real-time tracking of exploration→exploitation balance throughout games
