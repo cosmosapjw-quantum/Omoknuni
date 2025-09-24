@@ -145,7 +145,9 @@ src/
 ├── neural/              # Neural network models and GPU inference
 ├── training/            # Self-play generation and model training
 ├── telemetry/           # Performance monitoring and metrics
-└── utils/               # Shared utilities and configuration
+└── utils/               # Shared utilities and comprehensive configuration system
+
+config/                  # YAML configuration files (default/dev/prod)
 
 cpp_extensions/          # Performance-critical C++ code
 ├── mcts/                # Core MCTS tree operations

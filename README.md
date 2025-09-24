@@ -47,6 +47,7 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - [x] **T038**: Thread count optimization script with parameter sweep, contention detection, and real component integration
 - [x] **T039**: Virtual loss magnitude tuning script with comprehensive parameter sweep, thread efficiency measurement, and exploration balance
 - [x] **T040**: Batch size optimization script with GPU memory profiling, VRAM monitoring, throughput/latency analysis, and OOM handling
+- [x] **T045**: Configuration management system with unified YAML-based configurations, environment overrides, and comprehensive validation
 
 ### Current Architecture
 
@@ -114,6 +115,16 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
   - **Statistical Analysis**: Trend analysis and convergence assessment using polynomial regression
   - **Comprehensive Logging**: Detailed stability warnings and recovery attempt notifications
 - **Telemetry**: Prometheus-compatible metrics with comprehensive performance monitoring
+- **Configuration Management**: Unified YAML-based configuration system with comprehensive parameter management
+  - **Multi-Environment Support**: Optimized configurations for default, development, and production scenarios
+  - **Environment Variable Overrides**: ALPHAZERO_ prefixed environment variables with intelligent type conversion
+  - **Type-Safe Configuration**: Python dataclasses with comprehensive validation for all AlphaZero parameters
+  - **Parameter Coverage**: All tunable parameters for MCTS (13), neural network (12), training (15), game (7), and system (11) components
+  - **Validation System**: Prevents invalid parameter combinations with detailed error messages and constraints checking
+  - **Configuration Files**:
+    - `config/default.yaml`: Balanced configuration suitable for most scenarios
+    - `config/development.yaml`: Development-optimized with faster iterations and verbose logging
+    - `config/production.yaml`: Production-optimized for maximum performance and reliability
 
 ### Performance Regression Suite & Benchmarking
 
@@ -293,6 +304,67 @@ python scripts/test_self_play_comprehensive.py --quick-test --games 5 --output r
 
 # Run full comprehensive test with visualizations
 python scripts/test_self_play_comprehensive.py --games 20 --output results/full_test
+
+# Test configuration system
+python -m pytest tests/unit/test_config_system.py -v
+```
+
+### Configuration Management
+
+The engine uses a comprehensive YAML-based configuration system with environment variable overrides:
+
+```bash
+# Load default configuration
+python -c "from src.utils.config import load_config; config = load_config(); print(f'MCTS simulations: {config.mcts.simulations}')"
+
+# Load development configuration
+python -c "from src.utils.config import load_config; config = load_config('config/development.yaml'); print(f'Log level: {config.system.log_level}')"
+
+# Override with environment variables
+export ALPHAZERO_MCTS_SIMULATIONS=2000
+export ALPHAZERO_NEURAL_NETWORK_LEARNING_RATE=0.01
+python -c "from src.utils.config import load_config; config = load_config(); print(f'Overridden simulations: {config.mcts.simulations}')"
+
+# Validate configuration
+python -c "
+from src.utils.config import ConfigManager
+manager = ConfigManager('config/default.yaml')
+try:
+    config = manager.load_config()
+    print('✅ Configuration validation passed')
+except Exception as e:
+    print(f'❌ Configuration error: {e}')
+"
+```
+
+#### Configuration File Structure
+
+- **MCTS Parameters**: Simulations, exploration constant, threads, batch sizing, tree memory limits
+- **Neural Network**: Architecture (channels, blocks), training parameters, mixed precision settings
+- **Training Pipeline**: Self-play games, experience buffer, learning schedule, evaluation frequency
+- **Game Settings**: Game type, board size, feature extraction, rule variants
+- **System Configuration**: Logging, resource limits, directory paths, profiling options
+
+#### Environment Variable Format
+
+Use the format `ALPHAZERO_<SECTION>_<PARAMETER>`:
+
+```bash
+# MCTS configuration
+export ALPHAZERO_MCTS_SIMULATIONS=1600
+export ALPHAZERO_MCTS_THREADS=12
+
+# Neural network configuration
+export ALPHAZERO_NEURAL_NETWORK_LEARNING_RATE=0.001
+export ALPHAZERO_NEURAL_NETWORK_USE_MIXED_PRECISION=true
+
+# Training configuration
+export ALPHAZERO_TRAINING_BATCH_SIZE=1024
+export ALPHAZERO_TRAINING_SELF_PLAY_GAMES_PER_ITERATION=100
+
+# System configuration
+export ALPHAZERO_SYSTEM_LOG_LEVEL=DEBUG
+export ALPHAZERO_SYSTEM_MAX_MEMORY_GB=64
 ```
 
 ### Self-Play Training & Testing
@@ -397,7 +469,11 @@ python scripts/tune_timeout.py --game gomoku --min-timeout 1 --max-timeout 10 --
 │   ├── neural/            # Neural networks, GPU inference, micro-batching & CPU fallback
 │   ├── training/          # Self-play & training pipeline (T028 comprehensive testing)
 │   ├── telemetry/         # Performance monitoring
-│   └── utils/             # Shared utilities
+│   └── utils/             # Shared utilities (including configuration system)
+├── config/                # Configuration management
+│   ├── default.yaml       # Balanced default configuration
+│   ├── development.yaml   # Development-optimized settings
+│   └── production.yaml    # Production-optimized settings
 ├── cpp_extensions/        # Performance-critical C++ code
 │   ├── mcts/             # Core MCTS tree operations
 │   ├── games/            # Game rule implementations, unified interface & Python bindings
@@ -405,7 +481,7 @@ python scripts/tune_timeout.py --game gomoku --min-timeout 1 --max-timeout 10 --
 ├── tests/                # Comprehensive test suite
 │   ├── contract/         # API contract validation
 │   ├── integration/      # End-to-end system tests (including comprehensive self-play)
-│   ├── unit/            # Component unit tests (including Python bindings & self-play)
+│   ├── unit/            # Component unit tests (including config system & Python bindings)
 │   └── performance/     # Benchmarking & regression tests
 ├── scripts/              # Testing and validation scripts
 │   └── test_self_play_comprehensive.py  # Full self-play analysis with visualizations
