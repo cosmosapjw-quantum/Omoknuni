@@ -346,6 +346,16 @@ All notable changes to this project will be documented in this file.
 - **Gomoku tactical enhancement**: added sophisticated threat detection and run-length analysis
 - **Chess completeness**: added missing castling rights and en passant plane representations
 - **Go consistency**: fixed alternating move history to proper player separation
+- **T039**: Virtual loss magnitude optimization script
+  - Comprehensive parameter sweep testing VL values 0.5-3.0 with configurable step sizes
+  - Thread efficiency measurement and analysis for optimal MCTS coordination
+  - Exploration balance calculation using policy entropy and visit distribution metrics
+  - Contention detection through timing variance analysis to identify thread conflicts
+  - Statistical analysis with overall scoring combining throughput, efficiency, and exploration
+  - Multi-game support for Gomoku, Chess, and Go with game-specific optimizations
+  - Visualization support with matplotlib plots showing VL magnitude vs. performance metrics
+  - Comprehensive unit test coverage with 27+ test cases validating all functionality
+  - Command-line interface supporting quick-test, full-sweep, and custom parameter modes
 
 ### Fixed
 

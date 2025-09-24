@@ -148,7 +148,8 @@
 - [x] **T038** [P] Thread count optimization | Create scripts/tune_threads.py with parameter sweep for thread counts 1-16, performance measurement, contention detection | ✅ Optimal thread count determined (target 8-10), contention <10%, peak performance achieved. Real component integration with API compatibility fixes. | Dev | 3h
   *Completed: 2025-09-24, Author: Claude Code*
 
-- [ ] **T039** [P] Virtual loss magnitude tuning | Create scripts/tune_virtual_loss.py with VL values 0.5-3.0, thread efficiency measurement, exploration balance | Optimal VL found (target ~1.0), thread efficiency >85%, exploration preserved | Dev | 2h
+- [x] **T039** [P] Virtual loss magnitude tuning | Create scripts/tune_virtual_loss.py with VL values 0.5-3.0, thread efficiency measurement, exploration balance | ✅ Virtual loss tuning script implemented with comprehensive parameter sweep 0.5-3.0, thread efficiency measurement, exploration balance calculation, contention detection, statistical analysis, visualization support, unit tests pass | Dev | 2h
+  *Completed: 2025-09-24, Author: Claude Code*
 
 - [ ] **T040** [P] Batch size optimization | Create scripts/tune_batch_size.py with GPU memory profiling, throughput measurement, latency analysis | Optimal batch sizes per game determined, GPU utilization >80%, memory <85% VRAM | Dev | 3h
 

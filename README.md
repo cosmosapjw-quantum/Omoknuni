@@ -45,6 +45,7 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - [x] **T036**: Checkpoint management system with automatic saving, best model tracking, and retention policies
 - [x] **T037**: Training pipeline integration test with full end-to-end validation
 - [x] **T038**: Thread count optimization script with parameter sweep, contention detection, and real component integration
+- [x] **T039**: Virtual loss magnitude tuning script with comprehensive parameter sweep, thread efficiency measurement, and exploration balance
 
 ### Current Architecture
 
@@ -240,6 +241,12 @@ python scripts/tune_threads.py --game gomoku --quick-test
 
 # Full thread optimization with parameter sweep
 python scripts/tune_threads.py --game gomoku --simulations 200 --max-threads 16
+
+# Optimize virtual loss magnitude for thread efficiency
+python scripts/tune_virtual_loss.py --game gomoku --quick-test
+
+# Full virtual loss optimization with exploration balance analysis
+python scripts/tune_virtual_loss.py --game gomoku --simulations 800 --iterations 50
 ```
 
 **Self-Play Features:**
@@ -257,6 +264,14 @@ python scripts/tune_threads.py --game gomoku --simulations 200 --max-threads 16
 - **Optimization Algorithms**: Automated recommendations based on hardware characteristics
 - **Real Component Integration**: Uses actual MCTS, inference workers, and game modules
 - **Comprehensive Reporting**: JSON serialization with optional visualization plots
+
+**Virtual Loss Tuning:**
+- **Parameter Sweep**: Comprehensive testing of VL magnitudes 0.5-3.0 with configurable step sizes
+- **Thread Efficiency**: Measurement of coordination effectiveness and threading performance
+- **Exploration Balance**: Policy entropy and visit distribution diversity analysis
+- **Contention Analysis**: Detection of thread conflicts through timing variance measurement
+- **Multi-Game Support**: Optimization for Gomoku, Chess, and Go with game-specific metrics
+- **Statistical Analysis**: Comprehensive scoring combining throughput, efficiency, and exploration balance
 ```
 
 ### Project Structure

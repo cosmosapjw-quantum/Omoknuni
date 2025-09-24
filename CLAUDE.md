@@ -94,6 +94,14 @@ python scripts/validate_micro_batching.py
 python scripts/validate_mixed_precision.py
 python scripts/validate_pinned_memory.py
 python scripts/validate_cpu_fallback.py
+
+# Thread count optimization
+python scripts/tune_threads.py --game gomoku --quick-test
+python scripts/tune_threads.py --game gomoku --simulations 800 --iterations 50
+
+# Virtual loss magnitude optimization
+python scripts/tune_virtual_loss.py --game gomoku --quick-test
+python scripts/tune_virtual_loss.py --game gomoku --simulations 800 --iterations 50 --threads 8
 ```
 
 ## Project Structure
