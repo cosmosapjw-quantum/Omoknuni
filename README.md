@@ -155,6 +155,7 @@ python -m pytest tests/unit/          # Unit tests
 python -m pytest tests/contract/      # API contract tests
 python -m pytest tests/integration/   # Integration tests
 python -m pytest tests/performance/   # Performance benchmarks
+python -m pytest tests/soak/          # Long-running stability tests
 
 # Run with coverage
 python -m pytest --cov=src --cov-report=html
@@ -304,6 +305,16 @@ python scripts/tune_timeout.py --game gomoku --min-timeout 1 --max-timeout 10 --
 - **Queue Behavior Analysis**: Queue depth statistics and batching behavior measurement
 - **Multi-Game Support**: Timeout optimization for Gomoku, Chess, and Go with game-specific requirements
 - **Efficiency Scoring**: Combined metrics of throughput, responsiveness, timeout efficiency, and batch size optimization
+
+**Memory Stability & Soak Testing:**
+- **1-Hour Soak Tests**: Comprehensive long-running stability validation with continuous monitoring
+- **Memory Leak Detection**: Automated detection with <10MB/hour growth threshold validation
+- **Performance Degradation Monitoring**: Track performance stability over time (<5% degradation limit)
+- **System Resource Tracking**: Monitor memory, CPU, GPU utilization, thread counts, and file handles
+- **Workload Simulation**: Multi-threaded realistic AlphaZero operation simulation with configurable load
+- **Automated Leak Detection**: Statistical trend analysis and resource threshold algorithms
+- **Comprehensive Reporting**: Detailed results with JSON export, failure analysis, and emergency stops
+- **Long-Running Framework**: Support for extended operation validation (1+ hours continuous testing)
 ```
 
 ### Project Structure
