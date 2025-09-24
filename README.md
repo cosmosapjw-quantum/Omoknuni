@@ -115,6 +115,37 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
   - **Comprehensive Logging**: Detailed stability warnings and recovery attempt notifications
 - **Telemetry**: Prometheus-compatible metrics with comprehensive performance monitoring
 
+### Performance Regression Suite & Benchmarking
+
+Comprehensive automated benchmarking system with regression detection to ensure consistent performance across code changes:
+
+- **Automated Performance Testing**: Complete benchmark framework covering all critical AlphaZero performance metrics
+- **MCTS Simulation Benchmarks**: Validates 30k-40k simulations/second including neural network inference
+- **Neural Inference Throughput**: Tests GPU/CPU inference performance with realistic batch processing
+- **GPU Utilization Monitoring**: Ensures 80-92% sustained GPU utilization during search operations
+- **Memory Efficiency Validation**: Confirms <1GB usage for 10M node MCTS trees with structure-of-arrays layout
+- **Search Coordinator Performance**: Tests coordination throughput with realistic workload simulation
+- **Regression Detection System**: Automatic baseline comparison with configurable threshold analysis (>5% regression alerts)
+- **System Resource Monitoring**: Comprehensive CPU, GPU, memory, and thread monitoring with psutil/pynvml
+- **Statistical Measurement**: Multiple iterations with warmup periods and variance analysis for reliable results
+- **CI/CD Integration**: Automated baseline updates, performance trend reporting, and regression alerts
+- **Detailed Analytics**: JSON result output supporting historical performance analysis and trend tracking
+
+```bash
+# Run performance benchmarks
+python -m pytest tests/performance/ -v
+
+# Run specific benchmark categories
+python -m pytest -m "performance" -v
+python -m pytest -m "benchmark" -v
+
+# Run benchmarks directly with detailed output
+python tests/performance/test_benchmarks.py
+
+# Check for performance regressions
+python -m pytest tests/performance/test_benchmarks.py::test_performance_regression_detection -v
+```
+
 ## Quick Start
 
 ### Prerequisites
@@ -154,7 +185,7 @@ python -m pytest
 python -m pytest tests/unit/          # Unit tests
 python -m pytest tests/contract/      # API contract tests
 python -m pytest tests/integration/   # Integration tests
-python -m pytest tests/performance/   # Performance benchmarks
+python -m pytest tests/performance/   # Performance benchmarks & regression detection
 python -m pytest tests/soak/          # Long-running stability tests
 
 # Run with coverage

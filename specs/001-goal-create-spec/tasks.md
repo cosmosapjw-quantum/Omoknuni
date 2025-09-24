@@ -160,7 +160,8 @@
 - [x] **T042** 1-hour soak test | Create tests/soak/test_memory_stability.py with continuous operation, memory leak detection, performance degradation monitoring | ✅ Comprehensive 1-hour soak test implemented with memory leak detection, performance degradation monitoring, system resource tracking, workload simulation, detailed reporting, and comprehensive unit test coverage (25 tests) | Dev | 4h
   *Completed: 2025-09-24, Author: Claude Code*
 
-- [ ] **T043** Performance regression suite | Create tests/performance/test_benchmarks.py with automated performance testing, regression detection, reporting | Benchmarks detect performance regressions, report clear metrics, run in CI | Dev | 3h
+- [x] **T043** Performance regression suite | Create tests/performance/test_benchmarks.py with automated performance testing, regression detection, reporting | ✅ Comprehensive benchmark framework with AlphaZero-specific performance tests, automated regression detection, system metrics collection, baseline comparison, CI integration support, and extensive unit test coverage (27 tests) | Dev | 3h
+  *Completed: 2025-09-24, Author: Claude Code*
 
 ---
 

@@ -68,6 +68,13 @@ python -m pytest tests/integration/ -v
 # Performance benchmarks and regression detection
 python -m pytest tests/performance/ -v
 
+# Run specific benchmark categories
+python -m pytest -m "performance" -v
+python -m pytest -m "benchmark" -v
+
+# Run benchmarks directly with detailed output
+python tests/performance/test_benchmarks.py
+
 # Memory leak detection (1-hour soak test)
 python -m pytest tests/soak/ -v
 
