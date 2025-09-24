@@ -46,6 +46,7 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - [x] **T037**: Training pipeline integration test with full end-to-end validation
 - [x] **T038**: Thread count optimization script with parameter sweep, contention detection, and real component integration
 - [x] **T039**: Virtual loss magnitude tuning script with comprehensive parameter sweep, thread efficiency measurement, and exploration balance
+- [x] **T040**: Batch size optimization script with GPU memory profiling, VRAM monitoring, throughput/latency analysis, and OOM handling
 
 ### Current Architecture
 
@@ -247,6 +248,12 @@ python scripts/tune_virtual_loss.py --game gomoku --quick-test
 
 # Full virtual loss optimization with exploration balance analysis
 python scripts/tune_virtual_loss.py --game gomoku --simulations 800 --iterations 50
+
+# Optimize batch size for GPU memory and throughput
+python scripts/tune_batch_size.py --game gomoku --quick-test
+
+# Full batch size optimization with VRAM profiling
+python scripts/tune_batch_size.py --game gomoku --iterations 100 --max-vram 85
 ```
 
 **Self-Play Features:**
@@ -272,6 +279,15 @@ python scripts/tune_virtual_loss.py --game gomoku --simulations 800 --iterations
 - **Contention Analysis**: Detection of thread conflicts through timing variance measurement
 - **Multi-Game Support**: Optimization for Gomoku, Chess, and Go with game-specific metrics
 - **Statistical Analysis**: Comprehensive scoring combining throughput, efficiency, and exploration balance
+
+**Batch Size Optimization:**
+- **GPU Memory Profiling**: Real-time VRAM monitoring with pynvml integration
+- **Throughput Analysis**: Comprehensive inference performance measurement across batch sizes 8-512
+- **Latency vs Throughput**: Optimal batch size detection balancing speed and responsiveness
+- **OOM Handling**: Automatic out-of-memory detection with graceful degradation
+- **VRAM Constraint Management**: Configurable memory limits (<85% VRAM usage by default)
+- **Multi-Game Memory Profiling**: Game-specific memory requirements and optimization
+- **Efficiency Scoring**: Combined metrics of throughput, memory usage, GPU utilization, and latency
 ```
 
 ### Project Structure

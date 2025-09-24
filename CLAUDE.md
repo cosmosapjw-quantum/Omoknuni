@@ -102,6 +102,10 @@ python scripts/tune_threads.py --game gomoku --simulations 800 --iterations 50
 # Virtual loss magnitude optimization
 python scripts/tune_virtual_loss.py --game gomoku --quick-test
 python scripts/tune_virtual_loss.py --game gomoku --simulations 800 --iterations 50 --threads 8
+
+# Batch size optimization for GPU memory and throughput
+python scripts/tune_batch_size.py --game gomoku --quick-test
+python scripts/tune_batch_size.py --game gomoku --iterations 100 --max-vram 85 --max-batch-size 512
 ```
 
 ## Project Structure

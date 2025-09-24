@@ -100,14 +100,33 @@ from src.neural.device_manager import DeviceManager
 from src.neural.model import AlphaZeroNet
 from src.telemetry.metrics import MetricsCollector
 
-# Game imports (with fallback for testing)
+# Game imports (try installed version first, then build version)
 try:
-    import alphazero_py
+    # Try installed version first (from pip install -e .)
+    from src import alphazero_py
     GAMES_AVAILABLE = True
     print("C++ game extensions available")
 except ImportError:
-    GAMES_AVAILABLE = False
-    print("Warning: Game extensions not available, using Python fallback implementations")
+    try:
+        # Fallback to build directory version
+        build_path = project_root / "build" / "cpp_extensions" / "games"
+        if build_path.exists():
+            sys.path.insert(0, str(build_path))
+        else:
+            # Try current directory relative path as fallback
+            cwd_build_path = Path.cwd() / "build" / "cpp_extensions" / "games"
+            if cwd_build_path.exists():
+                sys.path.insert(0, str(cwd_build_path))
+
+        import alphazero_py
+        GAMES_AVAILABLE = True
+        print("C++ game extensions available (build version)")
+    except ImportError as e:
+        GAMES_AVAILABLE = False
+        print("Warning: Game extensions not available, using Python fallback implementations")
+        # Debug: print actual import error
+        if '--verbose' in sys.argv or '-v' in sys.argv:
+            print(f"Import error details: {e}")
 
 logger = logging.getLogger(__name__)
 
@@ -201,11 +220,11 @@ class RealGameState:
         if GAMES_AVAILABLE:
             # Use C++ game implementation
             if game_type == "gomoku":
-                self.game = alphazero_py.GomokuGame()
+                self.game = alphazero_py.create_game(alphazero_py.GOMOKU)
             elif game_type == "chess":
-                self.game = alphazero_py.ChessGame()
+                self.game = alphazero_py.create_game(alphazero_py.CHESS)
             elif game_type == "go":
-                self.game = alphazero_py.GoGame()
+                self.game = alphazero_py.create_game(alphazero_py.GO)
             else:
                 raise ValueError(f"Unsupported game type: {game_type}")
         else:
@@ -296,7 +315,7 @@ class RealGameState:
     def get_features(self) -> np.ndarray:
         """Get feature representation for neural network."""
         if GAMES_AVAILABLE:
-            return self.game.get_features()
+            return self.game.get_tensor_representation()
         else:
             # Simple fallback - create basic feature planes
             features = np.zeros((self.feature_planes, self.board_size, self.board_size), dtype=np.float32)

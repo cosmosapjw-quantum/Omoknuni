@@ -356,8 +356,26 @@ All notable changes to this project will be documented in this file.
   - Visualization support with matplotlib plots showing VL magnitude vs. performance metrics
   - Comprehensive unit test coverage with 27+ test cases validating all functionality
   - Command-line interface supporting quick-test, full-sweep, and custom parameter modes
+- **T040**: Batch size optimization script with comprehensive GPU memory profiling
+  - Parameter sweep testing batch sizes 8-512 with GPU memory constraint validation
+  - Real-time VRAM monitoring using pynvml for accurate memory usage tracking
+  - Throughput and latency analysis with efficiency scoring algorithm
+  - Out-of-memory (OOM) detection and handling with automatic batch size reduction
+  - Multi-game support with game-specific memory requirements (Gomoku/Chess/Go)
+  - GPU utilization monitoring with target >80% utilization and <85% VRAM usage
+  - Statistical analysis combining throughput, memory efficiency, and latency metrics
+  - Visualization support with performance curves and memory usage plots
+  - Comprehensive unit test coverage with 20+ test cases validating all functionality
+  - Command-line interface with quick-test, full-sweep, and configurable VRAM limits
 
 ### Fixed
+- **Critical import issues resolved** for game extensions and GPU monitoring
+  - Fixed pybind11 "type already registered" error by resolving module import conflicts
+  - Corrected nvidia-ml-py import from `nvidia_ml_py3` to proper `pynvml` module name
+  - Fixed game extension imports to use installed `src.alphazero_py` version preferentially
+  - Corrected game API calls from `get_tensor()` to proper `get_tensor_representation()` method
+  - Eliminated double-import issues causing C++ extension registration conflicts
+  - All optimization scripts now successfully load C++ game extensions and GPU monitoring
 
 ### Removed
 - Original `/games` directory (files moved to cpp_extensions)
