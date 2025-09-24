@@ -1,0 +1,196 @@
+# Docker Compose configuration for AlphaZero Engine
+# Supports development, training, and production workflows
+
+version: '3.8'
+
+services:
+  # =============================================================================
+  # Development Service - Interactive development with Jupyter
+  # =============================================================================
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    image: alphazero-engine:dev
+    container_name: alphazero-dev
+    ports:
+      - "8888:8888"  # Jupyter Lab
+      - "6006:6006"  # TensorBoard
+    volumes:
+      # Mount source code for live development
+      - .:/home/dev:rw
+      - dev_cache:/home/dev/.cache
+      - dev_models:/home/dev/models
+    environment:
+      - OMOKNUNI_ENV=development
+      - OMOKNUNI_LOG_LEVEL=DEBUG
+      - JUPYTER_ENABLE_LAB=yes
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    stdin_open: true
+    tty: true
+    networks:
+      - alphazero-net
+
+  # =============================================================================
+  # Training Service - Optimized for model training
+  # =============================================================================
+  training:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: training
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    image: alphazero-engine:training
+    container_name: alphazero-training
+    ports:
+      - "6007:6006"  # TensorBoard (different port to avoid conflict)
+    volumes:
+      # Persistent data volumes for training
+      - training_data:/home/alphazero/training_data
+      - models:/home/alphazero/models
+      - checkpoints:/home/alphazero/checkpoints
+      - tensorboard_logs:/home/alphazero/tensorboard_logs
+      - experiments:/home/alphazero/experiments
+      # Mount configuration
+      - ./config:/home/alphazero/config:ro
+    environment:
+      - OMOKNUNI_ENV=training
+      - OMOKNUNI_LOG_LEVEL=INFO
+      - OMOKNUNI_ENABLE_TENSORBOARD=true
+      - CUDA_VISIBLE_DEVICES=0
+    deploy:
+      resources:
+        limits:
+          memory: 32G
+        reservations:
+          memory: 16G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    networks:
+      - alphazero-net
+
+  # =============================================================================
+  # Production Runtime Service
+  # =============================================================================
+  runtime:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    image: alphazero-engine:runtime
+    container_name: alphazero-runtime
+    volumes:
+      - models:/home/alphazero/models:ro
+      - runtime_data:/home/alphazero/data
+      - ./config:/home/alphazero/config:ro
+    environment:
+      - OMOKNUNI_ENV=production
+      - OMOKNUNI_LOG_LEVEL=INFO
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+        reservations:
+          memory: 8G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    networks:
+      - alphazero-net
+
+  # =============================================================================
+  # Benchmarking Service - Performance testing
+  # =============================================================================
+  benchmark:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    image: alphazero-engine:dev
+    container_name: alphazero-benchmark
+    volumes:
+      - benchmark_results:/home/dev/results
+      - models:/home/dev/models:ro
+    environment:
+      - OMOKNUNI_ENV=benchmark
+      - OMOKNUNI_LOG_LEVEL=INFO
+    command: ["python", "-m", "pytest", "tests/performance/", "-v"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - alphazero-net
+
+  # =============================================================================
+  # TensorBoard Service - Standalone monitoring
+  # =============================================================================
+  tensorboard:
+    image: tensorflow/tensorflow:latest-gpu
+    container_name: alphazero-tensorboard
+    ports:
+      - "6008:6006"
+    volumes:
+      - tensorboard_logs:/logs
+    command: ["tensorboard", "--logdir=/logs", "--host=0.0.0.0", "--port=6006"]
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+    networks:
+      - alphazero-net
+
+# =============================================================================
+# Persistent Volumes
+# =============================================================================
+volumes:
+  # Development volumes
+  dev_cache:
+    driver: local
+  dev_models:
+    driver: local
+
+  # Training volumes
+  training_data:
+    driver: local
+  models:
+    driver: local
+  checkpoints:
+    driver: local
+  tensorboard_logs:
+    driver: local
+  experiments:
+    driver: local
+
+  # Runtime volumes
+  runtime_data:
+    driver: local
+  benchmark_results:
+    driver: local
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  alphazero-net:
+    driver: bridge

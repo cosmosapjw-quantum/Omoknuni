@@ -54,6 +54,23 @@ python -m pip install -e . --config-settings build-dir=build
 pip install -e . --force-reinstall --no-deps
 ```
 
+### Docker Deployment (Recommended)
+```bash
+# Build and run development environment
+./scripts/docker/build.sh -t development
+./scripts/docker/run.sh dev
+
+# Production deployment
+./scripts/docker/build.sh -t runtime
+docker-compose up -d runtime
+
+# Training environment
+docker-compose up -d training
+
+# Run benchmarks in Docker
+docker-compose run --rm benchmark
+```
+
 ### Testing
 ```bash
 # Contract tests (must fail initially, then pass after implementation)

@@ -153,6 +153,46 @@ python -m pytest tests/performance/test_benchmarks.py::test_performance_regressi
 - CMake 3.18+
 - CUDA 12.x (for GPU acceleration)
 - C++17 compatible compiler with OpenMP support
+- Docker and Docker Compose (for containerized deployment)
+
+### Docker Deployment (Recommended)
+
+#### Quick Start with Docker
+```bash
+# Build and run development environment
+./scripts/docker/build.sh -t development
+./scripts/docker/run.sh dev
+
+# Or use docker-compose
+docker-compose up dev
+```
+
+#### Production Deployment
+```bash
+# Build production image
+./scripts/docker/build.sh -t runtime
+
+# Run in production mode
+docker-compose up -d runtime
+```
+
+#### Training with Docker
+```bash
+# Start training environment
+docker-compose up -d training
+
+# Monitor training progress
+docker-compose logs -f training
+
+# Access TensorBoard at http://localhost:6007
+```
+
+### Docker Services Available
+- **dev**: Development environment with Jupyter Lab (port 8888)
+- **training**: Training environment with TensorBoard (port 6007)
+- **runtime**: Production runtime environment
+- **benchmark**: Performance benchmarking
+- **tensorboard**: Standalone TensorBoard monitoring (port 6008)
 
 ### Setup Development Environment
 

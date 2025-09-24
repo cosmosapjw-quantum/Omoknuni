@@ -89,9 +89,41 @@ Results are saved to `results/benchmarks/`:
 - **psutil** for system monitoring
 - **pynvml** for GPU monitoring (optional)
 
+### Docker Testing
+
+Run tests in containerized environments for consistent results:
+
+```bash
+# Run all tests in Docker
+docker-compose run --rm benchmark
+
+# Run specific test categories in Docker
+docker-compose run --rm dev python -m pytest tests/performance/ -v
+
+# Run tests in development environment
+./scripts/docker/run.sh dev
+# Then inside container: python -m pytest tests/unit/ -v
+```
+
+### Docker Container Validation
+
+Test Docker functionality and configuration:
+
+```bash
+# Test Docker setup
+python -m pytest tests/unit/test_docker_functionality.py -v
+
+# Validate Dockerfile syntax
+docker build --target runtime -t test-build .
+
+# Test all Docker stages
+./scripts/docker/build.sh -t all
+```
+
 ### Troubleshooting
 
 **No GPU detected**: GPU benchmarks fall back to CPU simulation
 **High variance**: Increase iteration count for more stable results
 **Memory errors**: Reduce batch sizes in memory efficiency tests
 **Permission errors**: Ensure write access to `results/` directory
+**Docker issues**: Check NVIDIA Docker runtime with `docker run --rm --gpus all nvidia/cuda:12.2-base nvidia-smi`

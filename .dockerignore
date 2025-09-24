@@ -1,0 +1,89 @@
+# Docker ignore file for AlphaZero Engine
+# Optimize build context by excluding unnecessary files
+
+# Version control
+.git/
+.github/workflows/
+.gitignore
+
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+.pytest_cache/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Documentation and guides (not needed in container)
+docs/
+*.md
+!README.md
+mcts_guide.md
+
+# Test results and coverage
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# Development and debugging
+.benchmarks/
+.claude/
+.specify/
+evaluation_results/
+training_logs/
+training_data/
+checkpoints/
+results/
+tensorboard_logs/
+experiments/
+models/
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# OS generated files
+Thumbs.db
+.DS_Store
+
+# Large data files (should be mounted as volumes)
+*.h5
+*.hdf5
+*.parquet
+*.arrow
+*.pkl
+*.pickle
+
+# Configuration files (will be provided at runtime)
+config/local.yaml
+config/production.yaml
+
+# Scripts that aren't needed in container
+scripts/tune_*.py
+scripts/validate_*.py
+scripts/test_*.py
+scripts/check_*.py
