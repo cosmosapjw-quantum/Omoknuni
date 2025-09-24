@@ -367,6 +367,20 @@ All notable changes to this project will be documented in this file.
   - Visualization support with performance curves and memory usage plots
   - Comprehensive unit test coverage with 20+ test cases validating all functionality
   - Command-line interface with quick-test, full-sweep, and configurable VRAM limits
+- **T041**: Inference timeout optimization script for throughput vs latency balance
+  - Parameter sweep testing timeout values 1-10ms with configurable step sizes
+  - Comprehensive throughput vs latency analysis balancing responsiveness and batch efficiency
+  - Batch formation efficiency measurement with timeout hit rates and batch size distributions
+  - GPU utilization monitoring with real-time usage tracking during optimization
+  - Responsiveness analysis with response time statistics and percentile analysis (P95, P99)
+  - Queue behavior analysis with queue depth statistics and batching behavior measurement
+  - Multi-game support with timeout optimization for Gomoku, Chess, and Go
+  - Advanced efficiency scoring combining throughput, responsiveness, timeout efficiency, and batch size
+  - Mock inference worker with realistic GPU/CPU performance simulation for testing
+  - Statistical analysis with optimal timeout detection (target ≤3ms) balancing trade-offs
+  - Visualization support with performance curves and Pareto frontier analysis
+  - Comprehensive unit test coverage with 25+ test cases validating all optimization functionality
+  - Command-line interface with quick-test, full-sweep, and configurable timeout ranges
 
 ### Fixed
 - **Critical import issues resolved** for game extensions and GPU monitoring

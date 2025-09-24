@@ -30,6 +30,8 @@ dependencies = [
     "pandas>=1.5.0",
     "pyarrow>=10.0.0",
     "h5py>=3.7.0",
+    "matplotlib>=3.5.0",
+    "seaborn>=0.11.0",
 ]
 
 [project.optional-dependencies]
@@ -46,6 +48,11 @@ dev = [
 gpu = [
     "nvidia-ml-py>=11.495.46",
     "cupy-cuda12x>=12.0.0",
+]
+viz = [
+    "plotly>=5.0.0",
+    "jupyter>=1.0.0",
+    "ipywidgets>=8.0.0",
 ]
 
 [tool.scikit-build]

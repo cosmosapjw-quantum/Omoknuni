@@ -254,6 +254,12 @@ python scripts/tune_batch_size.py --game gomoku --quick-test
 
 # Full batch size optimization with VRAM profiling
 python scripts/tune_batch_size.py --game gomoku --iterations 100 --max-vram 85
+
+# Optimize inference timeout for throughput vs latency balance
+python scripts/tune_timeout.py --game gomoku --quick-test
+
+# Full timeout optimization with comprehensive analysis
+python scripts/tune_timeout.py --game gomoku --min-timeout 1 --max-timeout 10 --iterations 100
 ```
 
 **Self-Play Features:**
@@ -288,6 +294,16 @@ python scripts/tune_batch_size.py --game gomoku --iterations 100 --max-vram 85
 - **VRAM Constraint Management**: Configurable memory limits (<85% VRAM usage by default)
 - **Multi-Game Memory Profiling**: Game-specific memory requirements and optimization
 - **Efficiency Scoring**: Combined metrics of throughput, memory usage, GPU utilization, and latency
+
+**Inference Timeout Optimization:**
+- **Timeout Parameter Sweep**: Comprehensive testing of timeout values 1-10ms with configurable step sizes
+- **Throughput vs Latency Analysis**: Optimal timeout detection balancing responsiveness and batch efficiency
+- **Batch Formation Efficiency**: Measurement of timeout hit rates and batch size distributions
+- **GPU Utilization Monitoring**: Real-time GPU usage tracking during timeout optimization
+- **Responsiveness Analysis**: Response time statistics with percentile analysis (P95, P99)
+- **Queue Behavior Analysis**: Queue depth statistics and batching behavior measurement
+- **Multi-Game Support**: Timeout optimization for Gomoku, Chess, and Go with game-specific requirements
+- **Efficiency Scoring**: Combined metrics of throughput, responsiveness, timeout efficiency, and batch size optimization
 ```
 
 ### Project Structure
