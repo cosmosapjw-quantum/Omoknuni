@@ -31,6 +31,12 @@ from src.telemetry.metrics import MetricsCollector
 from src.neural.inference_worker import GPUInferenceWorker
 from src.neural.cpu_inference import CPUInferenceWorker
 
+# Import error handling framework
+from src.utils.errors import (
+    ThreadCoordinationError, CriticalInferenceError, InferenceError,
+    ThreadHealthMonitor, with_error_handling, error_reporter
+)
+
 
 @dataclass
 class SearchRequest:
@@ -135,6 +141,15 @@ class SearchCoordinator:
 
         # Logger
         self.logger = logging.getLogger(__name__)
+
+        # Error handling and thread health monitoring
+        self.thread_health = ThreadHealthMonitor(
+            max_consecutive_failures=5,  # More aggressive than default
+            failure_backoff=0.5,
+            max_backoff=5.0
+        )
+        self.critical_error_count = 0
+        self.max_critical_errors = 3
 
     def start(self) -> None:
         """Start the search coordinator and background threads."""
@@ -389,8 +404,43 @@ class SearchCoordinator:
                 # Process the inference request
                 self._process_inference_request(request)
 
+                # Record successful operation
+                self.thread_health.record_success("inference_coordinator")
+
+            except CriticalInferenceError as e:
+                self.critical_error_count += 1
+                error_reporter.report_error(e, {"thread": "inference_coordinator", "critical_count": self.critical_error_count})
+
+                if self.critical_error_count >= self.max_critical_errors:
+                    self.logger.critical(
+                        f"Too many critical errors ({self.critical_error_count}), triggering emergency shutdown"
+                    )
+                    self._trigger_emergency_shutdown()
+                    break
+
+                # Apply backoff for critical errors
+                if not self.thread_health.record_failure("inference_coordinator", e):
+                    self.logger.critical("Inference coordinator thread terminating due to repeated failures")
+                    break
+
+            except (InferenceError, ThreadCoordinationError) as e:
+                error_reporter.report_error(e, {"thread": "inference_coordinator"})
+
+                if not self.thread_health.record_failure("inference_coordinator", e):
+                    self.logger.critical("Inference coordinator thread terminating due to repeated failures")
+                    break
+
             except Exception as e:
-                self.logger.error(f"Error in inference coordinator: {e}")
+                # Wrap unexpected exceptions
+                wrapped_error = ThreadCoordinationError(
+                    f"Unexpected error in inference coordinator: {e}",
+                    thread_name="inference_coordinator"
+                )
+                error_reporter.report_error(wrapped_error, {"thread": "inference_coordinator", "original_error": str(e)})
+
+                if not self.thread_health.record_failure("inference_coordinator", wrapped_error):
+                    self.logger.critical("Inference coordinator thread terminating due to repeated failures")
+                    break
 
         self.logger.info("Inference coordinator thread stopped")
 
@@ -476,6 +526,71 @@ class SearchCoordinator:
         # Report to telemetry system (Note: MetricsCollector uses specific recording methods)
         # For now, we'll integrate with the existing metrics system through specialized methods
         # In a full implementation, we would extend MetricsCollector to support custom gauges
+
+    def _trigger_emergency_shutdown(self) -> None:
+        """Trigger emergency shutdown due to critical errors."""
+        self.logger.critical("Emergency shutdown triggered")
+        self.shutdown_event.set()
+
+        # Try to notify any waiting requests
+        try:
+            while not self.inference_request_queue.empty():
+                request = self.inference_request_queue.get_nowait()
+                if request.result_future and not request.result_future.done():
+                    request.result_future.set_exception(
+                        CriticalInferenceError("System emergency shutdown")
+                    )
+        except queue.Empty:
+            pass
+        except Exception as e:
+            self.logger.error(f"Error during emergency shutdown cleanup: {e}")
+
+    @with_error_handling(reraise=False)
+    def stop(self) -> None:
+        """Stop the search coordinator and all background threads."""
+        self.logger.info("Stopping search coordinator...")
+
+        # Signal shutdown
+        self.shutdown_event.set()
+        self.running = False
+
+        # Stop thread pool
+        if hasattr(self, 'thread_pool'):
+            try:
+                self.thread_pool.shutdown(wait=True)
+            except Exception as e:
+                self.logger.error(f"Error stopping thread pool: {e}")
+
+        # Stop inference worker
+        if hasattr(self, 'inference_worker') and hasattr(self.inference_worker, 'stop'):
+            try:
+                self.inference_worker.stop()
+            except Exception as e:
+                self.logger.error(f"Error stopping inference worker: {e}")
+
+        # Wait for coordinator threads to finish
+        if hasattr(self, 'inference_coordinator_thread'):
+            try:
+                self.inference_coordinator_thread.join(timeout=5.0)
+                if self.inference_coordinator_thread.is_alive():
+                    self.logger.warning("Inference coordinator thread did not shut down gracefully")
+            except Exception as e:
+                self.logger.error(f"Error joining inference coordinator thread: {e}")
+
+        if hasattr(self, 'metrics_monitor_thread'):
+            try:
+                self.metrics_monitor_thread.join(timeout=5.0)
+                if self.metrics_monitor_thread.is_alive():
+                    self.logger.warning("Metrics monitor thread did not shut down gracefully")
+            except Exception as e:
+                self.logger.error(f"Error joining metrics monitor thread: {e}")
+
+        # Report final error summary
+        error_summary = error_reporter.get_error_summary()
+        if error_summary['total_errors'] > 0:
+            self.logger.info(f"Final error summary: {error_summary['total_errors']} total errors")
+
+        self.logger.info("Search coordinator stopped")
 
 
 def create_search_coordinator(inference_worker: GPUInferenceWorker,

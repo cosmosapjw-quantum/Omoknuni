@@ -13,11 +13,12 @@ This runbook provides comprehensive operational procedures for deploying, monito
 1. [Deployment Procedures](#deployment-procedures)
 2. [Configuration Management](#configuration-management)
 3. [Monitoring & Observability](#monitoring--observability)
-4. [Troubleshooting Guide](#troubleshooting-guide)
-5. [Maintenance Tasks](#maintenance-tasks)
-6. [Performance Optimization](#performance-optimization)
-7. [Security & Compliance](#security--compliance)
-8. [Disaster Recovery](#disaster-recovery)
+4. [Error Handling & Fault Tolerance](#error-handling--fault-tolerance)
+5. [Troubleshooting Guide](#troubleshooting-guide)
+6. [Maintenance Tasks](#maintenance-tasks)
+7. [Performance Optimization](#performance-optimization)
+8. [Security & Compliance](#security--compliance)
+9. [Disaster Recovery](#disaster-recovery)
 
 ---
 
@@ -344,6 +345,117 @@ free -h && df -h
 
 # Process health check
 pgrep -af alphazero
+```
+
+---
+
+## Error Handling & Fault Tolerance
+
+### Built-in Error Handling Framework
+
+The AlphaZero engine includes a comprehensive error handling framework designed for production stability:
+
+**Key Components:**
+- **Custom Exception Hierarchy** - Specialized exceptions with context and severity levels
+- **Thread Health Monitoring** - Automatic failure tracking with exponential backoff and termination
+- **GPU Operation Management** - Timeout protection and CUDA error categorization
+- **Model Validation** - Comprehensive integrity checks for neural network models
+- **Centralized Error Reporting** - Metrics collection and trend analysis
+
+### Error Monitoring
+
+**Check Error Summary:**
+```bash
+# View error statistics from the error reporter
+python -c "
+from src.utils.errors import error_reporter
+summary = error_reporter.get_error_summary()
+print(f'Total errors: {summary[\"total_errors\"]}')
+print(f'Error types: {summary[\"error_counts\"]}')
+"
+```
+
+**Monitor Thread Health:**
+```bash
+# Check thread health status in logs
+grep -i "thread.*failure" /var/log/alphazero/engine.log
+grep -i "emergency shutdown" /var/log/alphazero/engine.log
+grep -i "thread.*terminated" /var/log/alphazero/engine.log
+```
+
+**GPU Error Detection:**
+```bash
+# Check for GPU operation errors
+grep -i "cuda.*error\|gpu.*error\|oom" /var/log/alphazero/engine.log
+grep -i "critical.*inference\|gpu.*timeout" /var/log/alphazero/engine.log
+```
+
+### Error Recovery Procedures
+
+**Thread Recovery:**
+- Threads automatically recover from transient failures with exponential backoff
+- Persistent failures trigger automatic thread termination after configurable thresholds
+- Emergency shutdown procedures protect system integrity during critical errors
+
+**GPU Recovery:**
+- CUDA out-of-memory errors trigger automatic batch size reduction (T050)
+- GPU operation timeouts have configurable limits with graceful degradation
+- Critical GPU errors trigger CPU fallback mechanisms
+
+**Model Validation Recovery:**
+- Model loading failures provide detailed diagnostics for troubleshooting
+- Integrity checks prevent corrupted model deployment
+- Automatic model compatibility validation before inference
+
+### Error Handling Configuration
+
+**Thread Health Settings:**
+```python
+# Configure thread health monitoring thresholds
+THREAD_HEALTH_CONFIG = {
+    "max_consecutive_failures": 5,    # Thread termination threshold
+    "failure_backoff": 0.5,           # Initial backoff time (seconds)
+    "max_backoff": 10.0               # Maximum backoff time (seconds)
+}
+```
+
+**GPU Operation Settings:**
+```python
+# Configure GPU operation management
+GPU_OPERATION_CONFIG = {
+    "default_timeout": 30.0,          # Default operation timeout (seconds)
+    "critical_memory_threshold": 0.9  # Memory usage threshold for warnings
+}
+```
+
+### Testing Error Handling
+
+**Run Error Handling Tests:**
+```bash
+# Comprehensive error handling test suite
+python -m pytest tests/unit/test_error_handling.py -v
+
+# Test specific components
+python -m pytest tests/unit/test_error_handling.py -v -k "ThreadHealth"
+python -m pytest tests/unit/test_error_handling.py -v -k "GPUOperation"
+python -m pytest tests/unit/test_error_handling.py -v -k "ModelValidator"
+```
+
+**Manual Error Simulation:**
+```bash
+# Test error handling under controlled conditions
+python -c "
+from src.utils.errors import ThreadHealthMonitor, InferenceError
+
+# Simulate thread failures
+monitor = ThreadHealthMonitor(max_consecutive_failures=3)
+for i in range(5):
+    error = InferenceError(f'Simulated failure {i}')
+    should_continue = monitor.record_failure('test_thread', error)
+    print(f'Failure {i+1}: continue={should_continue}')
+    if not should_continue:
+        break
+"
 ```
 
 ---
