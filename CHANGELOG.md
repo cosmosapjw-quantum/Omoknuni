@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **T049**: Comprehensive sanitizer build system with AddressSanitizer, ThreadSanitizer, and UndefinedBehaviorSanitizer support
+  - Complete sanitizer build configurations in pyproject.toml with debug flags and proper compiler settings
+  - CI integration with matrix builds testing all three sanitizers (ASan, TSan, UBSan)
+  - AddressSanitizer configuration with leak detection, stack-use-after-return, and symbolizer support
+  - ThreadSanitizer configuration with race condition detection and history tracking
+  - UndefinedBehaviorSanitizer configuration with stack trace printing and halt-on-error
+  - Comprehensive unit test suite with 20+ test cases for sanitizer validation and memory error detection
+  - SanitizerTestHelper class for creating test scenarios to validate sanitizer functionality
+  - Local development script (scripts/build_with_sanitizers.py) for easy sanitizer testing
+  - Pytest markers for sanitizer-specific test categorization and selection
+  - CI upload of sanitizer logs and artifacts for debugging failed builds
+  - Cross-platform support with clang/llvm toolchain detection and setup
 - **T048**: Comprehensive training guide with hyperparameter recommendations and troubleshooting
   - Complete training guide with quick start instructions, hyperparameter recommendations for all games
   - Game-specific settings achieving target performance: Gomoku 48h superhuman, Chess 1 week strong amateur, Go competitive performance

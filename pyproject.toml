@@ -62,6 +62,31 @@ wheel.expand-macos-universal-tags = true
 CMAKE_CXX_STANDARD = "17"
 CMAKE_CUDA_STANDARD = "17"
 
+# Sanitizer build configurations
+[tool.scikit-build.cmake.define.asan]
+# AddressSanitizer build configuration
+CMAKE_BUILD_TYPE = "Debug"
+CMAKE_CXX_FLAGS = "-fsanitize=address -fno-omit-frame-pointer -g -O1"
+CMAKE_C_FLAGS = "-fsanitize=address -fno-omit-frame-pointer -g -O1"
+CMAKE_EXE_LINKER_FLAGS = "-fsanitize=address"
+CMAKE_SHARED_LINKER_FLAGS = "-fsanitize=address"
+
+[tool.scikit-build.cmake.define.tsan]
+# ThreadSanitizer build configuration
+CMAKE_BUILD_TYPE = "Debug"
+CMAKE_CXX_FLAGS = "-fsanitize=thread -fno-omit-frame-pointer -g -O1"
+CMAKE_C_FLAGS = "-fsanitize=thread -fno-omit-frame-pointer -g -O1"
+CMAKE_EXE_LINKER_FLAGS = "-fsanitize=thread"
+CMAKE_SHARED_LINKER_FLAGS = "-fsanitize=thread"
+
+[tool.scikit-build.cmake.define.ubsan]
+# UndefinedBehaviorSanitizer build configuration
+CMAKE_BUILD_TYPE = "Debug"
+CMAKE_CXX_FLAGS = "-fsanitize=undefined -fno-omit-frame-pointer -g -O1"
+CMAKE_C_FLAGS = "-fsanitize=undefined -fno-omit-frame-pointer -g -O1"
+CMAKE_EXE_LINKER_FLAGS = "-fsanitize=undefined"
+CMAKE_SHARED_LINKER_FLAGS = "-fsanitize=undefined"
+
 [tool.black]
 line-length = 88
 target-version = ['py312']
@@ -106,6 +131,10 @@ markers = [
     "integration: marks integration tests",
     "contract: marks contract tests",
     "performance: marks performance benchmarks",
+    "sanitizer: marks tests that require sanitizer builds",
+    "asan: marks AddressSanitizer-specific tests",
+    "tsan: marks ThreadSanitizer-specific tests",
+    "ubsan: marks UndefinedBehaviorSanitizer-specific tests",
 ]
 
 [tool.coverage.run]
