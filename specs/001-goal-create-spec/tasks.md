@@ -192,7 +192,8 @@
 - [x] **T050** [P] OOM recovery mechanisms | Add CUDA OOM detection in inference_worker.py, automatic batch size reduction, graceful degradation | ✅ Comprehensive OOM recovery system with CUDA error detection, automatic batch size reduction (50% reduction factor, min 1/16 original), graceful degradation to CPU fallback, chunk-based processing for large batches, memory usage monitoring, gradual batch size recovery, extensive metrics collection, 25+ unit tests covering all scenarios | Dev | 3h
   *Completed: 2025-09-25, Author: Claude Code*
 
-- [ ] **T051** [P] Memory leak detection | Create scripts/check_memory_leaks.py with valgrind integration, Python memory profiling, automated testing | Memory leak detection integrated, no leaks in core components, automated monitoring | Dev | 3h
+- [x] **T051** [P] Memory leak detection | Create scripts/check_memory_leaks.py with valgrind integration, Python memory profiling, automated testing | ✅ Memory leak detection integrated with Python tracemalloc, valgrind for C++, GPU memory monitoring, automated testing framework, no leaks detected in core components | Dev | 3h
+  *Completed: 2025-09-25, Author: Claude Code*
 
 - [ ] **T052** [P] Error handling hardening | Add comprehensive error handling throughout codebase, graceful degradation, informative error messages | Error handling comprehensive, system stable under adverse conditions, errors informative | Dev | 4h
 

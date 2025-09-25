@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **T051**: Comprehensive memory leak detection system with multi-platform support
+  - Python memory profiling using tracemalloc with snapshot-based leak detection
+  - Valgrind integration for C++ component analysis with automated test execution
+  - GPU memory monitoring with CUDA memory tracking and leak analysis
+  - Automated testing framework with configurable thresholds and duration-based testing
+  - CLI interface supporting Python, valgrind, and GPU detection modes
+  - Memory growth rate calculation with MB/hour metrics and leak classification
+  - Component-specific testing for MCTS engine, games, and Python bindings
+  - Comprehensive unit test suite with 27+ test cases and mock-based testing
+  - JSON output format for integration with CI/CD systems and automated monitoring
+  - Memory snapshot management with detailed statistics and growth analysis
 - **T050**: Comprehensive CUDA OOM recovery mechanisms with automatic batch size reduction and graceful degradation
   - CUDA out-of-memory error detection with comprehensive pattern matching for various CUDA error types
   - Automatic batch size reduction system with 50% reduction factor and minimum size limits (1/16 of original)

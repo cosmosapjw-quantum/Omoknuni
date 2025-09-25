@@ -51,6 +51,9 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - [x] **T046**: Comprehensive operations runbook with deployment procedures, monitoring setup, troubleshooting guide, and maintenance tasks
 - [x] **T047**: Complete API documentation with comprehensive reference, usage examples, and parameter descriptions
 - [x] **T048**: Training guide with hyperparameter recommendations, game-specific settings, and comprehensive troubleshooting
+- [x] **T049**: Comprehensive sanitizer build system with AddressSanitizer, ThreadSanitizer, and UndefinedBehaviorSanitizer support
+- [x] **T050**: CUDA OOM recovery mechanisms with automatic batch size reduction, graceful degradation, and CPU fallback
+- [x] **T051**: Memory leak detection system with Python profiling, valgrind integration, and GPU memory monitoring
 
 ### Current Architecture
 
@@ -158,6 +161,8 @@ Comprehensive automated benchmarking system with regression detection to ensure 
 - **Statistical Measurement**: Multiple iterations with warmup periods and variance analysis for reliable results
 - **CI/CD Integration**: Automated baseline updates, performance trend reporting, and regression alerts
 - **Detailed Analytics**: JSON result output supporting historical performance analysis and trend tracking
+- **Memory Leak Detection**: Comprehensive monitoring with Python profiling, valgrind C++ analysis, and GPU memory tracking
+- **Long-term Stability**: Automated soak testing with configurable thresholds for production readiness validation
 
 ```bash
 # Run performance benchmarks
@@ -299,6 +304,12 @@ python scripts/validate_pinned_memory.py
 
 # Test CPU fallback mechanism
 python scripts/validate_cpu_fallback.py
+
+# Memory leak detection (comprehensive testing)
+python scripts/check_memory_leaks.py --all --duration 600 --output leak_report.json
+python scripts/check_memory_leaks.py --python --threshold 5.0        # Python profiling only
+python scripts/check_memory_leaks.py --valgrind --component mcts     # C++ component analysis
+python scripts/check_memory_leaks.py --gpu --verbose                 # GPU memory monitoring
 
 # Test experience buffer with memory-mapped storage
 python scripts/validate_experience_buffer.py

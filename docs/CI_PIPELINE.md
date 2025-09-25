@@ -36,11 +36,17 @@ The project uses GitHub Actions for continuous integration and deployment. The p
 - **Runs on**: Ubuntu Latest
 - **Purpose**: End-to-end functionality testing
 
-### 6. Security Scanning
+### 6. Memory Leak Detection
+- **Runs on**: Self-hosted GPU runner (weekly)
+- **Tools**: Python tracemalloc, valgrind, CUDA memory profiling
+- **Purpose**: Long-term stability validation and memory leak detection
+- **Duration**: Configurable (default: 30-60 minutes)
+
+### 7. Security Scanning
 - **Tools**: Bandit, Safety
 - **Purpose**: Security vulnerability detection
 
-### 7. Documentation Build
+### 8. Documentation Build
 - **Runs on**: Ubuntu Latest (main branch only)
 - **Purpose**: Generate and validate documentation
 
@@ -59,6 +65,11 @@ The project uses GitHub Actions for continuous integration and deployment. The p
 - **Script**: `scripts/compare_benchmarks.py`
 - **Purpose**: Automated performance regression detection
 - **Baseline**: `.benchmarks/baseline.json`
+
+### Memory Leak Detection
+- **Script**: `scripts/check_memory_leaks.py`
+- **Purpose**: Comprehensive memory leak detection and analysis
+- **Output**: JSON reports with leak analysis and recommendations
 
 ## Test Structure
 
@@ -94,6 +105,21 @@ pytest tests/performance/ --benchmark-only
 
 # Compare with baseline
 python scripts/compare_benchmarks.py benchmark_results.json
+```
+
+### Memory Leak Detection
+```bash
+# Comprehensive leak detection (all methods)
+python scripts/check_memory_leaks.py --all --duration 1800 --output leak_report.json
+
+# Python-only profiling
+python scripts/check_memory_leaks.py --python --threshold 5.0
+
+# C++ component analysis with valgrind
+python scripts/check_memory_leaks.py --valgrind --component mcts --component games
+
+# GPU memory monitoring
+python scripts/check_memory_leaks.py --gpu --verbose
 ```
 
 ### Code Quality Checks
