@@ -148,6 +148,7 @@ src/
 └── utils/               # Shared utilities and comprehensive configuration system
 
 config/                  # YAML configuration files (default/dev/prod)
+docs/                    # Operations documentation and runbooks
 
 cpp_extensions/          # Performance-critical C++ code
 ├── mcts/                # Core MCTS tree operations

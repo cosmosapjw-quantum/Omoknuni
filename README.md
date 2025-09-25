@@ -48,6 +48,7 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - [x] **T039**: Virtual loss magnitude tuning script with comprehensive parameter sweep, thread efficiency measurement, and exploration balance
 - [x] **T040**: Batch size optimization script with GPU memory profiling, VRAM monitoring, throughput/latency analysis, and OOM handling
 - [x] **T045**: Configuration management system with unified YAML-based configurations, environment overrides, and comprehensive validation
+- [x] **T046**: Comprehensive operations runbook with deployment procedures, monitoring setup, troubleshooting guide, and maintenance tasks
 
 ### Current Architecture
 
@@ -125,6 +126,13 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
     - `config/default.yaml`: Balanced configuration suitable for most scenarios
     - `config/development.yaml`: Development-optimized with faster iterations and verbose logging
     - `config/production.yaml`: Production-optimized for maximum performance and reliability
+- **Operations & Deployment**: Comprehensive operational procedures and deployment automation
+  - **Multi-Platform Deployment**: Docker containerization, bare-metal installation, cloud deployment (AWS/GCP)
+  - **Monitoring & Observability**: Prometheus metrics, Grafana dashboards, structured logging, health checks
+  - **Troubleshooting**: Diagnostic procedures for CUDA OOM, MCTS performance, training instability, container issues
+  - **Maintenance Automation**: Daily/weekly/monthly maintenance scripts, scaling procedures, backup/restore operations
+  - **Security Hardening**: Container security, network configuration, data protection, compliance monitoring
+  - **Disaster Recovery**: RTO/RPO procedures, automated failover, system recovery protocols
 
 ### Performance Regression Suite & Benchmarking
 
@@ -307,6 +315,9 @@ python scripts/test_self_play_comprehensive.py --games 20 --output results/full_
 
 # Test configuration system
 python -m pytest tests/unit/test_config_system.py -v
+
+# Test operations documentation
+python -m pytest tests/unit/test_operations_docs.py -v
 ```
 
 ### Configuration Management
@@ -366,6 +377,50 @@ export ALPHAZERO_TRAINING_SELF_PLAY_GAMES_PER_ITERATION=100
 export ALPHAZERO_SYSTEM_LOG_LEVEL=DEBUG
 export ALPHAZERO_SYSTEM_MAX_MEMORY_GB=64
 ```
+
+### Operations & Deployment
+
+The engine includes comprehensive operational procedures for production deployment:
+
+```bash
+# Quick production deployment with Docker
+./scripts/docker/build.sh -t runtime
+docker-compose up -d runtime
+
+# Validate deployment
+curl http://localhost:8000/health
+python scripts/health_check.py
+
+# Monitor system performance
+python -c "from src.telemetry.metrics import get_metrics; print(get_metrics())"
+
+# Emergency procedures
+sudo systemctl stop alphazero  # Emergency stop
+docker-compose logs runtime    # Check logs
+python scripts/backup_daily.sh # Backup critical data
+```
+
+#### Deployment Options
+
+- **Docker**: Recommended for production with multi-stage builds (development/runtime/training)
+- **Bare Metal**: Direct installation with systemd service configuration
+- **Cloud**: AWS EC2/GCP VM deployment with GPU support and auto-scaling
+
+#### Monitoring & Observability
+
+- **Prometheus Metrics**: Real-time performance monitoring (simulations/sec, GPU utilization, memory usage)
+- **Grafana Dashboards**: Visual monitoring with alerting for performance degradation
+- **Structured Logging**: JSON logs with configurable levels and automatic rotation
+- **Health Checks**: Automated system health validation and diagnostics
+
+#### Maintenance & Support
+
+- **Automated Maintenance**: Daily/weekly/monthly scripts for system optimization
+- **Performance Tuning**: Hardware-specific optimization for AMD Ryzen 5900X + RTX 3060 Ti
+- **Disaster Recovery**: Automated backup/restore with <4hr RTO and failover procedures
+- **Security Hardening**: Container security, network isolation, and compliance monitoring
+
+For detailed operational procedures, see the [Operations Runbook](docs/operations.md).
 
 ### Self-Play Training & Testing
 
@@ -474,6 +529,8 @@ python scripts/tune_timeout.py --game gomoku --min-timeout 1 --max-timeout 10 --
 │   ├── default.yaml       # Balanced default configuration
 │   ├── development.yaml   # Development-optimized settings
 │   └── production.yaml    # Production-optimized settings
+├── docs/                  # Documentation
+│   └── operations.md      # Comprehensive operations runbook
 ├── cpp_extensions/        # Performance-critical C++ code
 │   ├── mcts/             # Core MCTS tree operations
 │   ├── games/            # Game rule implementations, unified interface & Python bindings
