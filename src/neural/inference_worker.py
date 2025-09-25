@@ -99,6 +99,18 @@ class GPUInferenceWorker(InferenceWorker):
         self._fallback_failure_count = 0
         self._last_gpu_attempt = 0.0
 
+        # OOM recovery mechanisms (T050)
+        self._oom_recovery_enabled = True
+        self._original_batch_size = batch_size
+        self._min_batch_size = max(1, batch_size // 16)  # Minimum batch size (1/16 of original)
+        self._oom_count = 0
+        self._consecutive_oom_count = 0
+        self._last_oom_time = 0.0
+        self._batch_size_reduction_factor = 0.5  # Reduce batch size by half on OOM
+        self._oom_recovery_cooldown = 60.0  # 60 seconds before attempting size increase
+        self._last_successful_batch_size = batch_size
+        self._oom_memory_threshold = 0.9  # Consider memory usage >90% as high risk
+
         # Thread control
         self._stop_event = threading.Event()
         self._worker_thread = None
@@ -566,6 +578,21 @@ class GPUInferenceWorker(InferenceWorker):
             total_pinned_mb = (input_buffer_size + output_buffer_size) / (1024**2)
             metrics['pinned_memory_usage_mb'] = total_pinned_mb
 
+        # Add OOM recovery metrics (T050)
+        metrics['oom_recovery_enabled'] = self._oom_recovery_enabled
+        metrics['oom_total_count'] = self._oom_count
+        metrics['oom_consecutive_count'] = self._consecutive_oom_count
+        metrics['original_batch_size'] = self._original_batch_size
+        metrics['min_batch_size'] = self._min_batch_size
+        metrics['last_successful_batch_size'] = self._last_successful_batch_size
+        metrics['batch_size_reduction_factor'] = self._batch_size_reduction_factor
+        metrics['oom_memory_threshold'] = self._oom_memory_threshold
+
+        # Add current memory usage fraction for monitoring
+        memory_fraction = self._get_memory_usage_fraction()
+        metrics['memory_usage_fraction'] = memory_fraction
+        metrics['memory_usage_high_risk'] = memory_fraction > self._oom_memory_threshold
+
         return metrics
 
     def warmup(self, input_shape: Tuple[int, int, int]) -> None:
@@ -919,16 +946,49 @@ class GPUInferenceWorker(InferenceWorker):
                 # Transfer outputs using pinned memory optimization
                 policies_np, values_np = self._transfer_outputs_optimized(policies, values)
 
-                # GPU inference succeeded, reset fallback if it was triggered
+                # GPU inference succeeded, reset OOM and fallback state (T050)
+                self._reset_oom_recovery_state()
                 if self._fallback_triggered:
                     self._fallback_failure_count = 0
                     self.logger.info("GPU inference recovered, continuing with GPU")
 
+                # Attempt to gradually increase batch size if conditions are favorable
+                self._attempt_batch_size_increase()
+
                 return policies_np, values_np
 
             except Exception as e:
+                # Handle OOM errors specifically (T050)
+                if self._is_oom_error(e) and self._oom_recovery_enabled:
+                    self.logger.warning(f"CUDA OOM detected: {e}")
+
+                    # Attempt OOM recovery
+                    if self._handle_oom_recovery():
+                        # OOM recovery succeeded, try again with smaller batch size
+                        self.logger.info(f"Retrying inference with reduced batch size: {self.batch_size}")
+
+                        # Split the batch if it's still too large
+                        if len(positions) > self.batch_size:
+                            # Process in smaller sub-batches
+                            return self._process_batch_chunks(positions)
+                        else:
+                            # Retry with the same batch but reduced internal batch size
+                            try:
+                                return self.batch_inference(positions)  # Recursive retry
+                            except Exception as retry_e:
+                                if self._is_oom_error(retry_e):
+                                    # Still getting OOM, fallback to CPU
+                                    self.logger.error("OOM persists after recovery attempt, falling back to CPU")
+                                    self._enable_cpu_fallback()
+                                else:
+                                    raise retry_e
+                    else:
+                        # OOM recovery failed, fallback to CPU
+                        self.logger.error("OOM recovery failed, falling back to CPU")
+                        self._enable_cpu_fallback()
+
                 # Check if this error should trigger CPU fallback
-                if should_fallback_to_cpu(e):
+                elif should_fallback_to_cpu(e):
                     self._fallback_failure_count += 1
                     self.logger.warning(f"GPU inference failed (attempt {self._fallback_failure_count}), "
                                       f"falling back to CPU: {e}")
@@ -1111,6 +1171,184 @@ class GPUInferenceWorker(InferenceWorker):
                 return process.memory_info().rss / (1024**3)
         except Exception:
             return 0.0
+
+    def _get_memory_usage_fraction(self) -> float:
+        """Get current GPU memory usage as fraction of total memory."""
+        try:
+            if self.device.startswith('cuda') and torch.cuda.is_available():
+                device_idx = int(self.device.split(':')[1]) if ':' in self.device else 0
+                memory_used = torch.cuda.memory_allocated(device_idx)
+                memory_total = torch.cuda.get_device_properties(device_idx).total_memory
+                return memory_used / memory_total if memory_total > 0 else 0.0
+        except Exception:
+            pass
+        return 0.0
+
+    def _is_oom_error(self, exception: Exception) -> bool:
+        """Check if exception is a CUDA out-of-memory error."""
+        error_msg = str(exception).lower()
+        oom_indicators = [
+            'out of memory',
+            'cuda out of memory',
+            'cuda error: out of memory',
+            'cuda runtime error: out of memory',
+            'allocation failure',
+            'memory exhausted'
+        ]
+        return any(indicator in error_msg for indicator in oom_indicators)
+
+    def _handle_oom_recovery(self) -> bool:
+        """Handle OOM recovery by reducing batch size and clearing cache.
+
+        Returns:
+            bool: True if recovery should be attempted, False if fallback to CPU
+        """
+        current_time = time.time()
+        self._oom_count += 1
+        self._consecutive_oom_count += 1
+        self._last_oom_time = current_time
+
+        self.logger.warning(f"CUDA OOM detected (#{self._oom_count}, consecutive: {self._consecutive_oom_count})")
+
+        # Clear CUDA cache to free up memory
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            self.logger.info("Cleared CUDA cache")
+
+        # If we've had too many consecutive OOM errors, fallback to CPU
+        if self._consecutive_oom_count >= 3:
+            self.logger.error("Too many consecutive OOM errors, falling back to CPU permanently")
+            return False
+
+        # Calculate new batch size
+        new_batch_size = max(
+            self._min_batch_size,
+            int(self.batch_size * self._batch_size_reduction_factor)
+        )
+
+        if new_batch_size < self.batch_size:
+            old_batch_size = self.batch_size
+            self.batch_size = new_batch_size
+            self.logger.warning(f"Reduced batch size from {old_batch_size} to {new_batch_size} due to OOM")
+
+            # Update batching parameters
+            self._current_optimal_batch = min(self._current_optimal_batch, new_batch_size)
+
+            # Recreate pinned memory buffers with smaller size
+            if self._use_pinned_memory:
+                try:
+                    self._setup_pinned_memory_buffers(new_batch_size)
+                    self.logger.info("Recreated pinned memory buffers with reduced size")
+                except Exception as e:
+                    self.logger.warning(f"Failed to recreate pinned buffers: {e}")
+
+            return True
+        else:
+            # Already at minimum batch size, fallback to CPU
+            self.logger.error(f"Already at minimum batch size {self._min_batch_size}, falling back to CPU")
+            return False
+
+    def _can_increase_batch_size(self) -> bool:
+        """Check if batch size can be increased after successful operations."""
+        current_time = time.time()
+
+        # Don't increase if we've had recent OOM errors
+        if current_time - self._last_oom_time < self._oom_recovery_cooldown:
+            return False
+
+        # Don't increase if memory usage is high
+        memory_usage = self._get_memory_usage_fraction()
+        if memory_usage > self._oom_memory_threshold:
+            return False
+
+        # Don't increase beyond original batch size
+        if self.batch_size >= self._original_batch_size:
+            return False
+
+        return True
+
+    def _attempt_batch_size_increase(self) -> None:
+        """Gradually increase batch size if conditions are favorable."""
+        if not self._can_increase_batch_size():
+            return
+
+        # Conservative increase (25% increase or +4, whichever is smaller)
+        increase = min(4, max(1, int(self.batch_size * 0.25)))
+        new_batch_size = min(self._original_batch_size, self.batch_size + increase)
+
+        if new_batch_size > self.batch_size:
+            old_batch_size = self.batch_size
+            self.batch_size = new_batch_size
+            self._current_optimal_batch = new_batch_size
+            self.logger.info(f"Gradually increased batch size from {old_batch_size} to {new_batch_size}")
+
+            # Recreate pinned memory buffers with larger size
+            if self._use_pinned_memory:
+                try:
+                    self._setup_pinned_memory_buffers(new_batch_size)
+                except Exception as e:
+                    # If buffer recreation fails, revert batch size
+                    self.batch_size = old_batch_size
+                    self._current_optimal_batch = old_batch_size
+                    self.logger.warning(f"Failed to increase buffer size, reverted to {old_batch_size}: {e}")
+
+    def _reset_oom_recovery_state(self) -> None:
+        """Reset OOM recovery state after successful operations."""
+        self._consecutive_oom_count = 0
+        self._last_successful_batch_size = self.batch_size
+
+    def _process_batch_chunks(self, positions: List[np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
+        """Process large batch in smaller chunks to avoid OOM.
+
+        Args:
+            positions: List of position arrays to process
+
+        Returns:
+            Tuple of (policies, values) numpy arrays
+        """
+        chunk_size = self.batch_size
+        total_positions = len(positions)
+        all_policies = []
+        all_values = []
+
+        self.logger.info(f"Processing batch of {total_positions} in chunks of {chunk_size}")
+
+        for start_idx in range(0, total_positions, chunk_size):
+            end_idx = min(start_idx + chunk_size, total_positions)
+            chunk = positions[start_idx:end_idx]
+
+            try:
+                # Process chunk
+                chunk_tensor = self._create_batch_tensor_optimized(chunk)
+                with torch.no_grad():
+                    policy_logits, values = self._run_inference_with_precision(chunk_tensor)
+                    policies = torch.softmax(policy_logits, dim=1)
+
+                # Transfer chunk results
+                policies_np, values_np = self._transfer_outputs_optimized(policies, values)
+
+                all_policies.append(policies_np)
+                all_values.append(values_np)
+
+            except Exception as chunk_e:
+                if self._is_oom_error(chunk_e):
+                    # Even chunks are too big, reduce chunk size further
+                    self.logger.warning(f"OOM in chunk processing, reducing chunk size further")
+                    if self._handle_oom_recovery():
+                        # Retry this chunk with even smaller size
+                        return self._process_batch_chunks(positions)  # Start over with smaller chunks
+                    else:
+                        # Give up on GPU, use CPU fallback
+                        raise chunk_e
+                else:
+                    raise chunk_e
+
+        # Combine all chunk results
+        combined_policies = np.concatenate(all_policies, axis=0)
+        combined_values = np.concatenate(all_values, axis=0)
+
+        self.logger.info(f"Successfully processed {total_positions} positions in {len(all_policies)} chunks")
+        return combined_policies, combined_values
 
     def _get_cpu_fallback_metrics(self) -> Dict[str, Any]:
         """Get CPU fallback performance metrics (T018).
