@@ -50,6 +50,7 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - [x] **T045**: Configuration management system with unified YAML-based configurations, environment overrides, and comprehensive validation
 - [x] **T046**: Comprehensive operations runbook with deployment procedures, monitoring setup, troubleshooting guide, and maintenance tasks
 - [x] **T047**: Complete API documentation with comprehensive reference, usage examples, and parameter descriptions
+- [x] **T048**: Training guide with hyperparameter recommendations, game-specific settings, and comprehensive troubleshooting
 
 ### Current Architecture
 
@@ -213,6 +214,35 @@ docker-compose logs -f training
 
 # Access TensorBoard at http://localhost:6007
 ```
+
+### Training Your First Model
+
+For detailed training instructions, see the [Training Guide](docs/training_guide.md) with comprehensive hyperparameter recommendations and troubleshooting.
+
+#### Quick Training Start
+```bash
+# Train Gomoku model (fastest to achieve superhuman performance)
+python -m src.training.training_loop \
+    --game gomoku \
+    --config config/training_gomoku.yaml \
+    --target-time-hours 48
+
+# Train Chess model (strong amateur in 1 week)
+python -m src.training.training_loop \
+    --game chess \
+    --config config/training_chess.yaml \
+    --target-time-hours 168
+
+# Monitor training with TensorBoard
+tensorboard --logdir results/*/tensorboard
+```
+
+#### Expected Training Performance
+- **Gomoku**: Superhuman performance in 48 hours
+- **Chess**: Strong amateur (1700-1900 ELO) in 1 week
+- **Go**: Competitive performance (varies by board size)
+
+For game-specific hyperparameters, troubleshooting common issues, and performance optimization, see the complete [Training Guide](docs/training_guide.md).
 
 ### Docker Services Available
 - **dev**: Development environment with Jupyter Lab (port 8888)
@@ -608,7 +638,8 @@ python scripts/tune_timeout.py --game gomoku --min-timeout 1 --max-timeout 10 --
 │   └── production.yaml    # Production-optimized settings
 ├── docs/                  # Documentation
 │   ├── operations.md      # Comprehensive operations runbook
-│   └── api.md             # Complete API reference documentation
+│   ├── api.md             # Complete API reference documentation
+│   └── training_guide.md  # Complete training guide with hyperparameters and troubleshooting
 ├── cpp_extensions/        # Performance-critical C++ code
 │   ├── mcts/             # Core MCTS tree operations
 │   ├── games/            # Game rule implementations, unified interface & Python bindings

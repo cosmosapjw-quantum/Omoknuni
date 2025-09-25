@@ -179,7 +179,8 @@
 - [x] **T047** [P] API documentation | Create docs/api.md with complete API reference, usage examples, parameter descriptions | ✅ Complete API documentation with 8 major API sections, comprehensive parameter descriptions, working code examples, performance targets, error handling guide, configuration documentation, hardware-specific optimization tips, 21 unit tests validating documentation accuracy and completeness | Dev | 2h
   *Completed: 2025-09-25, Author: Claude Code*
 
-- [ ] **T048** [P] Training guide | Create docs/training_guide.md with hyperparameter recommendations, game-specific settings, troubleshooting | Training guide enables users to achieve target performance, troubleshooting comprehensive | Dev | 3h
+- [x] **T048** [P] Training guide | Create docs/training_guide.md with hyperparameter recommendations, game-specific settings, troubleshooting | ✅ Comprehensive training guide with hyperparameter recommendations for all games, game-specific settings (Gomoku: 48h superhuman, Chess: 1 week strong amateur, Go: competitive performance), extensive troubleshooting section covering training instability, GPU OOM, performance optimization, expected performance metrics and validation commands | Dev | 3h
+  *Completed: 2025-09-25, Author: Claude Code*
 
 ---
 
