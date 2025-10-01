@@ -23,8 +23,12 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor, Future
 import json
+import yaml
 import numpy as np
 from datetime import datetime, timedelta
+
+# Import telemetry for logging configuration
+from src.telemetry.logger import configure_logging, LogLevel
 
 # Import training components
 from src.training.trainer import AlphaZeroTrainer
@@ -168,22 +172,10 @@ class TrainingLoop:
 
     def _initialize_components(self) -> None:
         """Initialize training components lazily."""
-        if self.self_play_generator is None:
-            self.logger.info("Initializing self-play generator...")
-            self.self_play_generator = SelfPlayGameGenerator(
-                game_type=self.config.game_type,
-                model_path=self.config.model_path,
-                mcts_simulations=self.config.mcts_simulations,
-                num_threads=8
-            )
-
-        if self.experience_buffer is None:
-            self.logger.info("Initializing experience buffer...")
-            self.experience_buffer = MemoryMappedExperienceBuffer(
-                buffer_path=Path(self.config.experience_buffer_path),
-                max_examples=self.config.max_experience_examples,
-                cache_size_mb=self.config.cache_size_mb
-            )
+        # Ensure model directory exists and create initial model if needed
+        model_path = Path(self.config.model_path)
+        model_dir = model_path.parent
+        model_dir.mkdir(parents=True, exist_ok=True)
 
         if self.trainer is None:
             self.logger.info("Initializing model trainer...")
@@ -193,6 +185,32 @@ class TrainingLoop:
                 weight_decay=self.config.weight_decay,
                 batch_size=self.config.batch_size,
                 use_mixed_precision=True
+            )
+
+            # If model doesn't exist, trainer creates a new one
+            # Save it immediately so self-play can use it
+            if not model_path.exists():
+                self.logger.info(f"Creating initial model at {self.config.model_path}")
+                self.trainer.save_checkpoint(str(model_path))
+
+        if self.self_play_generator is None:
+            self.logger.info("Initializing self-play generator...")
+            self.self_play_generator = SelfPlayGameGenerator(
+                game_type=self.config.game_type,
+                model_path=self.config.model_path,
+                mcts_simulations=self.config.mcts_simulations,
+                num_threads=self.config.mcts_threads,
+                batch_size_min=self.config.batch_size_min,
+                batch_size_max=self.config.batch_size_max,
+                inference_timeout_ms=self.config.inference_timeout_ms
+            )
+
+        if self.experience_buffer is None:
+            self.logger.info("Initializing experience buffer...")
+            self.experience_buffer = MemoryMappedExperienceBuffer(
+                buffer_path=Path(self.config.experience_buffer_path),
+                max_examples=self.config.max_experience_examples,
+                cache_size_mb=self.config.cache_size_mb
             )
 
     def run_training_loop(self) -> TrainingMetrics:
@@ -755,11 +773,70 @@ def create_training_loop(config_dict: Dict[str, Any]) -> TrainingLoop:
     """Factory function to create training loop from configuration.
 
     Args:
-        config_dict: Configuration parameters
+        config_dict: Configuration parameters (supports both flat and nested YAML structure)
 
     Returns:
         TrainingLoop: Configured training loop instance
     """
+    # Handle nested YAML config structure (mcts, neural_network, training, game, system)
+    if 'training' in config_dict and isinstance(config_dict['training'], dict):
+        # Extract values from nested structure
+        training = config_dict.get('training', {})
+        mcts = config_dict.get('mcts', {})
+        game = config_dict.get('game', {})
+        system = config_dict.get('system', {})
+
+        flat_config = {
+            # Game settings
+            'game_type': game.get('game_type', 'gomoku'),
+            'model_path': system.get('model_dir', 'models/latest.pth') + '/latest.pth',
+
+            # Self-play settings
+            'self_play_games_per_iteration': training.get('self_play_games_per_iteration', 50),
+            'parallel_self_play_games': training.get('parallel_self_play_games', 4),
+            'mcts_simulations': mcts.get('simulations', 800),
+            'mcts_threads': mcts.get('threads', 8),
+            'batch_size_min': mcts.get('batch_size_min', 32),
+            'batch_size_max': mcts.get('batch_size_max', 64),
+            'inference_timeout_ms': mcts.get('inference_timeout_ms', 3.0),
+
+            # Training settings
+            'training_steps_per_iteration': training.get('training_steps_per_iteration', 1000),
+            'batch_size': training.get('batch_size', 512),
+            'learning_rate': config_dict.get('neural_network', {}).get('learning_rate', 0.001),
+            'weight_decay': config_dict.get('neural_network', {}).get('weight_decay', 1e-4),
+
+            # Experience buffer
+            'experience_buffer_path': system.get('data_dir', 'training_data/experience_buffer'),
+            'max_experience_examples': training.get('experience_buffer_size', 1_000_000),
+            'cache_size_mb': 512,
+
+            # Checkpoints and evaluation
+            'checkpoint_frequency': training.get('save_frequency', 5),
+            'evaluation_frequency': training.get('evaluation_frequency', 10),
+            'evaluation_games': training.get('evaluation_games', 20),
+            'max_checkpoints_to_keep': training.get('max_checkpoints', 10),
+
+            # Training loop control
+            'max_iterations': 1000,
+            'target_training_time_hours': 48.0,
+            'early_stopping_patience': training.get('patience', 20),
+
+            # Validation
+            'validation_frequency': 5,
+            'validation_games': 10,
+
+            # Performance
+            'target_games_per_hour': 200.0,
+            'target_training_steps_per_minute': 60.0,
+
+            # Paths
+            'checkpoint_dir': system.get('checkpoint_dir', 'checkpoints'),
+            'log_dir': 'training_logs',
+            'evaluation_dir': system.get('results_dir', 'evaluation_results'),
+        }
+        config_dict = flat_config
+
     config = TrainingConfig(**config_dict)
     return TrainingLoop(config)
 
@@ -768,14 +845,17 @@ def run_training_session(config_path: str) -> TrainingMetrics:
     """Run complete training session from configuration file.
 
     Args:
-        config_path: Path to JSON configuration file
+        config_path: Path to YAML or JSON configuration file
 
     Returns:
         TrainingMetrics: Final training results
     """
     # Load configuration
     with open(config_path, 'r') as f:
-        config_dict = json.load(f)
+        if config_path.endswith('.yaml') or config_path.endswith('.yml'):
+            config_dict = yaml.safe_load(f)
+        else:
+            config_dict = json.load(f)
 
     # Create and run training loop
     training_loop = create_training_loop(config_dict)
@@ -795,11 +875,32 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Setup logging
+    # Configure telemetry logging - disable JSON formatting for console
+    configure_logging(
+        level=LogLevel.WARNING,
+        enable_console=True,
+        enable_file=False,
+        structured_format=False  # Disable JSON formatting for console
+    )
+
+    # Setup standard logging - only show WARNING and above for most loggers
     logging.basicConfig(
-        level=getattr(logging, args.log_level),
+        level=logging.WARNING,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
+
+    # Set specific loggers to INFO for training-related components only
+    logging.getLogger('__main__').setLevel(getattr(logging, args.log_level))
+    logging.getLogger('src.training.training_loop').setLevel(logging.INFO)
+    logging.getLogger('src.training.trainer').setLevel(logging.INFO)
+    logging.getLogger('src.training.self_play').setLevel(logging.INFO)
+    logging.getLogger('src.training.experience_buffer').setLevel(logging.INFO)
+
+    # Suppress verbose loggers completely
+    logging.getLogger('device_manager').setLevel(logging.CRITICAL)
+    logging.getLogger('InferenceWorker').setLevel(logging.CRITICAL)
+    logging.getLogger('src.core.search_coordinator').setLevel(logging.CRITICAL)
+    logging.getLogger('AlphaZeroMCTS').setLevel(logging.CRITICAL)
 
     # Run training
     try:

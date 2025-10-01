@@ -19,11 +19,12 @@ environment: "production"
 training_mode: "gomoku_48h_superhuman"
 
 # =============================================================================
-# MCTS Search Configuration - Optimized for Quality
+# MCTS Search Configuration - Optimized for Training Speed
 # =============================================================================
 mcts:
-  # Aggressive search for high-quality training data
-  simulations: 1600                    # High simulation count for strong play
+  # Balanced search for good training data at reasonable speed
+  # Note: Use higher simulations (1600) for evaluation/play, not training
+  simulations: 800                     # Balanced simulation count for training
   exploration_constant: 1.25           # Higher exploration during training
   virtual_loss: 1.0                    # Standard virtual loss magnitude
   threads: 10                          # Optimal for Ryzen 5900X (8-12 threads)
@@ -108,16 +109,16 @@ training:
   min_delta: 0.0001                   # Small improvement threshold
 
 # =============================================================================
-# Game Configuration - Freestyle Gomoku (Omok)
+# Game Configuration - Freestyle Gomoku
 # =============================================================================
 game:
   # Game selection
-  game_type: "gomoku"                # Gomoku/Omok game
+  game_type: "gomoku"                # Gomoku game
 
   # Freestyle Gomoku (no restrictions)
   board_size: 15                     # Standard 15x15 board
   win_condition: 5                   # 5-in-a-row to win
-  rule_variant: "freestyle"          # Pure freestyle (no renju restrictions)
+  rule_variant: "freestyle"          # Pure freestyle (no renju/omok restrictions)
 
   # Feature extraction - enhanced tactical features
   history_length: 8                  # 8 moves of history per player

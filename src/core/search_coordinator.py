@@ -311,7 +311,7 @@ class SearchCoordinator:
             def inference_fn(game_state):
                 return self.request_inference(game_state, thread_id)
 
-            mcts = AlphaZeroMCTS(inference_fn)
+            mcts = AlphaZeroMCTS(inference_fn, num_threads=self.max_threads)
 
             # Run MCTS search
             visit_counts = mcts.search(

@@ -70,7 +70,10 @@ class SelfPlayGameGenerator(SelfPlayGenerator):
                  mcts_simulations: int = 800,
                  temperature_schedule: List[Tuple[int, float]] = None,
                  add_dirichlet_noise: bool = True,
-                 num_threads: int = 8):
+                 num_threads: int = 8,
+                 batch_size_min: int = 32,
+                 batch_size_max: int = 64,
+                 inference_timeout_ms: float = 3.0):
         """Initialize self-play generator.
 
         Args:
@@ -95,6 +98,11 @@ class SelfPlayGameGenerator(SelfPlayGenerator):
 
         self.model_path = model_path
         self.logger = logging.getLogger(__name__)
+
+        # Store inference config parameters
+        self.batch_size_min = batch_size_min
+        self.batch_size_max = batch_size_max
+        self.inference_timeout_ms = inference_timeout_ms
 
         self._game_state_kwargs: Dict[str, Any] = {}
 
@@ -160,8 +168,8 @@ class SelfPlayGameGenerator(SelfPlayGenerator):
                 from src.neural.inference_worker import GPUInferenceWorker
                 self.inference_worker = GPUInferenceWorker(
                     model_path=self.model_path,
-                    batch_size=64,  # Optimal for RTX 3060 Ti
-                    timeout_ms=3.0
+                    batch_size=self.batch_size_max,
+                    timeout_ms=self.inference_timeout_ms
                 )
                 self.inference_worker.start()
             else:
@@ -217,9 +225,21 @@ class SelfPlayGameGenerator(SelfPlayGenerator):
                     add_noise=self.config.add_dirichlet_noise and move_count < 30
                 )
 
-                # Submit search request
+                # Submit search request with dynamic timeout based on simulations
+                # Rule of thumb: ~0.05s per simulation with GPU batching
+                # Add 50% buffer for queueing with parallel games
+                timeout_per_move = max(60.0, self.config.mcts_simulations * 0.05 * 1.5)
+
+                if move_count == 0:
+                    self.logger.info(f"Game {game_id}: using {self.config.mcts_simulations} simulations, timeout={timeout_per_move:.1f}s per move")
+
+                move_start = time.time()
                 search_future = self.search_coordinator.submit_search(search_request)
-                search_result = search_future.result(timeout=30.0)  # 30s timeout per move
+                search_result = search_future.result(timeout=timeout_per_move)
+                move_time = time.time() - move_start
+
+                if move_count % 10 == 0:
+                    self.logger.debug(f"Game {game_id}: Move {move_count} took {move_time:.2f}s")
 
                 # Extract training data (if past warmup moves)
                 if move_count >= self.config.save_positions_from_move:
@@ -281,7 +301,9 @@ class SelfPlayGameGenerator(SelfPlayGenerator):
             return game_result
 
         except Exception as e:
-            self.logger.error(f"Error generating game {game_id}: {e}")
+            import traceback
+            self.logger.error(f"Error generating game {game_id}: {type(e).__name__}: {e}")
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
             raise
 
     def generate_games(self,
@@ -312,7 +334,9 @@ class SelfPlayGameGenerator(SelfPlayGenerator):
                     game_result = future.result()
                     yield game_result
                 except Exception as e:
-                    self.logger.error(f"Failed to generate game: {e}")
+                    import traceback
+                    self.logger.error(f"Failed to generate game: {type(e).__name__}: {e}")
+                    self.logger.error(f"Traceback: {traceback.format_exc()}")
                     continue
 
     def update_model(self, model_path: str) -> None:

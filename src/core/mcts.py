@@ -21,7 +21,7 @@ from typing import List, Dict, Any, Optional, Tuple, Callable
 import numpy as np
 import logging
 import time
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Lock
 
 try:
@@ -89,7 +89,8 @@ class AlphaZeroMCTS(MCTSEngine):
                  max_tree_size: int = 10_000_000,  # 10M nodes (~270MB)
                  virtual_loss_magnitude: float = 1.0,
                  enable_virtual_loss: bool = True,
-                 enable_value_clipping: bool = True):
+                 enable_value_clipping: bool = True,
+                 num_threads: int = 8):
         """Initialize high-performance MCTS engine.
 
         Args:
@@ -138,11 +139,15 @@ class AlphaZeroMCTS(MCTSEngine):
         self._simulations_completed = 0
         self._total_search_time = 0.0
 
+        # Parallel search configuration
+        self.num_threads = num_threads
+
         self.logger.info(f"AlphaZero MCTS initialized with C++ backend")
         self.logger.info(f"  Tree capacity: {max_tree_size:,} nodes (~{max_tree_size * 32 // 1024 // 1024}MB)")
         self.logger.info(f"  AVX2 support: {mcts_py.PUCTSelector.is_avx2_supported()}")
         self.logger.info(f"  PUCT constant: {c_puct}")
         self.logger.info(f"  Virtual loss: {virtual_loss_magnitude} (enabled: {enable_virtual_loss})")
+        self.logger.info(f"  Parallel threads: {num_threads}")
 
     def search(self, root_state: IGameState, simulations: int, add_noise: bool = False) -> Dict[int, float]:
         """Run high-performance MCTS search with C++ backend.
@@ -177,15 +182,34 @@ class AlphaZeroMCTS(MCTSEngine):
         if add_noise and self.tree.get_num_children(self.root_index) > 0:
             self._add_dirichlet_noise(self.root_index)
 
-        # Run MCTS simulations with C++ backend
-        successful_simulations = 0
-        for sim in range(simulations):
-            if self.tree.get_node_count() >= self.tree.get_max_nodes():
-                self.logger.warning(f"Tree size limit reached: {self.tree.get_max_nodes():,}")
-                break
+        # Run MCTS simulations in parallel using ThreadPoolExecutor
+        # The C++ backend is thread-safe with atomic operations
+        def run_sim_batch(batch_size):
+            """Run a batch of simulations in parallel."""
+            completed = 0
+            for _ in range(batch_size):
+                if self.tree.get_node_count() >= self.tree.get_max_nodes():
+                    break
+                if self._run_simulation():
+                    completed += 1
+            return completed
 
-            if self._run_simulation():
-                successful_simulations += 1
+        successful_simulations = 0
+        with ThreadPoolExecutor(max_workers=self.num_threads, thread_name_prefix="mcts") as executor:
+            # Distribute simulations across threads
+            sims_per_thread = simulations // self.num_threads
+            remainder = simulations % self.num_threads
+
+            futures = []
+            for i in range(self.num_threads):
+                # Give remainder simulations to first threads
+                batch_size = sims_per_thread + (1 if i < remainder else 0)
+                if batch_size > 0:
+                    futures.append(executor.submit(run_sim_batch, batch_size))
+
+            # Collect results
+            for future in futures:
+                successful_simulations += future.result()
 
         # Collect visit counts for policy
         visit_counts = {}

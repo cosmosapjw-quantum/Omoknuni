@@ -1,0 +1,41 @@
+{
+  "current_iteration": 2,
+  "metrics": {
+    "iteration": 2,
+    "total_games_generated": 0,
+    "total_training_steps": 0,
+    "total_training_examples": 0,
+    "evaluation_history": [],
+    "best_evaluation_win_rate": 0.0,
+    "total_training_time_hours": 0.00041786670684814455
+  },
+  "config": {
+    "game_type": "gomoku",
+    "model_path": "checkpoints/gomoku_48h/latest.pth",
+    "self_play_games_per_iteration": 200,
+    "parallel_self_play_games": 8,
+    "mcts_simulations": 1600,
+    "training_steps_per_iteration": 2000,
+    "batch_size": 512,
+    "learning_rate": 0.002,
+    "weight_decay": 0.0001,
+    "experience_buffer_path": "training_data/gomoku_48h",
+    "max_experience_examples": 2000000,
+    "cache_size_mb": 512,
+    "checkpoint_frequency": 2,
+    "evaluation_frequency": 5,
+    "evaluation_games": 100,
+    "max_checkpoints_to_keep": 25,
+    "max_iterations": 1000,
+    "target_training_time_hours": 48.0,
+    "early_stopping_patience": 100,
+    "validation_frequency": 5,
+    "validation_games": 10,
+    "target_games_per_hour": 200.0,
+    "target_training_steps_per_minute": 60.0,
+    "checkpoint_dir": "checkpoints/gomoku_48h",
+    "log_dir": "training_logs",
+    "evaluation_dir": "results/gomoku_48h"
+  },
+  "timestamp": "2025-10-01T15:37:34.920672"
+}
