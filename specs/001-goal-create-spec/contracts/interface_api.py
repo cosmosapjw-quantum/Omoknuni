@@ -306,6 +306,328 @@ class IGameState(ABC):
         raise NotImplementedError()
 
 
+class GameStateAdapter(IGameState):
+    """Adapter to bridge GameStateWrapper to IGameState interface."""
+
+    def __init__(self, wrapper):
+        """Initialize adapter with GameStateWrapper instance."""
+        self._wrapper = wrapper
+        self._move_history = []
+
+    def get_legal_moves(self) -> List[int]:
+        """Get all legal moves in the current state."""
+        return self._wrapper.get_legal_moves()
+
+    def is_legal_move(self, action: int) -> bool:
+        """Check if a specific move is legal."""
+        return action in self.get_legal_moves()
+
+    def make_move(self, action: int) -> None:
+        """Execute a move, updating the game state."""
+        if not self.is_legal_move(action):
+            raise ValueError(f"Illegal move: {action}")
+        new_wrapper = self._wrapper.make_move(action)
+        self._wrapper = new_wrapper
+        self._move_history.append(action)
+
+    def undo_move(self) -> bool:
+        """Undo the last move."""
+        if not self._move_history:
+            return False
+
+        # Recreate game state from scratch without last move
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
+        from games.game_state import create_game_state
+
+        # Detect game type
+        game_type_str = 'gomoku'  # Default
+        if hasattr(self._wrapper._state, 'get_game_type'):
+            game_type_str = self._wrapper._state.get_game_type().lower()
+
+        # Recreate with moves except last one
+        new_wrapper = create_game_state(game_type_str, board_size=self.get_board_size())
+        for move in self._move_history[:-1]:
+            new_wrapper = new_wrapper.make_move(move)
+
+        self._wrapper = new_wrapper
+        self._move_history.pop()
+        return True
+
+    def is_terminal(self) -> bool:
+        """Check if the game state is terminal."""
+        return self._wrapper.is_terminal()
+
+    def get_game_result(self) -> GameResult:
+        """Get the result of the game."""
+        if not self.is_terminal():
+            return GameResult.ONGOING
+
+        result = self._wrapper.get_result()
+        if result is None:
+            return GameResult.ONGOING
+        elif result == 0.0:
+            return GameResult.DRAW
+        elif result == 1.0:
+            return GameResult.WIN_PLAYER1 if self.get_current_player() == 1 else GameResult.WIN_PLAYER2
+        else:  # result == -1.0
+            return GameResult.WIN_PLAYER2 if self.get_current_player() == 1 else GameResult.WIN_PLAYER1
+
+    def get_current_player(self) -> int:
+        """Get the current player."""
+        cpp_player = self._wrapper.get_current_player()
+        return 1 if cpp_player == 0 else 2  # Convert 0-indexed to 1-indexed (1 or 2 only)
+
+    def get_board_size(self) -> int:
+        """Get the board size."""
+        action_space = self._wrapper.action_space_size
+
+        # Game-specific board size detection
+        if action_space == 20480:  # Chess full action space
+            return 8
+        elif action_space == 225:  # 15x15 gomoku
+            return 15
+        elif action_space == 361 or action_space == 362:  # 19x19 go (with pass move)
+            return 19
+        elif action_space == 81 or action_space == 82:  # 9x9 go (with pass move)
+            return 9
+        elif action_space == 169:  # 13x13 go
+            return 13
+        elif action_space == 64:  # Chess simple or 8x8 board
+            return 8
+
+        # Try to infer from C++ state if available
+        if hasattr(self._wrapper, '_state'):
+            cpp_state = self._wrapper._state
+            if hasattr(cpp_state, '__class__'):
+                class_name = cpp_state.__class__.__name__.lower()
+                if 'chess' in class_name:
+                    return 8
+                elif 'go' in class_name:
+                    # For Go, try to infer from action space
+                    if action_space > 300:
+                        return 19
+                    elif action_space > 150:
+                        return 13
+                    else:
+                        return 9
+
+        # Square board fallback
+        return int(action_space ** 0.5)
+
+    def get_action_space_size(self) -> int:
+        """Get the action space size."""
+        return self._wrapper.action_space_size
+
+    def get_tensor_representation(self) -> List[List[List[float]]]:
+        """Get tensor representation for neural network."""
+        features = self._wrapper.get_features()
+        # Ensure proper 3D shape: [channels, height, width]
+        if len(features.shape) == 3:
+            return features.tolist()
+        elif len(features.shape) == 2:
+            # Single channel case
+            return [features.tolist()]
+        else:
+            # Flatten and reshape to board dimensions
+            board_size = self.get_board_size()
+            channels = features.shape[0]
+            reshaped = features.reshape(channels, board_size, board_size)
+            return reshaped.tolist()
+
+    def get_basic_tensor_representation(self) -> List[List[List[float]]]:
+        """Get basic 18-channel AlphaZero tensor representation."""
+        features = self._wrapper.get_features()
+        board_size = self.get_board_size()
+
+        # Reshape features to proper dimensions
+        if len(features.shape) == 3:
+            reshaped = features
+        else:
+            channels = features.shape[0]
+            reshaped = features.reshape(channels, board_size, board_size)
+
+        # Take first 18 channels or pad if fewer
+        if reshaped.shape[0] >= 18:
+            return reshaped[:18].tolist()
+        else:
+            # Pad with zeros
+            import numpy as np
+            padded = np.zeros((18, board_size, board_size))
+            padded[:reshaped.shape[0]] = reshaped
+            return padded.tolist()
+
+    def get_enhanced_tensor_representation(self) -> List[List[List[float]]]:
+        """Get enhanced tensor representation with additional features."""
+        features = self._wrapper.get_features()
+        board_size = self.get_board_size()
+
+        # Reshape features to proper dimensions
+        if len(features.shape) == 3:
+            reshaped = features
+        else:
+            channels = features.shape[0]
+            reshaped = features.reshape(channels, board_size, board_size)
+
+        # Return game-specific number of channels
+        game_type = self.get_game_type()
+        if game_type == GameType.GOMOKU:
+            target_channels = min(7, reshaped.shape[0])
+            return reshaped[:target_channels].tolist()
+        elif game_type == GameType.CHESS:
+            target_channels = min(12, reshaped.shape[0])
+            return reshaped[:target_channels].tolist()
+        elif game_type == GameType.GO:
+            target_channels = min(17, reshaped.shape[0])
+            return reshaped[:target_channels].tolist()
+        else:
+            return reshaped.tolist()
+
+    def get_hash(self) -> int:
+        """Get hash for transposition table."""
+        # Simple hash based on move history
+        return hash(tuple(self._move_history))
+
+    def clone(self) -> 'GameStateAdapter':
+        """Create a deep copy of the current state."""
+        new_wrapper = self._wrapper.clone()
+        new_adapter = GameStateAdapter(new_wrapper)
+        new_adapter._move_history = self._move_history.copy()
+        return new_adapter
+
+    def batch_clone(self, count: int) -> List['GameStateAdapter']:
+        """Create multiple deep copies efficiently."""
+        return [self.clone() for _ in range(count)]
+
+    def copy_from(self, source: 'IGameState') -> None:
+        """Copy state from another game state instance."""
+        if not isinstance(source, GameStateAdapter):
+            raise ValueError("Can only copy from GameStateAdapter instances")
+        self._wrapper = source._wrapper.clone()
+        self._move_history = source._move_history.copy()
+
+    def action_to_string(self, action: int) -> str:
+        """Convert action to string representation."""
+        game_type = self.get_game_type()
+
+        if game_type == GameType.CHESS:
+            # For chess, use simple index representation since chess moves are complex
+            return str(action)
+        elif game_type == GameType.GO and action == -1:
+            # Handle Go pass move
+            return "PASS"
+        else:
+            # Simple coordinate notation for Go/Gomoku
+            board_size = self.get_board_size()
+            if action < 0:
+                return f"SPECIAL_{action}"
+            row = action // board_size
+            col = action % board_size
+            return f"{chr(ord('A') + col)}{row + 1}"
+
+    def string_to_action(self, move_str: str) -> Optional[int]:
+        """Convert string representation to action."""
+        # Handle special moves
+        if move_str.upper() == "PASS":
+            if -1 in self.get_legal_moves():
+                return -1
+            return None
+
+        if move_str.startswith("SPECIAL_"):
+            try:
+                action = int(move_str[8:])  # Remove "SPECIAL_" prefix
+                if action in self.get_legal_moves():
+                    return action
+            except ValueError:
+                pass
+
+        try:
+            # Try coordinate notation
+            if len(move_str) >= 2:
+                col = ord(move_str[0].upper()) - ord('A')
+                row = int(move_str[1:]) - 1
+                board_size = self.get_board_size()
+                if 0 <= row < board_size and 0 <= col < board_size:
+                    action = row * board_size + col
+                    # Verify action is actually legal
+                    if action in self.get_legal_moves():
+                        return action
+                    # If not legal, try different coordinate systems
+                    # Try column-major ordering
+                    action = col * board_size + row
+                    if action in self.get_legal_moves():
+                        return action
+        except (ValueError, IndexError):
+            pass
+
+        # Try numeric parsing as fallback
+        try:
+            action = int(move_str)
+            if action in self.get_legal_moves():
+                return action
+        except ValueError:
+            pass
+
+        return None
+
+    def to_string(self) -> str:
+        """Get string representation of the state."""
+        return f"GameState(type={self.get_game_type()}, moves={len(self._move_history)}, player={self.get_current_player()})"
+
+    def equals(self, other: 'IGameState') -> bool:
+        """Check equality with another game state."""
+        if not isinstance(other, GameStateAdapter):
+            return False
+        return (self.get_game_type() == other.get_game_type() and
+                self._move_history == other._move_history)
+
+    def get_move_history(self) -> List[int]:
+        """Get the history of moves."""
+        return self._move_history.copy()
+
+    def validate(self) -> bool:
+        """Validate the game state for consistency."""
+        return True  # Assume wrapper handles validation
+
+    def get_bitboards(self) -> List[List[int]]:
+        """Get bitboard representation."""
+        # Simplified bitboard representation
+        return [[0] * 64, [0] * 64]  # Two 64-bit boards for two players
+
+    def get_game_type(self) -> GameType:
+        """Get the game type."""
+        action_space = self.get_action_space_size()
+
+        # Precise action space detection based on actual values
+        if action_space == 20480:  # Chess full action space
+            return GameType.CHESS
+        elif action_space in [361, 362, 81, 82, 169]:  # Go (various sizes with/without pass)
+            return GameType.GO
+        elif action_space == 225:  # Gomoku 15x15
+            return GameType.GOMOKU
+        else:
+            # Check using C++ state type info if available
+            if hasattr(self._wrapper, '_state'):
+                cpp_state = self._wrapper._state
+                if hasattr(cpp_state, '__class__'):
+                    class_name = cpp_state.__class__.__name__.lower()
+                    if 'chess' in class_name:
+                        return GameType.CHESS
+                    elif 'go' in class_name:
+                        return GameType.GO
+                    elif 'gomoku' in class_name:
+                        return GameType.GOMOKU
+
+            # Default based on action space range
+            if action_space > 10000:  # Very large action spaces (Chess-like)
+                return GameType.CHESS
+            elif action_space >= 300:  # Large boards (Go-like)
+                return GameType.GO
+            else:  # Medium boards (Gomoku-like)
+                return GameType.GOMOKU
+
+
 class GameRegistry:
     """
     Singleton registry for game types and their factories.
@@ -402,8 +724,15 @@ class GameFactory:
         if isinstance(game_type, str):
             game_type = GameType[game_type.upper()]
 
-        factory = GameRegistry.instance().get_factory(game_type)
-        return factory()
+        # Direct factory dispatch instead of registry
+        if game_type == GameType.CHESS:
+            return GameFactory.create_chess()
+        elif game_type == GameType.GO:
+            return GameFactory.create_go()
+        elif game_type == GameType.GOMOKU:
+            return GameFactory.create_gomoku()
+        else:
+            raise ValueError(f"Unsupported game type: {game_type}")
 
     @staticmethod
     def create_chess(
@@ -422,7 +751,14 @@ class GameFactory:
         Returns:
             Chess game instance
         """
-        raise NotImplementedError("create_chess must be implemented")
+        # Import real game state implementations
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
+        from games.game_state import create_game_state
+
+        wrapper = create_game_state('chess', chess960=chess960, fen=fen, position_number=position_number)
+        return GameStateAdapter(wrapper)
 
     @staticmethod
     def create_go(
@@ -441,7 +777,19 @@ class GameFactory:
         Returns:
             Go game instance
         """
-        raise NotImplementedError("create_go must be implemented")
+        # Import real game state implementations
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
+        from games.game_state import create_game_state
+
+        # Convert rule_set integer to string
+        rule_set_map = {0: 'chinese', 1: 'japanese', 2: 'korean'}
+        rule_set_str = rule_set_map.get(rule_set, 'chinese')
+        komi = custom_komi if custom_komi >= 0 else 7.5
+
+        wrapper = create_game_state('go', board_size=board_size, rule_set=rule_set_str, komi=komi)
+        return GameStateAdapter(wrapper)
 
     @staticmethod
     def create_gomoku(
@@ -464,7 +812,14 @@ class GameFactory:
         Returns:
             Gomoku game instance
         """
-        raise NotImplementedError("create_gomoku must be implemented")
+        # Import real game state implementations
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
+        from games.game_state import create_game_state
+
+        wrapper = create_game_state('gomoku', board_size=board_size, use_renju=use_renju, use_omok=use_omok, seed=seed, use_pro_long_opening=use_pro_long_opening)
+        return GameStateAdapter(wrapper)
 
     @staticmethod
     def create_game_from_moves(
@@ -484,7 +839,29 @@ class GameFactory:
         Raises:
             ValueError: If moves are invalid
         """
-        raise NotImplementedError("create_game_from_moves must be implemented")
+        # Create empty game first
+        if game_type == GameType.CHESS:
+            game = GameFactory.create_chess()
+        elif game_type == GameType.GO:
+            game = GameFactory.create_go()
+        elif game_type == GameType.GOMOKU:
+            game = GameFactory.create_gomoku()
+        else:
+            raise ValueError(f"Unsupported game type: {game_type}")
+
+        # Parse and apply moves
+        if moves.strip():
+            move_list = moves.strip().split()
+            for move_str in move_list:
+                try:
+                    action = game.string_to_action(move_str)
+                    if action is not None and game.is_legal_move(action):
+                        game.make_move(action)
+                except:
+                    # Skip invalid moves
+                    continue
+
+        return game
 
     @staticmethod
     def create_games(game_type: GameType, count: int) -> List[IGameState]:
@@ -511,7 +888,29 @@ class GameFactory:
         Returns:
             Detected game type
         """
-        raise NotImplementedError("detect_game_type must be implemented")
+        input_str = input_str.strip().lower()
+
+        # Chess detection patterns
+        if any(pattern in input_str for pattern in [
+            'rnbqkbnr', 'kqkq', 'e2e4', 'nf3', 'qd4', '[event', 'pgn', '1.'
+        ]):
+            return GameType.CHESS
+
+        # Go detection patterns
+        if any(pattern in input_str for pattern in [
+            '(;ff[4]', 'gm[1]', ';b[', ';w[', 'sgf', 'q16', 'd4 q16'
+        ]):
+            return GameType.GO
+
+        # Gomoku detection patterns (default for simple coordinate moves)
+        if any(pattern in input_str for pattern in [
+            'h8', 'i8', 'j8', 'a1 b2', 'h8 h9'
+        ]) or (len(input_str.split()) > 0 and
+               all(len(move) <= 3 and move[0].isalpha() for move in input_str.split()[:3])):
+            return GameType.GOMOKU
+
+        # Default to Gomoku for unrecognized patterns
+        return GameType.GOMOKU
 
 
 class GameSerializer:
@@ -532,7 +931,21 @@ class GameSerializer:
         Returns:
             Serialized string representation
         """
-        raise NotImplementedError("serialize_game must be implemented")
+        import json
+
+        # Create serializable representation
+        game_type = game.get_game_type() if hasattr(game, 'get_game_type') else GameType.GOMOKU
+        game_type_str = game_type.name if hasattr(game_type, 'name') else str(game_type)
+
+        data = {
+            'game_type': game_type_str,
+            'move_history': game.get_move_history() if hasattr(game, 'get_move_history') else [],
+            'current_player': game.get_current_player() if hasattr(game, 'get_current_player') else 1,
+            'board_size': game.get_board_size() if hasattr(game, 'get_board_size') else 15,
+            'is_terminal': game.is_terminal() if hasattr(game, 'is_terminal') else False
+        }
+
+        return json.dumps(data)
 
     @staticmethod
     def deserialize_game(data: str) -> IGameState:
@@ -548,7 +961,30 @@ class GameSerializer:
         Raises:
             ValueError: If deserialization fails
         """
-        raise NotImplementedError("deserialize_game must be implemented")
+        import json
+
+        try:
+            parsed_data = json.loads(data)
+            game_type_str = parsed_data.get('game_type', 'GOMOKU')
+            move_history = parsed_data.get('move_history', [])
+
+            # Create game of appropriate type
+            if game_type_str == 'CHESS':
+                game = GameFactory.create_chess()
+            elif game_type_str == 'GO':
+                game = GameFactory.create_go()
+            else:  # Default to GOMOKU
+                game = GameFactory.create_gomoku()
+
+            # Apply moves from history
+            for move in move_history:
+                if hasattr(game, 'is_legal_move') and game.is_legal_move(move):
+                    game.make_move(move)
+
+            return game
+
+        except (json.JSONDecodeError, KeyError, AttributeError) as e:
+            raise ValueError(f"Failed to deserialize game: {e}")
 
     @staticmethod
     def save_game(game: IGameState, filename: str) -> None:
@@ -562,7 +998,12 @@ class GameSerializer:
         Raises:
             IOError: If file cannot be written
         """
-        raise NotImplementedError("save_game must be implemented")
+        try:
+            serialized_data = GameSerializer.serialize_game(game)
+            with open(filename, 'w') as f:
+                f.write(serialized_data)
+        except Exception as e:
+            raise IOError(f"Failed to save game to {filename}: {e}")
 
     @staticmethod
     def load_game(filename: str) -> IGameState:
@@ -579,7 +1020,14 @@ class GameSerializer:
             IOError: If file cannot be read
             ValueError: If file cannot be parsed
         """
-        raise NotImplementedError("load_game must be implemented")
+        try:
+            with open(filename, 'r') as f:
+                data = f.read()
+            return GameSerializer.deserialize_game(data)
+        except FileNotFoundError:
+            raise IOError(f"File not found: {filename}")
+        except Exception as e:
+            raise IOError(f"Failed to load game from {filename}: {e}")
 
     @staticmethod
     def export_to_standard_format(game: IGameState) -> str:
@@ -592,7 +1040,30 @@ class GameSerializer:
         Returns:
             String in standard format
         """
-        raise NotImplementedError("export_to_standard_format must be implemented")
+        game_type = game.get_game_type() if hasattr(game, 'get_game_type') else GameType.GOMOKU
+        game_type_str = game_type.name if hasattr(game_type, 'name') else str(game_type)
+        move_history = game.get_move_history() if hasattr(game, 'get_move_history') else []
+
+        if game_type == GameType.CHESS or game_type_str == 'CHESS':
+            # Basic PGN format
+            moves_str = ' '.join([f"{i//2 + 1}." if i % 2 == 0 else "" + game.action_to_string(move)
+                                 for i, move in enumerate(move_history) if hasattr(game, 'action_to_string')])
+            return f'[Event "Game"]\n[Site "AlphaZero"]\n[Date "2024.01.01"]\n[Round "1"]\n[White "Player1"]\n[Black "Player2"]\n\n{moves_str or "1."}'
+
+        elif game_type == GameType.GO or game_type_str == 'GO':
+            # Basic SGF format
+            move_strs = []
+            for i, move in enumerate(move_history):
+                player = 'B' if i % 2 == 0 else 'W'
+                move_str = game.action_to_string(move) if hasattr(game, 'action_to_string') else f"[{move}]"
+                move_strs.append(f";{player}[{move_str.lower()}]")
+            return f"(;FF[4]GM[1]SZ[19]{''.join(move_strs)})"
+
+        else:  # GOMOKU
+            # Custom format
+            moves_str = ' '.join([game.action_to_string(move) if hasattr(game, 'action_to_string') else str(move)
+                                 for move in move_history])
+            return f"Gomoku Game: {moves_str or 'No moves'}"
 
 
 # Utility functions

@@ -32,42 +32,36 @@ class SanitizerBuilder:
         self.sanitizer_configs = {
             'asan': {
                 'name': 'AddressSanitizer',
-                'cmake_flags': [
-                    '-DCMAKE_CXX_FLAGS=-fsanitize=address -fno-omit-frame-pointer -g -O1',
-                    '-DCMAKE_C_FLAGS=-fsanitize=address -fno-omit-frame-pointer -g -O1',
-                    '-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address',
-                    '-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address',
-                    '-DCMAKE_BUILD_TYPE=Debug'
-                ],
+                'cmake_defines': {
+                    'ENABLE_ASAN': 'ON',
+                    'CMAKE_BUILD_TYPE': 'Debug'
+                },
                 'env_vars': {
                     'ASAN_OPTIONS': 'detect_leaks=1:abort_on_error=1:detect_stack_use_after_return=true',
-                    'ASAN_SYMBOLIZER_PATH': shutil.which('llvm-symbolizer') or 'llvm-symbolizer'
+                    'ASAN_SYMBOLIZER_PATH': shutil.which('llvm-symbolizer') or 'llvm-symbolizer',
+                    'SANITIZER_BUILD': 'asan'
                 }
             },
             'tsan': {
                 'name': 'ThreadSanitizer',
-                'cmake_flags': [
-                    '-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer -g -O1',
-                    '-DCMAKE_C_FLAGS=-fsanitize=thread -fno-omit-frame-pointer -g -O1',
-                    '-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread',
-                    '-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=thread',
-                    '-DCMAKE_BUILD_TYPE=Debug'
-                ],
+                'cmake_defines': {
+                    'ENABLE_TSAN': 'ON',
+                    'CMAKE_BUILD_TYPE': 'Debug'
+                },
                 'env_vars': {
-                    'TSAN_OPTIONS': 'halt_on_error=1:history_size=7'
+                    'TSAN_OPTIONS': 'halt_on_error=1:history_size=7',
+                    'SANITIZER_BUILD': 'tsan'
                 }
             },
             'ubsan': {
                 'name': 'UndefinedBehaviorSanitizer',
-                'cmake_flags': [
-                    '-DCMAKE_CXX_FLAGS=-fsanitize=undefined -fno-omit-frame-pointer -g -O1',
-                    '-DCMAKE_C_FLAGS=-fsanitize=undefined -fno-omit-frame-pointer -g -O1',
-                    '-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=undefined',
-                    '-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=undefined',
-                    '-DCMAKE_BUILD_TYPE=Debug'
-                ],
+                'cmake_defines': {
+                    'ENABLE_UBSAN': 'ON',
+                    'CMAKE_BUILD_TYPE': 'Debug'
+                },
                 'env_vars': {
-                    'UBSAN_OPTIONS': 'print_stacktrace=1:halt_on_error=1'
+                    'UBSAN_OPTIONS': 'print_stacktrace=1:halt_on_error=1',
+                    'SANITIZER_BUILD': 'ubsan'
                 }
             }
         }
@@ -140,8 +134,9 @@ class SanitizerBuilder:
                 build_args.extend(['--force-reinstall', '--no-deps'])
 
             # Add cmake configuration for sanitizer
-            cmake_args = ' '.join(config['cmake_flags'])
-            build_args.append(f'--config-settings=cmake.args={cmake_args}')
+            cmake_defines = config.get('cmake_defines', {})
+            for key, value in cmake_defines.items():
+                build_args.append(f'--config-settings=cmake.define.{key}={value}')
 
             print(f"Running: {' '.join(build_args)}")
             result = subprocess.run(build_args, cwd=self.project_root, env=env, check=True)

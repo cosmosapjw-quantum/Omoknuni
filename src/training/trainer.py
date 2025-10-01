@@ -504,6 +504,15 @@ class AlphaZeroTrainer(ModelTrainer):
                 state_dict = model if isinstance(model, dict) else model.state_dict()
                 game_type = self._detect_game_type_from_state_dict(state_dict)
                 model = create_model_for_game(game_type)
+
+                # Handle PolicyHead lazy initialization
+                if 'policy_head.fc.weight' in state_dict:
+                    # PolicyHead is already initialized in saved model - initialize ours too
+                    input_shape = self._get_input_shape_for_game(game_type)
+                    dummy_input = torch.zeros(1, *input_shape)
+                    with torch.no_grad():
+                        model(dummy_input)  # Force initialization
+
                 model.load_state_dict(state_dict)
                 logger.info(f"Loaded model for game type: {game_type}")
                 return model
@@ -534,6 +543,17 @@ class AlphaZeroTrainer(ModelTrainer):
 
         logger.warning("Could not detect game type from state dict, defaulting to gomoku")
         return 'gomoku'
+
+    def _get_input_shape_for_game(self, game_type: str) -> Tuple[int, int, int]:
+        """Get input shape for game type."""
+        if game_type == "gomoku":
+            return (36, 15, 15)
+        elif game_type == "chess":
+            return (30, 8, 8)
+        elif game_type == "go":
+            return (25, 19, 19)
+        else:
+            return (36, 15, 15)  # Default to Gomoku
 
     def _count_parameters(self) -> int:
         """Count trainable parameters in model."""

@@ -115,7 +115,7 @@ except ImportError as e:
     class MockGameState:
         def __init__(self):
             pass
-        def get_tensor_representation(self):
+        def get_enhanced_tensor_representation(self):
             return np.zeros((36, 15, 15), dtype=np.float32)
     GomokuState = ChessState = GoState = MockGameState
     class GameType:
@@ -573,7 +573,7 @@ class TimeoutOptimizer:
                 try:
                     # Generate position tensor
                     if GAME_EXTENSIONS_AVAILABLE:
-                        tensor = game_state.get_tensor_representation()
+                        tensor = game_state.get_enhanced_tensor_representation()
                     else:
                         tensor = np.random.randn(36, 15, 15).astype(np.float32)
 

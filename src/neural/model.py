@@ -159,29 +159,67 @@ class PolicyHead(nn.Module):
     Args:
         input_channels: Number of input channels from backbone
         num_actions: Number of possible actions (board size squared)
+        board_size: Optional board size tuple (height, width). If None, inferred from num_actions
     """
 
-    def __init__(self, input_channels: int, num_actions: int):
+    def __init__(self, input_channels: int, num_actions: int, board_size: Optional[Tuple[int, int]] = None):
         super().__init__()
         self.input_channels = input_channels
         self.num_actions = num_actions
+
+        # Infer board size from num_actions if not provided
+        if board_size is None:
+            board_size = self._infer_board_size(num_actions)
+        self.board_height, self.board_width = board_size
 
         # 1x1 convolution to reduce channels
         self.conv = nn.Conv2d(input_channels, 2, kernel_size=1, bias=False)
         self.bn = nn.BatchNorm2d(2)
 
-        # Linear layer for final policy logits
-        # Note: Input size will be computed dynamically based on board size
-        self.fc = None  # Will be initialized on first forward pass
+        # Linear layer for final policy logits - computed lazily on first forward pass
+        self.fc = None
 
-        # Initialize weights
-        self._init_weights()
+        # Initialize weights for conv and bn layers
+        self._init_conv_weights()
 
-    def _init_weights(self):
-        """Initialize weights."""
+    def _infer_board_size(self, num_actions: int) -> Tuple[int, int]:
+        """Infer board size from number of actions.
+
+        Args:
+            num_actions: Number of possible actions
+
+        Returns:
+            Tuple of (height, width)
+        """
+        # Handle common game types
+        if num_actions == 225:  # Gomoku 15x15
+            return (15, 15)
+        elif num_actions == 361:  # Go 19x19
+            return (19, 19)
+        elif num_actions == 64:  # Chess board positions
+            return (8, 8)
+        elif num_actions in (4096, 20480):  # Chess with move encodings
+            return (8, 8)  # Still use 8x8 board for spatial features
+        else:
+            # Default: assume square board
+            board_size = int(math.sqrt(num_actions))
+            if board_size * board_size == num_actions:
+                return (board_size, board_size)
+            else:
+                # Fallback for non-square boards
+                return (15, 15)  # Default to Gomoku size
+
+    def _init_conv_weights(self):
+        """Initialize weights for conv and bn layers."""
         nn.init.kaiming_normal_(self.conv.weight, mode='fan_out', nonlinearity='relu')
         nn.init.constant_(self.bn.weight, 1)
         nn.init.constant_(self.bn.bias, 0)
+
+    def _init_fc_weights(self):
+        """Initialize weights for the linear layer."""
+        if self.fc is not None:
+            nn.init.kaiming_normal_(self.fc.weight, mode='fan_out', nonlinearity='linear')
+            nn.init.constant_(self.fc.bias, 0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass through policy head.
@@ -202,15 +240,13 @@ class PolicyHead(nn.Module):
         # Flatten spatial dimensions
         out = out.view(batch_size, -1)
 
-        # Initialize linear layer on first forward pass
+        # Lazy initialization of linear layer
         if self.fc is None:
             flattened_size = out.size(1)
             self.fc = nn.Linear(flattened_size, self.num_actions)
             # Move to same device as input
-            self.fc = self.fc.to(x.device)
-            # Initialize weights
-            nn.init.kaiming_normal_(self.fc.weight, mode='fan_out', nonlinearity='linear')
-            nn.init.constant_(self.fc.bias, 0)
+            self.fc = self.fc.to(out.device)
+            self._init_fc_weights()
 
         # Final linear layer
         logits = self.fc(out)
@@ -569,7 +605,7 @@ if __name__ == "__main__":
 
         # Test forward pass
         if game == 'gomoku':
-            test_input = torch.randn(4, 7, 15, 15)
+            test_input = torch.randn(4, 36, 15, 15)
         elif game == 'chess':
             test_input = torch.randn(4, 12, 8, 8)
         else:  # go

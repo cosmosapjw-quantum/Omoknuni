@@ -17,9 +17,14 @@ from queue import Queue
 from unittest.mock import Mock, patch
 import tempfile
 import os
+import sys
+from pathlib import Path
+
+# Add src to path for model creation utilities
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root / "src"))
 
 # Import contract interfaces
-import sys
 sys.path.append('specs/001-goal-create-spec')
 from contracts.inference_api import (
     InferenceWorker,
@@ -31,6 +36,31 @@ from contracts.inference_api import (
     CPUFallbackInference,
     validate_model_compatibility
 )
+
+# Import model creation utilities
+from neural.model import create_model_for_game, AlphaZeroNet
+
+
+def create_temporary_model(game_type: str = 'gomoku') -> str:
+    """Create a valid temporary model file for testing.
+
+    Args:
+        game_type: Type of game model to create
+
+    Returns:
+        str: Path to temporary model file
+    """
+    # Create a minimal valid AlphaZero model
+    model = create_model_for_game(game_type)
+
+    # Create temporary file
+    with tempfile.NamedTemporaryFile(suffix='.pth', delete=False) as f:
+        temp_path = f.name
+
+    # Save model state dict directly (this is what CPU inference worker expects)
+    torch.save(model.state_dict(), temp_path)
+
+    return temp_path
 
 
 class TestInferenceWorkerContract:
@@ -200,14 +230,18 @@ class TestInferenceResultContract:
 class TestFactoryFunctionsContract:
     """Test factory and utility function contracts."""
 
-    def test_create_inference_worker_not_implemented(self):
-        """create_inference_worker should raise NotImplementedError."""
-        with tempfile.NamedTemporaryFile(suffix='.pth', delete=False) as f:
-            model_path = f.name
+    def test_create_inference_worker_real_implementation(self):
+        """create_inference_worker should return a working inference worker."""
+        # Create a valid temporary model file
+        model_path = create_temporary_model('gomoku')
 
         try:
-            with pytest.raises(NotImplementedError, match="Inference worker factory implementation required"):
-                create_inference_worker(model_path, device='cpu')
+            # Test with CPU device (should work even without CUDA)
+            worker = create_inference_worker(model_path, device='cpu')
+            assert worker is not None
+            assert hasattr(worker, 'warmup')
+            assert hasattr(worker, 'batch_inference')
+            assert hasattr(worker, 'get_metrics')
         finally:
             os.unlink(model_path)
 
@@ -224,14 +258,17 @@ class TestFactoryFunctionsContract:
         assert sig.parameters['device'].default == 'cuda:0'
         assert sig.parameters['kwargs'].kind == inspect.Parameter.VAR_KEYWORD
 
-    def test_estimate_batch_size_not_implemented(self):
-        """estimate_batch_size should raise NotImplementedError."""
-        with tempfile.NamedTemporaryFile(suffix='.pth', delete=False) as f:
-            model_path = f.name
+    def test_estimate_batch_size_real_implementation(self):
+        """estimate_batch_size should return a valid batch size."""
+        # Create a valid temporary model file
+        model_path = create_temporary_model('gomoku')
 
         try:
-            with pytest.raises(NotImplementedError, match="Batch size estimation implementation required"):
-                estimate_batch_size(model_path, (3, 15, 15), device='cpu')
+            # Test with CPU device (should work even without CUDA)
+            batch_size = estimate_batch_size(model_path, (36, 15, 15), device='cpu')
+            assert isinstance(batch_size, int)
+            assert batch_size > 0
+            assert batch_size <= 256  # Reasonable upper bound
         finally:
             os.unlink(model_path)
 
@@ -250,14 +287,25 @@ class TestFactoryFunctionsContract:
         assert sig.parameters['input_shape'].annotation == Tuple[int, int, int]
         assert sig.return_annotation == int
 
-    def test_benchmark_inference_not_implemented(self):
-        """benchmark_inference should raise NotImplementedError."""
-        with tempfile.NamedTemporaryFile(suffix='.pth', delete=False) as f:
-            model_path = f.name
+    def test_benchmark_inference_real_implementation(self):
+        """benchmark_inference should return valid benchmark results."""
+        # Create a valid temporary model file
+        model_path = create_temporary_model('gomoku')
 
         try:
-            with pytest.raises(NotImplementedError, match="Inference benchmarking implementation required"):
-                benchmark_inference(model_path, (3, 15, 15), [32, 64], device='cpu')
+            # Test with CPU device and small iteration count for speed
+            results = benchmark_inference(model_path, (36, 15, 15), [8, 16], device='cpu', num_iterations=3)
+            assert isinstance(results, dict)
+
+            for batch_size in [8, 16]:
+                assert batch_size in results
+                metrics = results[batch_size]
+                assert 'latency_ms' in metrics
+                assert 'throughput' in metrics
+                assert 'memory_usage_gb' in metrics
+                assert 'gpu_utilization' in metrics
+                assert metrics['latency_ms'] >= 0
+                assert metrics['throughput'] >= 0
         finally:
             os.unlink(model_path)
 
@@ -279,14 +327,26 @@ class TestFactoryFunctionsContract:
 class TestCPUFallbackContract:
     """Test CPU fallback inference contract."""
 
-    def test_cpu_fallback_not_implemented(self):
-        """CPUFallbackInference should raise NotImplementedError on init."""
-        with tempfile.NamedTemporaryFile(suffix='.pth', delete=False) as f:
-            model_path = f.name
+    def test_cpu_fallback_real_implementation(self):
+        """CPUFallbackInference should work with real implementation."""
+        # Create a valid temporary model file
+        model_path = create_temporary_model('gomoku')
 
         try:
-            with pytest.raises(NotImplementedError, match="CPU fallback implementation required"):
-                CPUFallbackInference(model_path)
+            # Should create CPU fallback without error
+            cpu_inference = CPUFallbackInference(model_path)
+            assert cpu_inference is not None
+            assert hasattr(cpu_inference, 'inference')
+
+            # Test inference with dummy features (36 channels for Gomoku)
+            features = np.random.randn(36, 15, 15).astype(np.float32)  # Gomoku features
+            policy, value = cpu_inference.inference(features)
+
+            assert isinstance(policy, np.ndarray)
+            assert isinstance(value, (float, np.floating))
+            assert policy.shape == (225,)  # Gomoku action space
+            assert -1.0 <= value <= 1.0
+            assert np.isclose(np.sum(policy), 1.0, atol=1e-6)  # Policy should be normalized
         finally:
             os.unlink(model_path)
 
@@ -322,16 +382,29 @@ class TestCPUFallbackContract:
 class TestModelValidationContract:
     """Test model validation function contract."""
 
-    def test_validate_model_compatibility_not_implemented(self):
-        """validate_model_compatibility should raise NotImplementedError."""
-        with tempfile.NamedTemporaryFile(suffix='.pth', delete=False) as f:
-            model_path = f.name
+    def test_validate_model_compatibility_real_implementation(self):
+        """validate_model_compatibility should return validation results."""
+        # Test validation for different games
+        for game_type in ['gomoku', 'chess', 'go']:
+            # Create a valid temporary model file for each game
+            model_path = create_temporary_model(game_type)
 
-        try:
-            with pytest.raises(NotImplementedError, match="Model validation implementation required"):
-                validate_model_compatibility(model_path, 'gomoku')
-        finally:
-            os.unlink(model_path)
+            try:
+                result = validate_model_compatibility(model_path, game_type)
+                assert isinstance(result, dict)
+
+                # Check required keys
+                required_keys = ['compatible', 'input_shape', 'output_shape', 'architecture', 'parameters']
+                for key in required_keys:
+                    assert key in result, f"Missing key: {key}"
+
+                assert isinstance(result['compatible'], bool)
+                assert isinstance(result['input_shape'], tuple)
+                assert isinstance(result['output_shape'], tuple)
+                assert isinstance(result['architecture'], str)
+                assert isinstance(result['parameters'], int)
+            finally:
+                os.unlink(model_path)
 
     def test_validate_model_compatibility_signature(self):
         """Test validate_model_compatibility function signature."""
@@ -420,43 +493,46 @@ class TestErrorHandling:
         """Test handling of invalid model paths."""
         invalid_path = "/nonexistent/model.pth"
 
-        # Should still raise NotImplementedError (not FileNotFoundError)
-        # since implementation doesn't exist yet
-        with pytest.raises(NotImplementedError):
+        # Should raise FileNotFoundError with real implementation
+        with pytest.raises(FileNotFoundError):
             create_inference_worker(invalid_path)
 
     def test_invalid_device_handling(self):
         """Test handling of invalid device specifications."""
-        with tempfile.NamedTemporaryFile(suffix='.pth', delete=False) as f:
-            model_path = f.name
+        # Create a valid temporary model file
+        model_path = create_temporary_model('gomoku')
 
         try:
-            # Should still raise NotImplementedError since not implemented
-            with pytest.raises(NotImplementedError):
-                create_inference_worker(model_path, device='invalid:0')
+            # Invalid device falls back to CPU worker, which should succeed
+            worker = create_inference_worker(model_path, device='invalid:0')
+            assert worker is not None
+            # Verify it fell back to CPU
+            assert hasattr(worker, 'device')
         finally:
             os.unlink(model_path)
 
     def test_invalid_batch_sizes(self):
         """Test handling of invalid batch sizes."""
-        with tempfile.NamedTemporaryFile(suffix='.pth', delete=False) as f:
-            model_path = f.name
+        # Create a valid temporary model file
+        model_path = create_temporary_model('gomoku')
 
         try:
-            # Should still raise NotImplementedError
-            with pytest.raises(NotImplementedError):
-                estimate_batch_size(model_path, (3, 15, 15), device='cpu', memory_fraction=1.5)
+            # With real implementation, invalid memory_fraction should still return valid result
+            # (it clamps to reasonable values rather than throwing errors)
+            batch_size = estimate_batch_size(model_path, (36, 15, 15), device='cpu', memory_fraction=1.5)
+            assert isinstance(batch_size, int)
+            assert batch_size > 0
         finally:
             os.unlink(model_path)
 
     def test_invalid_game_types(self):
         """Test handling of invalid game types."""
-        with tempfile.NamedTemporaryFile(suffix='.pth', delete=False) as f:
-            model_path = f.name
+        # Create a valid temporary model file
+        model_path = create_temporary_model('gomoku')
 
         try:
-            # Should still raise NotImplementedError
-            with pytest.raises(NotImplementedError):
+            # Should raise ValueError with real implementation for invalid game type
+            with pytest.raises(ValueError, match="Unsupported game type"):
                 validate_model_compatibility(model_path, 'invalid_game')
         finally:
             os.unlink(model_path)

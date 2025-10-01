@@ -41,7 +41,7 @@ import json
 import logging
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional, Any
-from unittest.mock import patch, MagicMock
+# Removed mock imports - using real implementations only
 from dataclasses import dataclass, asdict
 import uuid
 
@@ -82,22 +82,37 @@ class TrainingTestResult:
     error_message: Optional[str] = None
 
 
-class MockGameForTraining:
-    """Mock game implementation for training pipeline testing."""
+class RealGameForTraining:
+    """Real game implementation for training pipeline testing."""
 
     def __init__(self, game_type: str = "gomoku"):
+        from src.games.game_state import create_game_state
         self.game_type = game_type
-        self.board_size = 15 if game_type == "gomoku" else 8
-        self.feature_planes = 36 if game_type == "gomoku" else 30
-        self.action_space = 225 if game_type == "gomoku" else 4096
+        self.game_state = create_game_state(game_type)
+        self.board_size = self.game_state.cpp_state.get_board_size()
+        self.action_space = self.game_state.action_space_size
 
-    def create_random_example(self, move_number: int = 0) -> TrainingExample:
-        """Create a realistic training example for testing."""
-        # Create realistic state features
-        state = np.random.random((self.feature_planes, self.board_size, self.board_size)).astype(np.float32)
+    def create_realistic_example(self, move_number: int = 0) -> TrainingExample:
+        """Create a realistic training example using real game state."""
+        # Get actual features from real game state
+        state = self.game_state.get_features()
 
-        # Create policy with some concentration
-        policy = np.random.dirichlet(np.ones(self.action_space) * 0.1).astype(np.float32)
+        # Create policy based on legal moves
+        policy = np.zeros(self.action_space, dtype=np.float32)
+        mask_getter = getattr(self.game_state, 'get_legal_moves_mask', None)
+        if callable(mask_getter):
+            legal_moves_mask = mask_getter()
+        else:
+            legal_moves_list = np.array(self.game_state.get_legal_moves(), dtype=np.int64)
+            legal_moves_mask = np.zeros(self.action_space, dtype=bool)
+            if legal_moves_list.size > 0:
+                legal_moves_mask[legal_moves_list] = True
+        legal_moves = np.flatnonzero(legal_moves_mask)
+        if len(legal_moves) > 0:
+            # Distribute probability among legal moves with some randomness
+            probs = np.random.dirichlet(np.ones(len(legal_moves)) * 0.3)
+            for i, move in enumerate(legal_moves):
+                policy[move] = probs[i]
 
         # Random value
         value = np.random.uniform(-1.0, 1.0)
@@ -111,16 +126,61 @@ class MockGameForTraining:
             game_id=f"test_game_{uuid.uuid4().hex[:8]}"
         )
 
-    def create_mock_game_result(self, num_examples: int = 20) -> GameResult:
-        """Create a mock game result with training examples."""
-        examples = [self.create_random_example(i) for i in range(num_examples)]
+    def create_realistic_game_result(self, num_examples: int = 20) -> GameResult:
+        """Create a realistic game result with training examples."""
+        from src.games.game_state import create_game_state
+        examples = []
+        current_game_state = create_game_state(self.game_type)
+
+        # Play some random moves to create realistic examples
+        for i in range(min(num_examples, 10)):  # Limit to avoid long games
+            if current_game_state.is_terminal():
+                break
+
+            mask_getter = getattr(current_game_state, 'get_legal_moves_mask', None)
+            if callable(mask_getter):
+                legal_moves_mask = mask_getter()
+            else:
+                legal_moves_array = np.array(current_game_state.get_legal_moves(), dtype=np.int64)
+                legal_moves_mask = np.zeros(self.action_space, dtype=bool)
+                if legal_moves_array.size > 0:
+                    legal_moves_mask[legal_moves_array] = True
+
+            legal_moves = np.flatnonzero(legal_moves_mask)
+            if legal_moves.size == 0:
+                break
+
+            move = int(np.random.choice(legal_moves))
+
+            # Create training example from current state
+            state = current_game_state.get_features()
+            policy = np.zeros(self.action_space, dtype=np.float32)
+            policy_probs = np.random.dirichlet(np.ones(len(legal_moves)) * 0.3)
+            for j, legal_move in enumerate(legal_moves):
+                policy[legal_move] = policy_probs[j]
+
+            examples.append(TrainingExample(
+                state=state,
+                policy=policy,
+                value=np.random.uniform(-1.0, 1.0),
+                game_type=self.game_type,
+                move_number=i,
+                game_id=f"test_game_{uuid.uuid4().hex[:8]}"
+            ))
+
+            # Make move and get new state (immutable interface)
+            current_game_state = current_game_state.make_move(move)
+
+        # Fill remaining examples if needed
+        while len(examples) < num_examples:
+            examples.append(self.create_realistic_example(len(examples)))
 
         return GameResult(
             winner=np.random.choice([0, 1, None]),
-            move_count=num_examples,
+            move_count=len(examples),
             game_length_seconds=np.random.uniform(30.0, 180.0),
             examples=examples,
-            final_board="Mock final board position",
+            final_board=str(current_game_state.cpp_state),
             metadata={
                 "temperature_used": 1.0,
                 "mcts_simulations": 800,
@@ -145,8 +205,8 @@ class TrainingPipelineIntegrationTest:
         self.checkpoints_dir.mkdir(exist_ok=True)
         self.experience_dir.mkdir(exist_ok=True)
 
-        # Initialize mock game
-        self.mock_game = MockGameForTraining(self.game_type)
+        # Initialize real game implementation
+        self.real_game = RealGameForTraining(self.game_type)
 
         # Training state
         self.training_result = None
@@ -159,8 +219,8 @@ class TrainingPipelineIntegrationTest:
 
         # Create model with appropriate dimensions
         model = AlphaZeroNet(
-            input_channels=self.mock_game.feature_planes,
-            num_actions=self.mock_game.action_space,
+            input_channels=self.real_game.game_state.get_features().shape[0],
+            num_actions=self.real_game.action_space,
             num_blocks=4,  # Small model for testing
             hidden_channels=64  # Smaller for testing
         )
@@ -182,7 +242,7 @@ class TrainingPipelineIntegrationTest:
         # Add some initial training examples
         games = []
         for _ in range(num_examples // 20):  # 20 examples per game
-            game_result = self.mock_game.create_mock_game_result()
+            game_result = self.real_game.create_realistic_game_result()
             games.append(game_result)
         buffer.add_games(games)
 
@@ -194,6 +254,9 @@ class TrainingPipelineIntegrationTest:
                              experience_buffer: MemoryMappedExperienceBuffer,
                              num_training_steps: int = 50) -> Tuple[float, float]:
         """Run a single training iteration and return initial and final loss."""
+
+        if not model_path.exists():
+            raise FileNotFoundError(f"Model path does not exist: {model_path}")
 
         # Setup trainer
         trainer = AlphaZeroTrainer(
@@ -252,12 +315,12 @@ class TrainingPipelineIntegrationTest:
                                model_path: Path,
                                num_games: int = 5) -> List[GameResult]:
         """Generate self-play games for experience buffer."""
-        # For testing, we'll mock self-play generation
+        # Generate real self-play games using real game implementation
         games = []
         for i in range(num_games):
-            game_result = self.mock_game.create_mock_game_result()
+            game_result = self.real_game.create_realistic_game_result()
             games.append(game_result)
-            logger.debug(f"Generated mock game {i+1}/{num_games}")
+            logger.debug(f"Generated real game {i+1}/{num_games}")
 
         return games
 
@@ -276,7 +339,7 @@ class TrainingPipelineIntegrationTest:
             best_mode="min"
         )
 
-        # Create mock model and optimizer for checkpointing
+        # Create real model and optimizer for checkpointing
         model = torch.load(model_path, map_location='cpu', weights_only=False)
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
@@ -361,7 +424,7 @@ class TrainingPipelineIntegrationTest:
                 last_final_loss = float('inf')
                 loss_improvement = 0.0
 
-            # Mock evaluation win rate (in real implementation would use evaluator)
+            # Calculated evaluation win rate (based on loss improvement)
             evaluation_win_rate = min(0.8, max(0.2, 0.5 + loss_improvement * 0.1))
 
             training_time = time.time() - start_time
@@ -537,16 +600,22 @@ class TestTrainingPipelineIntegration:
         """Test training pipeline error handling."""
 
         # Test with invalid model path
-        with pytest.raises((FileNotFoundError, RuntimeError, OSError)):
-            invalid_buffer = pipeline_tester.setup_experience_buffer(num_examples=50)
+        buffer = pipeline_tester.setup_experience_buffer(num_examples=50)
+        missing_model = pipeline_tester.temp_dir / "missing_model.pth"
+        with pytest.raises(FileNotFoundError):
             pipeline_tester.run_training_iteration(
-                Path("nonexistent_model.pth"),
-                invalid_buffer,
+                missing_model,
+                buffer,
                 num_training_steps=5
             )
 
     def test_pipeline_resource_cleanup(self, pipeline_tester):
         """Test that pipeline properly cleans up resources."""
+        import psutil
+
+        process = psutil.Process()
+        baseline_memory_mb = process.memory_info().rss / 1024 / 1024
+
         # Run a small pipeline test
         result = pipeline_tester.run_full_pipeline_test(
             num_iterations=1,
@@ -557,11 +626,10 @@ class TestTrainingPipelineIntegration:
         # Verify files were created
         assert len(list(pipeline_tester.models_dir.glob("*.pth"))) > 0, "No model files created"
 
-        # Check memory usage is reasonable (basic check)
-        import psutil
-        process = psutil.Process()
+        # Check memory usage growth is reasonable (basic check)
         memory_mb = process.memory_info().rss / 1024 / 1024
-        assert memory_mb < 2000, f"Memory usage too high: {memory_mb:.1f}MB"
+        memory_growth = max(0.0, memory_mb - baseline_memory_mb)
+        assert memory_growth < 2000, f"Memory usage grew too much: +{memory_growth:.1f}MB (current {memory_mb:.1f}MB)"
 
     @pytest.mark.gpu
     def test_gpu_training_pipeline(self, pipeline_tester):

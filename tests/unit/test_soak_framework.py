@@ -35,6 +35,7 @@ import time
 import threading
 import tempfile
 import json
+import numpy as np
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 import statistics
@@ -205,7 +206,7 @@ class TestSystemResourceMonitor:
         ]
 
         growth_rate = monitor.get_memory_growth_rate()
-        expected_rate = 10.0 / 0.5  # 20 MB/hour
+        expected_rate = 10.0 / 1800  # 10MB over 1800 seconds = MB/second
         assert abs(growth_rate - expected_rate) < 0.1
 
     def test_memory_growth_rate_no_data(self):
@@ -344,7 +345,7 @@ class TestWorkloadSimulator:
         """Test game operation simulation"""
         # Setup mock game state
         mock_game = Mock()
-        mock_game.get_tensor_representation.return_value = np.random.randn(36, 15, 15).astype(np.float32)
+        mock_game.get_enhanced_tensor_representation.return_value = np.random.randn(36, 15, 15).astype(np.float32)
         mock_game.get_legal_moves.return_value = [(0, 0), (1, 1)]
         mock_game.make_move.return_value = True
         mock_game.is_terminal.return_value = False
@@ -355,7 +356,7 @@ class TestWorkloadSimulator:
         simulator._simulate_game_operation(mock_game)
 
         # Verify mock calls
-        mock_game.get_tensor_representation.assert_called_once()
+        mock_game.get_enhanced_tensor_representation.assert_called_once()
         mock_game.get_legal_moves.assert_called_once()
         mock_game.make_move.assert_called_once()
 

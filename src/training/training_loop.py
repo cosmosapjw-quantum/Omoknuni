@@ -685,6 +685,17 @@ class TrainingLoop:
         except Exception as e:
             self.logger.error(f"Failed to load training state: {e}")
 
+    def stop(self, timeout: float = 10.0) -> None:
+        """Stop the training loop gracefully.
+
+        Args:
+            timeout: Maximum time to wait for components to stop
+        """
+        self.logger.info("Stopping training loop...")
+        self.shutdown_requested = True
+        self.running = False
+        self._cleanup()
+
     def _cleanup(self) -> None:
         """Cleanup resources and shutdown components."""
         self.logger.info("Cleaning up training loop resources...")
@@ -695,7 +706,7 @@ class TrainingLoop:
                 self.self_play_generator.shutdown()
 
             # Shutdown thread pool
-            self.executor.shutdown(wait=True, timeout=10.0)
+            self.executor.shutdown(wait=True)
 
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}")

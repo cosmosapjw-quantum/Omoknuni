@@ -2,11 +2,13 @@
 Unit tests for virtual loss mechanism in MCTS tree search.
 
 Tests cover:
-- Basic virtual loss application and removal
+- Basic virtual loss application and removal using REAL C++ implementation
 - Thread safety of atomic operations
 - Path-based virtual loss management
 - RAII guard functionality
 - Configuration and edge cases
+
+All tests now use the real C++ MCTS implementation via mcts_py module.
 """
 
 import pytest
@@ -14,10 +16,9 @@ import numpy as np
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from unittest.mock import Mock, patch
 
-# Note: These tests assume the C++ extension will be built with Python bindings
-# For now, we'll create mock interfaces that match the expected C++ API
+# Import the real MCTS implementation
+import mcts_py
 
 
 class MockMCTSTree:
@@ -220,10 +221,9 @@ class TestVirtualLossBasic:
     """Test basic virtual loss operations."""
 
     def setup_method(self):
-        """Set up test fixtures."""
-        self.tree = MockMCTSTree()
-        self.tree.add_root_node(0.5, 0)
-        self.manager = MockVirtualLossManager(self.tree)
+        """Set up test fixtures with real implementation."""
+        self.tree = mcts_py.create_test_tree(1000)
+        self.manager = mcts_py.create_test_virtual_loss_manager(self.tree)
 
     def test_apply_single_virtual_loss(self):
         """Test applying virtual loss to a single node."""
@@ -283,16 +283,16 @@ class TestVirtualLossPath:
     """Test path-based virtual loss operations."""
 
     def setup_method(self):
-        """Set up test fixtures with a small tree."""
-        self.tree = MockMCTSTree()
-        root = self.tree.add_root_node(0.5, 0)
+        """Set up test fixtures with real tree."""
+        self.tree = mcts_py.create_test_tree(1000)
+        root = 0  # Root is always at index 0
 
         # Create a simple path: root -> child1 -> child2
-        child1 = self.tree.allocate_nodes(1)
-        child2 = self.tree.allocate_nodes(1)
+        child1 = self.tree.allocate_node()
+        child2 = self.tree.allocate_node()
 
         self.path = [child2, child1, root]  # Leaf to root order
-        self.manager = MockVirtualLossManager(self.tree)
+        self.manager = mcts_py.create_test_virtual_loss_manager(self.tree)
 
     def test_apply_virtual_loss_to_path(self):
         """Test applying virtual loss to an entire path."""
@@ -352,28 +352,32 @@ class TestVirtualLossGuard:
 
     def setup_method(self):
         """Set up test fixtures."""
-        self.tree = MockMCTSTree()
-        root = self.tree.add_root_node(0.5, 0)
-        child1 = self.tree.allocate_nodes(1)
-        child2 = self.tree.allocate_nodes(1)
+        self.tree = mcts_py.create_test_tree(1000)
+        root = 0  # Root node is already created by create_test_tree
+        child1 = self.tree.allocate_node()
+        child2 = self.tree.allocate_node()
 
         self.path = [child2, child1, root]
-        self.manager = MockVirtualLossManager(self.tree)
+        self.manager = mcts_py.create_test_virtual_loss_manager(self.tree)
 
     def test_guard_automatic_cleanup(self):
         """Test that virtual loss guard automatically cleans up."""
         initial_values = [self.manager.get_virtual_loss(node) for node in self.path]
 
-        # Use guard in a scope
-        with MockVirtualLossGuard(self.manager, self.path) as guard:
+        # Create guard in a nested scope to test RAII cleanup
+        def use_guard():
+            guard = mcts_py.VirtualLossGuard(self.manager, self.path)
             assert guard.is_valid() is True
 
             # Virtual loss should be applied
             for i, node_index in enumerate(self.path):
                 expected = initial_values[i] + 1.0
                 assert abs(self.manager.get_virtual_loss(node_index) - expected) < 1e-6
+            # Guard goes out of scope here and should auto-cleanup
 
-        # After exiting scope, virtual loss should be removed
+        use_guard()
+
+        # After guard is destroyed, virtual loss should be removed
         for i, node_index in enumerate(self.path):
             assert abs(self.manager.get_virtual_loss(node_index) - initial_values[i]) < 1e-6
 
@@ -381,7 +385,7 @@ class TestVirtualLossGuard:
         """Test manually releasing virtual loss guard."""
         initial_values = [self.manager.get_virtual_loss(node) for node in self.path]
 
-        guard = MockVirtualLossGuard(self.manager, self.path)
+        guard = mcts_py.VirtualLossGuard(self.manager, self.path)
         assert guard.is_valid() is True
 
         # Manually release
@@ -395,7 +399,7 @@ class TestVirtualLossGuard:
         """Test guard behavior with invalid paths."""
         invalid_path = [0, 999, 1]
 
-        guard = MockVirtualLossGuard(self.manager, invalid_path)
+        guard = mcts_py.VirtualLossGuard(self.manager, invalid_path)
 
         assert guard.is_valid() is False
 
@@ -405,11 +409,10 @@ class TestVirtualLossConfiguration:
 
     def test_disabled_virtual_loss(self):
         """Test behavior when virtual loss is disabled."""
-        tree = MockMCTSTree()
-        tree.add_root_node(0.5, 0)
+        tree = mcts_py.create_test_tree(1000)
 
-        config = MockVirtualLossConfig(magnitude=1.0, enable_virtual_loss=False)
-        manager = MockVirtualLossManager(tree, config)
+        config = mcts_py.VirtualLossConfig(1.0, False)  # disabled
+        manager = mcts_py.create_test_virtual_loss_manager(tree, config)
 
         # Operations should succeed but not actually apply virtual loss
         success = manager.apply_virtual_loss(0)
@@ -418,12 +421,11 @@ class TestVirtualLossConfiguration:
 
     def test_custom_magnitude(self):
         """Test virtual loss with custom magnitude."""
-        tree = MockMCTSTree()
-        tree.add_root_node(0.5, 0)
+        tree = mcts_py.create_test_tree(1000)
 
         custom_magnitude = 2.5
-        config = MockVirtualLossConfig(magnitude=custom_magnitude)
-        manager = MockVirtualLossManager(tree, config)
+        config = mcts_py.VirtualLossConfig(custom_magnitude, True)
+        manager = mcts_py.create_test_virtual_loss_manager(tree, config)
 
         manager.apply_virtual_loss(0)
 
@@ -435,12 +437,12 @@ class TestVirtualLossThreadSafety:
 
     def setup_method(self):
         """Set up test fixtures."""
-        self.tree = MockMCTSTree()
-        root = self.tree.add_root_node(0.5, 0)
+        self.tree = mcts_py.create_test_tree(1000)
 
         # Create multiple nodes for concurrent access
-        self.tree.allocate_nodes(10)
-        self.manager = MockVirtualLossManager(self.tree)
+        for _ in range(10):
+            self.tree.allocate_node()
+        self.manager = mcts_py.create_test_virtual_loss_manager(self.tree)
 
     def test_concurrent_apply_remove(self):
         """Test concurrent virtual loss application and removal."""
@@ -492,8 +494,10 @@ class TestVirtualLossThreadSafety:
         ]
 
         def worker(path):
-            with MockVirtualLossGuard(self.manager, path):
+            guard = mcts_py.VirtualLossGuard(self.manager, path)
+            if guard.is_valid():
                 time.sleep(0.01)  # Hold virtual loss for a short time
+            # Guard automatically cleans up when it goes out of scope
 
         # Run concurrent path operations
         with ThreadPoolExecutor(max_workers=len(paths)) as executor:
@@ -512,10 +516,10 @@ class TestVirtualLossStatistics:
 
     def setup_method(self):
         """Set up test fixtures."""
-        self.tree = MockMCTSTree()
-        self.tree.add_root_node(0.5, 0)
-        self.tree.allocate_nodes(5)
-        self.manager = MockVirtualLossManager(self.tree)
+        self.tree = mcts_py.create_test_tree(1000)
+        for _ in range(5):
+            self.tree.allocate_node()
+        self.manager = mcts_py.create_test_virtual_loss_manager(self.tree)
 
     def test_statistics_tracking(self):
         """Test that statistics are correctly tracked."""
@@ -568,14 +572,59 @@ class TestVirtualLossIntegration:
 
     def test_virtual_loss_with_puct_selection(self):
         """Test that virtual loss affects PUCT selection correctly."""
-        # This test would verify that virtual loss is properly considered
-        # in PUCT calculations, but requires the full MCTS implementation
-        pytest.skip("Requires full MCTS implementation")
+        from concurrent.futures import Future
+        from src.core.mcts import AlphaZeroMCTS
+        from src.games.game_state import create_game_state
+
+        game = create_game_state('gomoku')
+
+        def inference_fn(state):
+            future = Future()
+            policy = np.zeros(state.action_space_size, dtype=np.float32)
+            legal_moves = state.get_legal_moves()
+            if legal_moves:
+                uniform = 1.0 / len(legal_moves)
+                for move in legal_moves:
+                    policy[move] = uniform
+            future.set_result((policy, 0.0))
+            return future
+
+        mcts = AlphaZeroMCTS(inference_fn)
+        mcts.search(game, simulations=5)
+
+        stats = mcts.virtual_loss_manager.get_statistics()
+        assert stats.total_applications >= 5
+        assert stats.total_removals >= stats.total_applications
+        assert stats.current_active_paths == 0
 
     def test_virtual_loss_in_search_loop(self):
         """Test virtual loss in a complete search loop."""
-        # This test would verify virtual loss behavior during actual search
-        pytest.skip("Requires full MCTS implementation")
+        from concurrent.futures import Future
+        from src.core.mcts import AlphaZeroMCTS
+        from src.games.game_state import create_game_state
+
+        game = create_game_state('gomoku')
+
+        def inference_fn(state):
+            future = Future()
+            policy = np.zeros(state.action_space_size, dtype=np.float32)
+            legal_moves = state.get_legal_moves()
+            if legal_moves:
+                uniform = 1.0 / len(legal_moves)
+                for move in legal_moves:
+                    policy[move] = uniform
+            future.set_result((policy, 0.1))
+            return future
+
+        mcts = AlphaZeroMCTS(inference_fn)
+        mcts.search(game, simulations=6)
+
+        policy = mcts.get_policy(game, temperature=1.0)
+        assert abs(policy.sum() - 1.0) < 1e-6
+
+        stats = mcts.virtual_loss_manager.get_statistics()
+        assert stats.total_applications >= 6
+        assert stats.current_active_paths == 0
 
 
 if __name__ == "__main__":

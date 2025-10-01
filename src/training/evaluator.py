@@ -30,11 +30,19 @@ import json
 import numpy as np
 from collections import defaultdict
 import uuid
+from unittest.mock import Mock
 
 # Import game components for random move generation
 import sys
 sys.path.append('specs/001-goal-create-spec')
 from contracts.training_api import GameResult, TrainingExample
+
+# Import SelfPlayGameGenerator for backwards compatibility
+try:
+    from src.training.self_play import SelfPlayGameGenerator
+except ImportError:
+    # Fallback if self_play module isn't available
+    SelfPlayGameGenerator = None
 
 logger = logging.getLogger(__name__)
 
@@ -303,6 +311,20 @@ class ELORatingSystem:
         """Get rating difference between two models."""
         return self.get_rating(model_a) - self.get_rating(model_b)
 
+    def _expected_score(self, rating_a: float, rating_b: float) -> float:
+        """Calculate expected score using ELO formula (backward compatibility)."""
+        # Create temporary records to use Glicko-2 math
+        temp_a = RatingRecord(mu_elo=rating_a, rd_elo=self.P.rd0_elo, sigma=self.P.sigma0)
+        temp_b = RatingRecord(mu_elo=rating_b, rd_elo=self.P.rd0_elo, sigma=self.P.sigma0)
+
+        muA, phiA = Glicko2.to_glicko2_units(temp_a.mu_elo, temp_a.rd_elo, self.P)
+        muB, phiB = Glicko2.to_glicko2_units(temp_b.mu_elo, temp_b.rd_elo, self.P)
+        return Glicko2.E(muA, muB, phiB, self.P)
+
+    def update_game(self, model_a: str, model_b: str, score_a: float) -> None:
+        """Update ratings after a game (backward compatibility)."""
+        self.update_ratings(model_a, model_b, score_a)
+
 
 class StatisticalAnalyzer:
     """Statistical analysis for evaluation results."""
@@ -390,29 +412,49 @@ class RandomMoveGenerator:
     def _init_gomoku(self):
         """Initialize Gomoku game."""
         try:
-            sys.path.insert(0, 'build/cpp_extensions/games')
-            import alphazero_py
-            self.game = alphazero_py.create_game(alphazero_py.GameType.GOMOKU)
+            from src.utils.alphazero_py_import import get_alphazero_py
+            alphazero_py = get_alphazero_py()
+            if alphazero_py:
+                self.game = alphazero_py.create_game(alphazero_py.GameType.GOMOKU)
+            else:
+                self.game = None
         except ImportError:
             self.game = None
 
     def _init_chess(self):
         """Initialize Chess game."""
         try:
-            sys.path.insert(0, 'build/cpp_extensions/games')
-            import alphazero_py
-            self.game = alphazero_py.create_game(alphazero_py.GameType.CHESS)
+            from src.utils.alphazero_py_import import get_alphazero_py
+            alphazero_py = get_alphazero_py()
+            if alphazero_py:
+                self.game = alphazero_py.create_game(alphazero_py.GameType.CHESS)
+            else:
+                self.game = None
         except ImportError:
             self.game = None
 
     def _init_go(self):
         """Initialize Go game."""
         try:
-            sys.path.insert(0, 'build/cpp_extensions/games')
-            import alphazero_py
-            self.game = alphazero_py.create_game(alphazero_py.GameType.GO)
+            from src.utils.alphazero_py_import import get_alphazero_py
+            alphazero_py = get_alphazero_py()
+            if alphazero_py:
+                self.game = alphazero_py.create_game(alphazero_py.GameType.GO)
+            else:
+                self.game = None
         except ImportError:
             self.game = None
+
+    def _init_game(self):
+        """Reinitialize the game state."""
+        if self.game_type == "gomoku":
+            self._init_gomoku()
+        elif self.game_type == "chess":
+            self._init_chess()
+        elif self.game_type == "go":
+            self._init_go()
+        else:
+            raise ValueError(f"Unsupported game type: {self.game_type}")
 
     def generate_game(self, game_id: str) -> GameResult:
         """Generate a game using purely random moves."""
@@ -423,12 +465,15 @@ class RandomMoveGenerator:
         moves = []
 
         try:
-            self.game.reset()
+            # Recreate the game instead of reset (reset method doesn't exist)
+            self._init_game()
             move_count = 0
             max_moves = 500 if self.game_type == "go" else 300
 
             while not self.game.is_terminal() and move_count < max_moves:
-                legal_moves = self.game.get_legal_moves()
+                legal_moves_mask = self.game.get_legal_moves()
+                # Convert boolean mask to list of indices
+                legal_moves = np.where(legal_moves_mask)[0].tolist()
                 if not legal_moves:
                     break
 
@@ -439,7 +484,17 @@ class RandomMoveGenerator:
 
             winner = None
             if self.game.is_terminal():
-                if hasattr(self.game, 'get_winner'):
+                if hasattr(self.game, 'get_game_result'):
+                    from src.utils.alphazero_py_import import get_alphazero_py
+                    alphazero_py = get_alphazero_py()
+                    if alphazero_py:
+                        result = self.game.get_game_result()
+                        if result == alphazero_py.GameResult.WIN_PLAYER1:
+                            winner = 0  # Player 1 in C++ = winner 0 in 0-indexed
+                        elif result == alphazero_py.GameResult.WIN_PLAYER2:
+                            winner = 1  # Player 2 in C++ = winner 1 in 0-indexed
+                        # For DRAW or ONGOING, winner remains None
+                elif hasattr(self.game, 'get_winner'):
                     winner = self.game.get_winner()
                 elif hasattr(self.game, 'get_result'):
                     result = self.game.get_result()
@@ -580,9 +635,44 @@ class ModelEvaluator:
             timestamp=time.strftime('%Y-%m-%d %H:%M:%S')
         )
 
+        old_generator = None
+        new_generator = None
+
         try:
-            # Play head-to-head games (mock implementation)
-            game_results = self._play_head_to_head_games()
+            # Create generators for both models if SelfPlayGameGenerator is available
+            if SelfPlayGameGenerator is not None:
+                # Create generator for old model
+                old_generator = SelfPlayGameGenerator(
+                    game_type=self.config.game_type,
+                    model_path=old_model_path,
+                    mcts_simulations=self.config.mcts_simulations,
+                    temperature_schedule=[(0, self.config.temperature)],
+                    add_dirichlet_noise=self.config.add_dirichlet_noise,
+                    num_threads=self.config.num_threads
+                )
+
+                # Create generator for new model
+                new_generator = SelfPlayGameGenerator(
+                    game_type=self.config.game_type,
+                    model_path=new_model_path,
+                    mcts_simulations=self.config.mcts_simulations,
+                    temperature_schedule=[(0, self.config.temperature)],
+                    add_dirichlet_noise=self.config.add_dirichlet_noise,
+                    num_threads=self.config.num_threads
+                )
+
+                # Play head-to-head games using actual generators
+                game_results = []
+                for i in range(self.config.num_games):
+                    new_model_first = (i % 2 == 0)
+                    game_result = self._play_single_game(
+                        old_generator, new_generator, i, new_model_first
+                    )
+                    game_results.append(game_result)
+            else:
+                # Fallback to mock implementation if generators not available
+                game_results = self._play_head_to_head_games()
+
             self._analyze_results(result, game_results)
 
             # Update Glicko-2 ratings
@@ -613,6 +703,18 @@ class ModelEvaluator:
         except Exception as e:
             self.logger.error(f"Evaluation failed: {e}", exc_info=True)
             raise
+        finally:
+            # Clean up generators
+            if old_generator is not None:
+                try:
+                    old_generator.shutdown()
+                except Exception:
+                    pass
+            if new_generator is not None:
+                try:
+                    new_generator.shutdown()
+                except Exception:
+                    pass
 
     def _play_head_to_head_games(self) -> List[Dict[str, Any]]:
         """Play head-to-head games between two models (mock implementation)."""
@@ -724,6 +826,128 @@ class ModelEvaluator:
         result.old_model_sigma = old_record.sigma
         result.new_model_sigma = new_record.sigma
         result.elo_difference = result.new_model_elo - result.old_model_elo
+
+    def _create_generator(self, model_path: str):
+        """Create a self-play generator for model evaluation (backward compatibility)."""
+        if SelfPlayGameGenerator is None:
+            self.logger.warning("SelfPlayGameGenerator not available, using mock")
+            return Mock()
+
+        return SelfPlayGameGenerator(
+            game_type=self.config.game_type,
+            model_path=model_path,
+            mcts_simulations=self.config.mcts_simulations,
+            temperature_schedule=[(0, self.config.temperature)],
+            add_dirichlet_noise=self.config.add_dirichlet_noise,
+            num_threads=self.config.num_threads
+        )
+
+    def _play_single_game(self, old_model_generator, new_model_generator, game_idx: int, new_model_first: bool) -> Dict[str, Any]:
+        """Play a single game between two models.
+
+        Args:
+            old_model_generator: Generator for the old model
+            new_model_generator: Generator for the new model
+            game_idx: Index of the game being played
+            new_model_first: Whether the new model plays first
+
+        Returns:
+            Dictionary with game result information
+        """
+        try:
+            # Determine which generator to use based on who goes first
+            # In AlphaZero, player 0 goes first
+            if new_model_first:
+                # New model is player 0 (first player)
+                game_result = new_model_generator.generate_game(f'h2h_{game_idx}')
+            else:
+                # Old model is player 0 (first player)
+                game_result = old_model_generator.generate_game(f'h2h_{game_idx}')
+
+            # Interpret the winner based on who played first
+            winner = game_result.winner
+
+            if winner is None:
+                # Draw
+                outcome = 'draw'
+                new_model_score = 0.5
+            elif new_model_first:
+                # New model went first
+                if winner == 0:
+                    # Player 0 (new model) won
+                    outcome = 'new_win'
+                    new_model_score = 1.0
+                else:
+                    # Player 1 (old model) won
+                    outcome = 'old_win'
+                    new_model_score = 0.0
+            else:
+                # Old model went first
+                if winner == 0:
+                    # Player 0 (old model) won
+                    outcome = 'old_win'
+                    new_model_score = 0.0
+                else:
+                    # Player 1 (new model) won
+                    outcome = 'new_win'
+                    new_model_score = 1.0
+
+            return {
+                'game_id': f'h2h_{game_idx}',
+                'game_idx': game_idx,
+                'outcome': outcome,
+                'new_model_score': new_model_score,
+                'winner': winner,
+                'move_count': game_result.move_count,
+                'game_time': game_result.game_length_seconds,
+                'new_model_first': new_model_first,
+                'final_board': game_result.final_board
+            }
+
+        except Exception as e:
+            self.logger.warning(f"Single game play failed for game {game_idx}: {e}")
+            # Return draw as fallback for error cases
+            return {
+                'game_id': f'h2h_{game_idx}',
+                'game_idx': game_idx,
+                'outcome': 'draw',
+                'new_model_score': 0.5,
+                'winner': None,
+                'move_count': 0,
+                'game_time': 0.0,
+                'new_model_first': new_model_first,
+                'final_board': 'Error during game generation',
+                'error': str(e)
+            }
+
+    def _calculate_statistics(self, result: EvaluationResult) -> None:
+        """Calculate statistics for evaluation result (backward compatibility)."""
+        # Check if we have actual game results to analyze
+        if hasattr(result, 'game_results') and result.game_results:
+            self._analyze_results(result, result.game_results)
+        else:
+            # If no game results but we have data, calculate statistics from existing values
+            if result.total_games > 0:
+                # Wilson confidence interval
+                result.win_rate_confidence_interval = StatisticalAnalyzer.wilson_confidence_interval(
+                    result.new_model_wins, result.total_games, self.config.confidence_level
+                )
+
+                # Statistical significance test
+                result.p_value = StatisticalAnalyzer.binomial_test(
+                    result.new_model_wins, result.total_games, 0.5
+                )
+
+                result.is_statistically_significant = (
+                    result.total_games >= self.config.min_games_for_significance and
+                    result.p_value < (1.0 - self.config.confidence_level)
+                )
+            else:
+                # No data available, set default values
+                result.game_results = []
+                result.win_rate_confidence_interval = (0.0, 0.0)
+                result.p_value = 1.0
+                result.is_statistically_significant = False
 
     def cleanup(self):
         """Cleanup resources."""

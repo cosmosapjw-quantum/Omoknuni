@@ -297,49 +297,35 @@ class SearchCoordinator:
             )
 
     def _execute_search(self, request: SearchRequest) -> SearchResult:
-        """Execute a single search request.
-
-        This is a placeholder that would integrate with the actual MCTS implementation.
-        For now, it simulates search behavior for testing purposes.
-        """
+        """Execute a single search request using real MCTS implementation."""
         thread_id = threading.get_ident()
         start_time = time.time()
 
         self.logger.debug(f"Executing search {request.request_id} on thread {thread_id}")
 
         try:
-            # Simulate MCTS search process
-            # In real implementation, this would:
-            # 1. Initialize MCTS tree from game_state
-            # 2. Run simulations using request_inference() for neural network calls
-            # 3. Apply temperature and noise as specified
-            # 4. Return best move and search statistics
+            # Import MCTS engine locally to avoid circular imports
+            from .mcts import AlphaZeroMCTS
 
-            # Simulate some inference requests during search
-            num_inference_calls = min(request.simulations // 10, 20)  # Realistic ratio
+            # Create MCTS engine with inference function
+            def inference_fn(game_state):
+                return self.request_inference(game_state, thread_id)
 
-            for i in range(num_inference_calls):
-                if self.shutdown_event.is_set():
-                    break
+            mcts = AlphaZeroMCTS(inference_fn)
 
-                # Simulate inference request
-                try:
-                    inference_future = self.request_inference(request.game_state, thread_id)
-                    # In real implementation, would wait for result and use it
-                    # For simulation, just add small delay
-                    time.sleep(0.001)  # 1ms simulation
-                except queue.Full:
-                    self.logger.warning("Inference queue full during search")
-                    break
+            # Run MCTS search
+            visit_counts = mcts.search(
+                root_state=request.game_state,
+                simulations=request.simulations,
+                add_noise=request.add_noise
+            )
 
-            # Simulate search completion
+            # Extract policy and best move
+            policy = mcts.get_policy(request.game_state, request.temperature)
+            best_move = int(np.argmax(policy))
+            value = mcts.get_value(request.game_state)
+
             processing_time = (time.time() - start_time) * 1000  # Convert to ms
-
-            # Generate mock result
-            action_space_size = 225  # Assume 15x15 board for simulation
-            policy = np.random.dirichlet([1.0] * action_space_size)
-            best_move = np.argmax(policy)
-            value = np.random.uniform(-1.0, 1.0)
 
             result = SearchResult(
                 request_id=request.request_id,
@@ -350,7 +336,10 @@ class SearchCoordinator:
                 search_info={
                     'simulations_completed': request.simulations,
                     'thread_id': thread_id,
-                    'inference_calls': num_inference_calls
+                    'tree_size': mcts.tree_size,
+                    'visit_counts': visit_counts,
+                    'legal_moves': len(request.game_state.get_legal_moves()),
+                    'action_space_size': request.game_state.action_space_size
                 }
             )
 
@@ -569,18 +558,20 @@ class SearchCoordinator:
                 self.logger.error(f"Error stopping inference worker: {e}")
 
         # Wait for coordinator threads to finish
-        if hasattr(self, 'inference_coordinator_thread'):
+        coordinator_thread = getattr(self, 'inference_coordinator_thread', None)
+        if coordinator_thread:
             try:
-                self.inference_coordinator_thread.join(timeout=5.0)
-                if self.inference_coordinator_thread.is_alive():
+                coordinator_thread.join(timeout=5.0)
+                if coordinator_thread.is_alive():
                     self.logger.warning("Inference coordinator thread did not shut down gracefully")
             except Exception as e:
                 self.logger.error(f"Error joining inference coordinator thread: {e}")
 
-        if hasattr(self, 'metrics_monitor_thread'):
+        metrics_thread = getattr(self, 'metrics_monitor_thread', None)
+        if metrics_thread:
             try:
-                self.metrics_monitor_thread.join(timeout=5.0)
-                if self.metrics_monitor_thread.is_alive():
+                metrics_thread.join(timeout=5.0)
+                if metrics_thread.is_alive():
                     self.logger.warning("Metrics monitor thread did not shut down gracefully")
             except Exception as e:
                 self.logger.error(f"Error joining metrics monitor thread: {e}")

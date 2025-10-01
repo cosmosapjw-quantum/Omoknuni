@@ -426,8 +426,8 @@ class TestModelValidator:
         mock_stat_result.st_size = 1024 * 1024  # 1MB
         mock_stat.return_value = mock_stat_result
 
-        # Mock file content for checksum
-        mock_file = Mock()
+        # Mock file content for checksum using MagicMock for context manager support
+        mock_file = MagicMock()
         mock_file.__enter__.return_value = mock_file
         mock_file.__exit__.return_value = False
         # Mock reading chunks for checksum calculation

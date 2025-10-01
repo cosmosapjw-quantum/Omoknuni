@@ -705,14 +705,66 @@ class TestBackupIntegration:
 
     def test_backup_with_selection_integration(self):
         """Test backup integration with PUCT selection."""
-        # This would test that backed up values correctly influence
-        # future PUCT selection decisions
-        pytest.skip("Requires full MCTS implementation")
+        from concurrent.futures import Future
+        from src.core.mcts import AlphaZeroMCTS
+        from src.games.game_state import create_game_state
+
+        game = create_game_state('gomoku')
+        priority_move = 112
+
+        def inference_fn(state):
+            future = Future()
+            policy = np.zeros(state.action_space_size, dtype=np.float32)
+            legal_moves = state.get_legal_moves()
+            if legal_moves:
+                for move in legal_moves:
+                    policy[move] = 0.01
+                if priority_move in legal_moves:
+                    policy[priority_move] = 0.9
+                policy_sum = policy.sum()
+                if policy_sum > 0:
+                    policy /= policy_sum
+            future.set_result((policy, 0.5))
+            return future
+
+        mcts = AlphaZeroMCTS(inference_fn)
+        visit_counts = mcts.search(game, simulations=8)
+
+        assert len(visit_counts) > 0
+        best_move = max(visit_counts, key=visit_counts.get)
+        assert best_move == priority_move
+
+        policy = mcts.get_policy(game, temperature=1.0)
+        assert abs(policy.sum() - 1.0) < 1e-6
+        assert policy[priority_move] == pytest.approx(policy.max(), rel=1e-2)
 
     def test_backup_in_full_search_loop(self):
         """Test backup in complete search loop."""
-        # This would test backup in the context of a full MCTS search
-        pytest.skip("Requires full MCTS implementation")
+        from concurrent.futures import Future
+        from src.core.mcts import AlphaZeroMCTS
+        from src.games.game_state import create_game_state
+
+        game = create_game_state('gomoku')
+
+        def inference_fn(state):
+            future = Future()
+            policy = np.zeros(state.action_space_size, dtype=np.float32)
+            legal_moves = state.get_legal_moves()
+            if legal_moves:
+                uniform = 1.0 / len(legal_moves)
+                for move in legal_moves:
+                    policy[move] = uniform
+            future.set_result((policy, 0.25))
+            return future
+
+        mcts = AlphaZeroMCTS(inference_fn)
+        mcts.search(game, simulations=6)
+
+        value = mcts.get_value(game)
+        assert 0.0 <= value <= 1.0
+
+        policy = mcts.get_policy(game, temperature=1.0)
+        assert abs(policy.sum() - 1.0) < 1e-6
 
 
 if __name__ == "__main__":

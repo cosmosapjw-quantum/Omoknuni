@@ -4,7 +4,12 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 
 ## Project Status
 
-🚧 **Under Development** - Currently implementing core architecture
+✅ **Alpha Release (v1.0.0-alpha)** - All 53 implementation tasks completed, production-ready for testing
+
+### Release Information
+- **Version**: 1.0.0-alpha
+- **Release Date**: 2025-10-01
+- **Status**: Ready for alpha/beta testing before production deployment
 
 ### Completed
 - [x] **T001**: Project structure and build system setup
@@ -223,17 +228,32 @@ docker-compose logs -f training
 # Access TensorBoard at http://localhost:6007
 ```
 
+### Alpha Testing
+
+Before production use, complete the alpha and beta testing phases. See the [Alpha/Beta Testing Guide](docs/alpha_beta_testing_guide.md) for detailed procedures.
+
+**Quick Alpha Validation**:
+```bash
+# Run contract tests
+python -m pytest tests/contract/ -v
+
+# Run integration tests
+python -m pytest tests/integration/test_full_system.py -v
+
+# Run performance benchmarks
+python -m pytest tests/performance/test_benchmarks.py -v
+```
+
 ### Training Your First Model
 
 For detailed training instructions, see the [Training Guide](docs/training_guide.md) with comprehensive hyperparameter recommendations and troubleshooting.
 
-#### Quick Training Start
+#### Production 48-Hour Gomoku Training
 ```bash
-# Train Gomoku model (fastest to achieve superhuman performance)
+# Train Gomoku model (superhuman performance in 48 hours)
 python -m src.training.training_loop \
-    --game gomoku \
-    --config config/training_gomoku.yaml \
-    --target-time-hours 48
+    --config config/gomoku_48h_training.yaml \
+    --max-time-hours 48
 
 # Train Chess model (strong amateur in 1 week)
 python -m src.training.training_loop \

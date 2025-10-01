@@ -90,7 +90,7 @@ class GPUInferenceWorker(InferenceWorker):
         self._pinned_input_buffer = None
         self._pinned_output_buffers = {}
         self._current_buffer_capacity = 0
-        self._use_pinned_memory = self.device.startswith('cuda') and torch.cuda.is_available()
+        self._use_pinned_memory = str(self.device).startswith('cuda') and torch.cuda.is_available()
 
         # CPU fallback mechanism (T018)
         self._cpu_fallback_worker = None
@@ -151,7 +151,7 @@ class GPUInferenceWorker(InferenceWorker):
             # Load model state dict
             # If device is CUDA but CUDA is not available, fallback to CPU loading
             load_device = self.device
-            if self.device.startswith('cuda') and not torch.cuda.is_available():
+            if str(self.device).startswith('cuda') and not torch.cuda.is_available():
                 load_device = 'cpu'
                 self.logger.warning(f"CUDA device {self.device} requested but CUDA not available, loading model on CPU")
 
@@ -192,17 +192,15 @@ class GPUInferenceWorker(InferenceWorker):
                 # Create model with detected game type
                 self.model = create_model_for_game(game_type)
 
-                # Load the actual weights FIRST
-                self.model.load_state_dict(model_data)
-
-                # Then move to device and initialize
+                # Move to device first
                 self.model = self.model.to(self.device)
                 self.model.eval()
 
-                # Initialize lazy layers with correct dummy input shape
-                with torch.no_grad():
-                    dummy_input = torch.randn(1, *input_shape, device=self.device)
-                    _ = self.model(dummy_input)
+                # Initialize lazy layers with dummy forward pass before loading state dict
+                self._initialize_model_layers(input_shape)
+
+                # Load the model weights
+                self.model.load_state_dict(model_data)
 
                 self.logger.info(f"Model loaded successfully (state_dict, game: {game_type})")
             else:  # It's a direct model instance
@@ -219,9 +217,28 @@ class GPUInferenceWorker(InferenceWorker):
             self.logger.error(f"Failed to load model: {e}")
             raise
 
+    def _initialize_model_layers(self, input_shape: Tuple[int, int, int]) -> None:
+        """Initialize lazy layers (like PolicyHead.fc) with dummy forward pass.
+
+        Args:
+            input_shape: (channels, height, width) for dummy input
+        """
+        try:
+            # Create dummy input tensor with batch size 1
+            dummy_input = torch.zeros(1, *input_shape, device=self.device)
+
+            # Do dummy forward pass to initialize lazy layers
+            with torch.no_grad():
+                self.model(dummy_input)
+
+            self.logger.debug("Model layers initialized successfully")
+        except Exception as e:
+            self.logger.warning(f"Failed to initialize model layers: {e}")
+            # Continue anyway - the loading might still work
+
     def _init_cpu_fallback(self) -> None:
         """Initialize CPU fallback worker for GPU failure scenarios (T018)."""
-        if not self._fallback_enabled or not self.device.startswith('cuda'):
+        if not self._fallback_enabled or not str(self.device).startswith('cuda'):
             return
 
         try:
@@ -275,13 +292,14 @@ class GPUInferenceWorker(InferenceWorker):
 
     def _init_gpu_monitoring(self) -> None:
         """Initialize GPU monitoring for utilization tracking."""
-        if not NVML_AVAILABLE or not self.device.startswith('cuda'):
+        if not NVML_AVAILABLE or not str(self.device).startswith('cuda'):
             self.logger.info("GPU monitoring not available (no pynvml or CPU device)")
             return
 
         try:
             pynvml.nvmlInit()
-            device_id = int(self.device.split(':')[1]) if ':' in self.device else 0
+            device_str = str(self.device)
+            device_id = int(device_str.split(':')[1]) if ':' in device_str else 0
             self._gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(device_id)
             self.logger.info(f"GPU monitoring initialized for device {device_id}")
         except Exception as e:
@@ -309,7 +327,7 @@ class GPUInferenceWorker(InferenceWorker):
             self.logger.info("Mixed precision disabled by configuration")
             return
 
-        if not self.device.startswith('cuda'):
+        if not str(self.device).startswith('cuda'):
             self.logger.info("Mixed precision not available on CPU device, using fp32")
             self.use_mixed_precision = False
             return
@@ -321,7 +339,8 @@ class GPUInferenceWorker(InferenceWorker):
                 self.use_mixed_precision = False
                 return
 
-            device_idx = int(self.device.split(':')[1]) if ':' in self.device else 0
+            device_str = str(self.device)
+            device_idx = int(device_str.split(':')[1]) if ':' in device_str else 0
             device_capability = torch.cuda.get_device_capability(device_idx)
 
             # Tensor cores available on compute capability 7.0+ (V100, RTX 20/30/40 series)
@@ -505,7 +524,7 @@ class GPUInferenceWorker(InferenceWorker):
         Returns:
             Tuple of (policy_logits, values)
         """
-        if self._mixed_precision_enabled and self.device.startswith('cuda'):
+        if self._mixed_precision_enabled and str(self.device).startswith('cuda'):
             try:
                 with torch.amp.autocast('cuda', dtype=torch.float16):
                     policy_logits, values = self.model(batch_tensor)
@@ -552,8 +571,9 @@ class GPUInferenceWorker(InferenceWorker):
             'mixed_precision_fallback_count': self._mixed_precision_fallback_count
         }
 
-        if self.device.startswith('cuda') and torch.cuda.is_available():
-            device_idx = int(self.device.split(':')[1]) if ':' in self.device else 0
+        if str(self.device).startswith('cuda') and torch.cuda.is_available():
+            device_str = str(self.device)
+            device_idx = int(device_str.split(':')[1]) if ':' in device_str else 0
             current_memory = torch.cuda.memory_allocated(device_idx)
             max_memory = torch.cuda.max_memory_allocated(device_idx)
 
@@ -583,7 +603,7 @@ class GPUInferenceWorker(InferenceWorker):
         metrics['oom_total_count'] = self._oom_count
         metrics['oom_consecutive_count'] = self._consecutive_oom_count
         metrics['original_batch_size'] = self._original_batch_size
-        metrics['min_batch_size'] = self._min_batch_size
+        metrics['oom_min_batch_size'] = self._min_batch_size
         metrics['last_successful_batch_size'] = self._last_successful_batch_size
         metrics['batch_size_reduction_factor'] = self._batch_size_reduction_factor
         metrics['oom_memory_threshold'] = self._oom_memory_threshold
@@ -625,7 +645,7 @@ class GPUInferenceWorker(InferenceWorker):
                     _ = self._run_inference_with_precision(dummy_input)
 
                 # Synchronize GPU
-                if self.device.startswith('cuda'):
+                if str(self.device).startswith('cuda'):
                     torch.cuda.synchronize()
 
         self.logger.info("GPU warmup completed")
@@ -890,6 +910,9 @@ class GPUInferenceWorker(InferenceWorker):
                 path=request.path,
                 processing_time_ms=processing_time_ms / len(requests)  # Per-sample time
             )
+            # Preserve originating thread information for distribution
+            if hasattr(request, 'thread_id'):
+                result.thread_id = request.thread_id
             results.append(result)
 
         return results
@@ -904,9 +927,9 @@ class GPUInferenceWorker(InferenceWorker):
             output_queues: List of result queues, one per thread
         """
         for result in results:
-            # For now, distribute results based on node_id hash
-            # In practice, this would use thread_id from the request
-            queue_idx = result.node_id % len(output_queues)
+            queue_idx = getattr(result, 'thread_id', None)
+            if queue_idx is None or queue_idx >= len(output_queues):
+                queue_idx = result.node_id % len(output_queues)
 
             try:
                 output_queues[queue_idx].put(result, timeout=1.0)
@@ -979,12 +1002,14 @@ class GPUInferenceWorker(InferenceWorker):
                                 if self._is_oom_error(retry_e):
                                     # Still getting OOM, fallback to CPU
                                     self.logger.error("OOM persists after recovery attempt, falling back to CPU")
+                                    self._fallback_failure_count += 1
                                     self._enable_cpu_fallback()
                                 else:
                                     raise retry_e
                     else:
                         # OOM recovery failed, fallback to CPU
                         self.logger.error("OOM recovery failed, falling back to CPU")
+                        self._fallback_failure_count += 1
                         self._enable_cpu_fallback()
 
                 # Check if this error should trigger CPU fallback
@@ -1026,11 +1051,14 @@ class GPUInferenceWorker(InferenceWorker):
         gpu_util = self._get_gpu_utilization()
 
         with self._metrics_lock:
+            if 'start_time' not in self._metrics:
+                self._metrics['start_time'] = time.time()
             self._metrics['total_requests'] += batch_size
             self._metrics['total_batches'] += 1
             self._metrics['total_inference_time'] += inference_time
             self._metrics['batch_sizes'].append(batch_size)
             self._metrics['inference_times'].append(inference_time)
+            self._metrics['last_update_time'] = time.time()
 
             # Add GPU utilization metrics
             if 'gpu_utilization_samples' not in self._metrics:
@@ -1094,8 +1122,17 @@ class GPUInferenceWorker(InferenceWorker):
             # GPU utilization metrics
             current_gpu_util = self._get_gpu_utilization()
             avg_gpu_util = 0.0
-            if 'gpu_utilization_samples' in self._metrics and self._metrics['gpu_utilization_samples']:
-                avg_gpu_util = sum(self._metrics['gpu_utilization_samples']) / len(self._metrics['gpu_utilization_samples'])
+            samples = self._metrics.get('gpu_utilization_samples')
+            if samples:
+                avg_gpu_util = sum(samples) / len(samples)
+            else:
+                start_time = self._metrics.get('start_time')
+                last_time = self._metrics.get('last_update_time', start_time)
+                if start_time is not None and last_time is not None and last_time > start_time:
+                    elapsed = last_time - start_time
+                    busy = self._metrics.get('total_inference_time', 0.0)
+                    if elapsed > 0:
+                        avg_gpu_util = min(1.0, max(0.0, busy / elapsed))
 
             memory_usage_gb = self._get_memory_usage()
 
@@ -1148,8 +1185,9 @@ class GPUInferenceWorker(InferenceWorker):
 
         # Fallback to memory-based estimation
         try:
-            if self.device.startswith('cuda') and torch.cuda.is_available():
-                device_idx = int(self.device.split(':')[1]) if ':' in self.device else 0
+            if str(self.device).startswith('cuda') and torch.cuda.is_available():
+                device_str = str(self.device)
+                device_idx = int(device_str.split(':')[1]) if ':' in device_str else 0
                 memory_used = torch.cuda.memory_allocated(device_idx)
                 memory_total = torch.cuda.get_device_properties(device_idx).total_memory
                 return (memory_used / memory_total)  # Return as 0.0-1.0 not percentage
@@ -1161,8 +1199,9 @@ class GPUInferenceWorker(InferenceWorker):
     def _get_memory_usage(self) -> float:
         """Get current VRAM usage in GB."""
         try:
-            if self.device.startswith('cuda') and torch.cuda.is_available():
-                device_idx = int(self.device.split(':')[1]) if ':' in self.device else 0
+            if str(self.device).startswith('cuda') and torch.cuda.is_available():
+                device_str = str(self.device)
+                device_idx = int(device_str.split(':')[1]) if ':' in device_str else 0
                 memory_used = torch.cuda.memory_allocated(device_idx)
                 return memory_used / (1024**3)  # Convert to GB
             else:
@@ -1175,8 +1214,9 @@ class GPUInferenceWorker(InferenceWorker):
     def _get_memory_usage_fraction(self) -> float:
         """Get current GPU memory usage as fraction of total memory."""
         try:
-            if self.device.startswith('cuda') and torch.cuda.is_available():
-                device_idx = int(self.device.split(':')[1]) if ':' in self.device else 0
+            if str(self.device).startswith('cuda') and torch.cuda.is_available():
+                device_str = str(self.device)
+                device_idx = int(device_str.split(':')[1]) if ':' in device_str else 0
                 memory_used = torch.cuda.memory_allocated(device_idx)
                 memory_total = torch.cuda.get_device_properties(device_idx).total_memory
                 return memory_used / memory_total if memory_total > 0 else 0.0
@@ -1376,6 +1416,14 @@ class GPUInferenceWorker(InferenceWorker):
 
         return metrics
 
+    def get_mixed_precision_metrics(self) -> Dict[str, float]:
+        """Get mixed precision performance metrics.
+
+        Returns:
+            Dictionary with mixed precision efficiency statistics
+        """
+        return self._get_memory_efficiency_metrics()
+
     def is_running(self) -> bool:
         """Check if worker thread is running."""
         return self._is_running
@@ -1428,131 +1476,3 @@ def create_inference_worker(model_path: str,
         InferenceWorker: Configured inference worker instance
     """
     return GPUInferenceWorker(model_path, device=device, **kwargs)
-
-
-class MockInferenceWorker(InferenceWorker):
-    """Mock inference worker for testing without GPU requirements.
-
-    Provides the same interface as GPUInferenceWorker but uses random
-    outputs for testing purposes.
-    """
-
-    def __init__(self,
-                 model_path: str,
-                 device: str = 'cpu',
-                 batch_size: int = 64,
-                 timeout_ms: float = 3.0,
-                 use_mixed_precision: bool = False):
-        self.model_path = model_path
-        self.device = device
-        self.batch_size = batch_size
-        self.timeout_ms = timeout_ms / 1000.0
-        self.use_mixed_precision = use_mixed_precision
-
-        # Thread control
-        self._stop_event = threading.Event()
-        self._worker_thread = None
-        self._is_running = False
-
-        # Mock metrics
-        self._request_count = 0
-        self._batch_count = 0
-
-        # Setup logging
-        self.logger = logging.getLogger('MockInferenceWorker')
-
-    def warmup(self, input_shape: Tuple[int, int, int]) -> None:
-        """Mock warmup - just log."""
-        self.logger.info(f"Mock warmup with shape {input_shape}")
-
-    def inference_loop(self,
-                      input_queue: Queue,
-                      output_queues: List[Queue]) -> None:
-        """Mock inference loop."""
-        self.logger.info("Mock inference loop started")
-
-        try:
-            while not self._stop_event.is_set():
-                try:
-                    request = input_queue.get(timeout=self.timeout_ms)
-
-                    # Mock processing time
-                    time.sleep(0.001)  # 1ms mock processing
-
-                    # Create mock result
-                    mock_policy = np.random.dirichlet(np.ones(225))  # Gomoku 15x15
-                    mock_value = np.random.uniform(-1, 1)
-
-                    result = InferenceResult(
-                        node_id=request.leaf_node_id,
-                        policy=mock_policy,
-                        value=mock_value,
-                        path=request.path,
-                        processing_time_ms=1.0
-                    )
-
-                    # Distribute to random output queue
-                    if output_queues:
-                        queue_idx = request.leaf_node_id % len(output_queues)
-                        output_queues[queue_idx].put(result, timeout=1.0)
-
-                    self._request_count += 1
-
-                except Empty:
-                    continue
-                except Exception as e:
-                    self.logger.error(f"Mock inference error: {e}")
-
-        finally:
-            self.logger.info("Mock inference loop ended")
-
-    def batch_inference(self,
-                       positions: List[np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
-        """Mock batch inference."""
-        batch_size = len(positions)
-
-        # Mock policies and values
-        policies = np.random.dirichlet(np.ones(225), size=batch_size)
-        values = np.random.uniform(-1, 1, size=batch_size)
-
-        return policies, values
-
-    def get_metrics(self) -> Dict[str, float]:
-        """Mock metrics."""
-        return {
-            'gpu_utilization': 0.0,
-            'average_batch_size': 1.0,
-            'inference_rate': self._request_count / max(1, time.time()),
-            'memory_usage_gb': 0.1,
-            'total_requests': self._request_count,
-            'total_batches': self._batch_count,
-            'total_inference_time': self._request_count * 0.001
-        }
-
-    def start_worker(self, input_queue: Queue, output_queues: List[Queue]) -> None:
-        """Start mock worker."""
-        if self._is_running:
-            raise RuntimeError("Worker already running")
-
-        self._stop_event.clear()
-        self._worker_thread = threading.Thread(
-            target=self.inference_loop,
-            args=(input_queue, output_queues),
-            daemon=True
-        )
-        self._worker_thread.start()
-        self._is_running = True
-
-    def stop_worker(self, timeout: float = 5.0) -> None:
-        """Stop mock worker."""
-        if not self._is_running:
-            return
-
-        self._stop_event.set()
-        if self._worker_thread:
-            self._worker_thread.join(timeout=timeout)
-        self._is_running = False
-
-    def is_running(self) -> bool:
-        """Check if mock worker is running."""
-        return self._is_running

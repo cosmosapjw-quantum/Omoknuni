@@ -65,7 +65,7 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass, field, asdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 from collections import defaultdict, deque
 import statistics
 import math
@@ -186,11 +186,11 @@ class RealGameState:
         if GAMES_AVAILABLE:
             # Use C++ game implementation
             if game_type == "gomoku":
-                self.game = alphazero_py.GomokuGame()
+                self.game = alphazero_py.GomokuState()
             elif game_type == "chess":
-                self.game = alphazero_py.ChessGame()
+                self.game = alphazero_py.ChessState()
             elif game_type == "go":
-                self.game = alphazero_py.GoGame()
+                self.game = alphazero_py.GoState()
             else:
                 raise ValueError(f"Unsupported game type: {game_type}")
         else:
@@ -237,7 +237,8 @@ class RealGameState:
         """Create a copy of the game state."""
         new_state = RealGameState(self.game_type)
         if GAMES_AVAILABLE:
-            new_state.game = self.game.copy()
+            # Game states may be immutable, just assign the current state
+            new_state.game = self.game
         else:
             new_state.board = self.board.copy()
             new_state.current_player = self.current_player
@@ -247,19 +248,21 @@ class RealGameState:
     def apply_move(self, move: int):
         """Apply a move to the game state."""
         if GAMES_AVAILABLE:
-            self.game.apply_move(move)
+            # make_move modifies the game in place
+            self.game.make_move(move)
         else:
             # Simple fallback implementation
             row, col = divmod(move, self.board_size)
             if row < self.board_size and col < self.board_size and self.board[row, col] == 0:
                 self.board[row, col] = self.current_player
-                self.current_player = -self.current_player
+                self.current_player = 3 - self.current_player  # Toggle between 1 and 2
                 self.move_count += 1
 
     def get_legal_moves(self) -> List[int]:
         """Get list of legal moves."""
         if GAMES_AVAILABLE:
-            return self.game.get_legal_moves()
+            legal_moves_mask = self.game.get_legal_moves()
+            return np.where(legal_moves_mask)[0].tolist()
         else:
             # Simple fallback - empty squares
             legal_moves = []
@@ -269,6 +272,12 @@ class RealGameState:
                     if row < self.board_size and col < self.board_size and self.board[row, col] == 0:
                         legal_moves.append(move)
             return legal_moves
+
+    def make_move(self, move: int) -> 'RealGameState':
+        """Apply move and return new state (compatibility method)."""
+        new_state = self.clone()
+        new_state.apply_move(move)
+        return new_state
 
     def is_terminal(self) -> bool:
         """Check if game is over."""
@@ -281,7 +290,7 @@ class RealGameState:
     def get_features(self) -> np.ndarray:
         """Get feature representation for neural network."""
         if GAMES_AVAILABLE:
-            return self.game.get_features()
+            return self.game.get_enhanced_tensor_representation()
         else:
             # Simple fallback - create basic feature planes
             features = np.zeros((self.feature_planes, self.board_size, self.board_size), dtype=np.float32)
@@ -295,6 +304,31 @@ class RealGameState:
                                 self.current_player, dtype=np.float32)
 
             return features
+
+    def get_current_player(self) -> int:
+        """Get current player to move."""
+        if GAMES_AVAILABLE:
+            return self.game.get_current_player()
+        else:
+            return self.current_player
+
+    @property
+    def action_space_size(self) -> int:
+        """Get action space size for the game."""
+        return self.action_space
+
+    def clone(self) -> 'RealGameState':
+        """Create a copy of the game state."""
+        if GAMES_AVAILABLE:
+            new_state = RealGameState(self.game_type)
+            new_state.game = self.game.clone()
+            return new_state
+        else:
+            new_state = RealGameState(self.game_type)
+            new_state.board = self.board.copy()
+            new_state.current_player = self.current_player
+            new_state.move_count = self.move_count
+            return new_state
 
 
 class ThreadOptimizer:
@@ -362,6 +396,7 @@ class ThreadOptimizer:
                     timeout_ms=3.0,
                     use_mixed_precision=True
                 )
+                setattr(worker, '_model_path', str(model_path))
                 logger.info("Created GPU inference worker")
                 return worker
             except Exception as e:
@@ -374,6 +409,7 @@ class ThreadOptimizer:
             batch_size=16,  # Smaller batches for CPU
             timeout_ms=10.0
         )
+        setattr(worker, '_model_path', str(model_path))
         logger.info("Created CPU inference worker")
         return worker
 
@@ -381,137 +417,156 @@ class ThreadOptimizer:
         """Run performance test for a specific thread count."""
         logger.info(f"Testing {config.thread_count} threads...")
 
-        try:
-            # Create real inference worker
-            inference_worker = self.create_real_inference_worker(config.game_type, use_gpu=True)
+        inference_worker = None
+        coordinator = None
+        model_path = None
+        failure_reasons: List[str] = []
 
-            # Create search coordinator with specified thread count
+        try:
+            inference_worker = self.create_real_inference_worker(config.game_type, use_gpu=True)
+            model_path = getattr(inference_worker, '_model_path', None)
+
             coordinator = SearchCoordinator(
                 inference_worker=inference_worker,
                 max_threads=config.thread_count,
                 max_queue_size=1000,
-                monitoring_interval=0.5
+                monitoring_interval=0.2
             )
-
-            # Start coordinator
             coordinator.start()
 
-            # Monitor system resources
             process = psutil.Process()
             initial_memory = process.memory_info().rss / 1024 / 1024  # MB
+            psutil.cpu_percent(interval=None)  # Prime CPU measurement window
 
-            # Warmup phase
             self._run_warmup_searches(coordinator, config)
 
-            # Main test phase
-            search_times = []
+            search_times: List[float] = []
+            cpu_samples: List[float] = []
+            parallel_samples: List[int] = []
+            inflight: Dict[Any, float] = {}
             start_time = time.time()
-            cpu_times = []
+            submitted = 0
+            completed = 0
+            max_parallel = max(1, config.thread_count)
 
-            for i in range(config.num_searches):
-                if time.time() - start_time > config.timeout_seconds:
+            while completed < config.num_searches:
+                elapsed = time.time() - start_time
+                remaining = config.timeout_seconds - elapsed
+                if remaining <= 0:
+                    failure_reasons.append(f"Timeout after {config.timeout_seconds}s")
                     logger.warning(f"Test timeout reached for {config.thread_count} threads")
                     break
 
-                # Monitor CPU during search
-                cpu_before = psutil.cpu_percent()
+                while submitted < config.num_searches and len(inflight) < max_parallel:
+                    game_state = RealGameState(config.game_type)
+                    legal_moves = game_state.get_legal_moves()
+                    if legal_moves and not game_state.is_terminal():
+                        num_moves = min(int(np.random.randint(1, 6)), len(legal_moves))
+                        for _ in range(num_moves):
+                            if game_state.is_terminal():
+                                break
+                            legal_moves = game_state.get_legal_moves()
+                            if legal_moves:
+                                move = int(np.random.choice(legal_moves))
+                                game_state.apply_move(move)
 
-                # Execute search
-                search_start = time.time()
-                game_state = RealGameState(config.game_type)
+                    request = SearchRequest(
+                        request_id=f"test_{submitted}",
+                        game_state=game_state,
+                        simulations=config.simulations_per_search,
+                        temperature=1.0,
+                        add_noise=False
+                    )
 
-                # Add some random moves to create realistic positions
-                legal_moves = game_state.get_legal_moves()
-                if legal_moves and not game_state.is_terminal():
-                    # Make 1-5 random moves to create varied positions
-                    num_moves = min(np.random.randint(1, 6), len(legal_moves))
-                    for _ in range(num_moves):
-                        if game_state.is_terminal():
-                            break
-                        legal_moves = game_state.get_legal_moves()
-                        if legal_moves:
-                            move = np.random.choice(legal_moves)
-                            game_state.apply_move(move)
+                    future = coordinator.submit_search(request)
+                    inflight[future] = time.time()
+                    submitted += 1
+                    parallel_samples.append(len(inflight))
 
-                request = SearchRequest(
-                    request_id=f"test_{i}",
-                    game_state=game_state,
-                    simulations=config.simulations_per_search,
-                    temperature=1.0,
-                    add_noise=False
-                )
+                if not inflight:
+                    break
 
-                future = coordinator.submit_search(request)
-                try:
-                    result = future.result(timeout=5.0)  # 5 second timeout per search
-                    search_time = time.time() - search_start
-                    search_times.append(search_time * 1000)  # Convert to ms
+                wait_timeout = max(0.0, remaining)
+                done, _ = wait(list(inflight.keys()), timeout=wait_timeout, return_when=FIRST_COMPLETED)
+                if not done:
+                    failure_reasons.append('Search batch timed out')
+                    logger.warning(f"Search batch timeout for {config.thread_count} threads")
+                    break
 
-                    cpu_after = psutil.cpu_percent()
-                    cpu_times.append(cpu_after)
+                for future in done:
+                    search_start = inflight.pop(future)
+                    try:
+                        future.result(timeout=0)
+                        search_time_ms = (time.time() - search_start) * 1000.0
+                        search_times.append(search_time_ms)
+                        cpu_samples.append(psutil.cpu_percent(interval=None))
+                        completed += 1
+                    except Exception as exc:
+                        failure_reasons.append(str(exc))
+                        cpu_samples.append(psutil.cpu_percent(interval=None))
 
-                except Exception as e:
-                    logger.warning(f"Search failed for thread {config.thread_count}: {e}")
+            for future in inflight:
+                future.cancel()
 
-            # Calculate metrics
-            end_time = time.time()
-            total_time = end_time - start_time
-            final_memory = process.memory_info().rss / 1024 / 1024  # MB
+            total_time = max(time.time() - start_time, 1e-6)
+            final_memory = process.memory_info().rss / 1024 / 1024
+            success_rate = (len(search_times) / config.num_searches) if config.num_searches else 0.0
 
-            # Get coordinator metrics
-            metrics = coordinator.get_metrics()
-
-            # Stop coordinator and cleanup
-            coordinator.stop()
-
-            # SearchCoordinator should handle inference worker lifecycle
-
-            # Cleanup model file
-            try:
-                model_path = self.output_dir / f"test_model_{config.game_type}.pth"
-                if model_path.exists():
-                    model_path.unlink()
-            except:
-                pass  # Ignore cleanup errors
-
-            # Calculate results
             if search_times:
                 avg_search_time = statistics.mean(search_times)
                 search_time_std = statistics.stdev(search_times) if len(search_times) > 1 else 0.0
                 searches_per_second = len(search_times) / total_time
-                success_rate = len(search_times) / config.num_searches
             else:
                 avg_search_time = float('inf')
                 search_time_std = 0.0
                 searches_per_second = 0.0
-                success_rate = 0.0
 
-            # Calculate contention score (higher variance indicates more contention)
-            contention_score = (search_time_std / avg_search_time * 100) if avg_search_time > 0 else 100.0
+            if avg_search_time in (0.0, float('inf')):
+                contention_score = 100.0 if avg_search_time == float('inf') else 0.0
+            else:
+                contention_score = (search_time_std / avg_search_time * 100.0) if avg_search_time > 0 else 100.0
 
-            # CPU and memory metrics
-            avg_cpu = statistics.mean(cpu_times) if cpu_times else 0.0
-            memory_usage = max(initial_memory, final_memory)
+            effective_thread_seconds = sum(st / 1000.0 for st in search_times)
+            thread_utilization = 0.0
+            if parallel_samples:
+                avg_parallelism = sum(parallel_samples) / len(parallel_samples)
+                thread_utilization = min(100.0, (avg_parallelism / max(1, config.thread_count)) * 100.0)
+            elif config.thread_count > 0 and total_time > 0:
+                thread_utilization = (effective_thread_seconds / (config.thread_count * total_time)) * 100.0
+                thread_utilization = max(0.0, min(100.0, thread_utilization))
+
+            cpu_utilization = statistics.mean(cpu_samples) if cpu_samples else psutil.cpu_percent(interval=None)
+            memory_usage = max(0.0, final_memory - initial_memory)
+
+            if success_rate < 1.0 and not failure_reasons:
+                failure_reasons.append('Not all searches completed')
+
+            error_message = None
+            if failure_reasons and success_rate < 1.0:
+                error_message = '; '.join(dict.fromkeys(failure_reasons))
 
             result = ThreadPerformanceResult(
                 thread_count=config.thread_count,
                 searches_per_second=searches_per_second,
                 average_search_time_ms=avg_search_time,
                 search_time_std_ms=search_time_std,
-                thread_utilization_percent=metrics.thread_utilization,
+                thread_utilization_percent=thread_utilization,
                 contention_score=contention_score,
-                cpu_utilization_percent=avg_cpu,
+                cpu_utilization_percent=cpu_utilization,
                 memory_usage_mb=memory_usage,
-                success_rate=success_rate
+                success_rate=success_rate,
+                error_message=error_message
             )
 
-            logger.info(f"Thread {config.thread_count}: {searches_per_second:.1f} searches/sec, "
-                       f"contention: {contention_score:.1f}%, efficiency: {result.efficiency_score():.3f}")
+            logger.info(
+                f"Thread {config.thread_count}: {searches_per_second:.1f} searches/sec, "
+                f"contention {contention_score:.1f}%, utilization {thread_utilization:.1f}%"
+            )
 
             return result
 
         except Exception as e:
-            logger.error(f"Error testing {config.thread_count} threads: {e}")
+            logger.error(f"Error testing {config.thread_count} threads: {e}", exc_info=True)
             return ThreadPerformanceResult(
                 thread_count=config.thread_count,
                 searches_per_second=0.0,
@@ -524,6 +579,27 @@ class ThreadOptimizer:
                 success_rate=0.0,
                 error_message=str(e)
             )
+
+        finally:
+            if coordinator is not None:
+                try:
+                    coordinator.stop()
+                except Exception as stop_error:
+                    logger.warning(f"Error stopping coordinator: {stop_error}")
+
+            if inference_worker is not None and hasattr(inference_worker, 'stop'):
+                try:
+                    inference_worker.stop()
+                except Exception:
+                    pass
+
+            if model_path:
+                try:
+                    path_obj = Path(model_path)
+                    if path_obj.exists():
+                        path_obj.unlink()
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to delete temporary model {model_path}: {cleanup_error}")
 
     def _run_warmup_searches(self, coordinator: SearchCoordinator, config: ThreadTestConfig):
         """Run warmup searches to stabilize performance."""
@@ -636,6 +712,12 @@ class ThreadOptimizer:
         logger.info(f"Optimal thread count: {optimal_thread_count}")
         logger.info(f"Peak performance: {optimal_result.searches_per_second:.1f} searches/sec")
         logger.info(f"Contention score: {optimal_result.contention_score:.1f}%")
+
+        try:
+            filename = f"thread_optimization_{int(time.time() * 1000)}.json"
+            self.save_report(report, filename)
+        except Exception as save_error:
+            logger.warning(f"Failed to save optimization report: {save_error}")
 
         return report
 

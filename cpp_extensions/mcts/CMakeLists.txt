@@ -95,4 +95,34 @@ endif()
 # Register compilation test
 add_test(NAME mcts_compilation COMMAND mcts_compile_test)
 
+# Python bindings module (optional, requires pybind11)
+if(pybind11_FOUND)
+    pybind11_add_module(mcts_py python_bindings.cpp)
+
+    # Link with MCTS core library
+    target_link_libraries(mcts_py PRIVATE mcts_core)
+
+    # Include directories
+    target_include_directories(mcts_py PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/..
+    )
+
+    # Compiler definitions for Python module
+    target_compile_definitions(mcts_py PRIVATE
+        VERSION_INFO="${PROJECT_VERSION}"
+        PYBIND11_DETAILED_ERROR_MESSAGES
+    )
+
+    # Install the module to the Python package
+    install(TARGETS mcts_py
+        COMPONENT python_modules
+        DESTINATION ${SKBUILD_PLATLIB_DIR}
+    )
+
+    message(STATUS "MCTS Python bindings configured")
+else()
+    message(STATUS "pybind11 not found, skipping MCTS Python bindings")
+endif()
+
 message(STATUS "MCTS core library configured with all components")

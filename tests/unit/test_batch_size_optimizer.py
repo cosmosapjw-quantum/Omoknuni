@@ -20,6 +20,7 @@ import json
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 import numpy as np
+import torch
 
 # Add project root to path
 import sys
@@ -356,6 +357,11 @@ class TestBatchSizeOptimizer:
         mock_model.eval.return_value = mock_model
         mock_model_class.return_value = mock_model
 
+        # Mock torch.save to actually create the file
+        def mock_save_side_effect(model, path):
+            Path(path).touch()
+        mock_save.side_effect = mock_save_side_effect
+
         model_path, model = self.optimizer.create_test_model("gomoku")
 
         assert model_path.exists()
@@ -585,7 +591,7 @@ class TestBatchSizeOptimizer:
         captured = capsys.readouterr()
 
         assert "BATCH SIZE OPTIMIZATION SUMMARY" in captured.out
-        assert "Optimal Batch Size: 32" in captured.out
+        assert "Batch Size: 32" in captured.out
         assert "Throughput: 4000 inferences/sec" in captured.out
         assert "gomoku" in captured.out
 

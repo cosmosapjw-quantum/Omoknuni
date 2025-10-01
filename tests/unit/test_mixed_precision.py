@@ -19,7 +19,8 @@ import os
 from unittest.mock import Mock, patch, MagicMock
 
 # Import worker implementation
-from src.neural.inference_worker import GPUInferenceWorker, MockInferenceWorker
+from src.neural.inference_worker import GPUInferenceWorker
+from src.neural.cpu_inference import CPUInferenceWorker
 from src.neural.model import create_model_for_game
 
 # Import contract interfaces
@@ -38,7 +39,7 @@ class TestMixedPrecisionSetup:
             # Create and save a valid model
             model = create_model_for_game('gomoku')
             with torch.no_grad():
-                dummy_input = torch.randn(1, 7, 15, 15)
+                dummy_input = torch.randn(1, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
                 _ = model(dummy_input)  # Initialize lazy layers
             torch.save(model.state_dict(), self.model_path)
 
@@ -152,7 +153,7 @@ class TestMixedPrecisionInference:
             self.model_path = f.name
             model = create_model_for_game('gomoku')
             with torch.no_grad():
-                dummy_input = torch.randn(1, 7, 15, 15)
+                dummy_input = torch.randn(1, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
                 _ = model(dummy_input)
             torch.save(model.state_dict(), self.model_path)
 
@@ -171,7 +172,7 @@ class TestMixedPrecisionInference:
 
     def test_inference_with_precision_fp32_fallback(self):
         """Test inference with FP32 fallback."""
-        batch_tensor = torch.randn(4, 7, 15, 15)
+        batch_tensor = torch.randn(4, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
 
         policy_logits, values = self.worker._run_inference_with_precision(batch_tensor)
 
@@ -190,7 +191,7 @@ class TestMixedPrecisionInference:
         self.worker._mixed_precision_enabled = True
         self.worker.device = 'cuda:0'
 
-        batch_tensor = torch.randn(4, 7, 15, 15)
+        batch_tensor = torch.randn(4, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
 
         # Test approach: create a real scenario that triggers autocast failure
         # by moving the input to CUDA but keeping model on CPU (device mismatch)
@@ -235,7 +236,7 @@ class TestMixedPrecisionInference:
         self.worker._mixed_precision_enabled = True
         self.worker.device = 'cuda:0'
 
-        batch_tensor = torch.randn(4, 7, 15, 15)
+        batch_tensor = torch.randn(4, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
 
         # Use real CUDA scenario that triggers autocast failures
         if torch.cuda.is_available():
@@ -290,7 +291,7 @@ class TestMemoryEfficiencyMetrics:
             self.model_path = f.name
             model = create_model_for_game('gomoku')
             with torch.no_grad():
-                dummy_input = torch.randn(1, 7, 15, 15)
+                dummy_input = torch.randn(1, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
                 _ = model(dummy_input)
             torch.save(model.state_dict(), self.model_path)
 
@@ -368,7 +369,7 @@ class TestMixedPrecisionIntegration:
             self.model_path = f.name
             model = create_model_for_game('gomoku')
             with torch.no_grad():
-                dummy_input = torch.randn(1, 7, 15, 15)
+                dummy_input = torch.randn(1, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
                 _ = model(dummy_input)
             torch.save(model.state_dict(), self.model_path)
 
@@ -387,7 +388,7 @@ class TestMixedPrecisionIntegration:
 
     def test_batch_inference_with_mixed_precision(self):
         """Test batch inference with mixed precision configuration."""
-        positions = [np.random.randn(7, 15, 15).astype(np.float32) for _ in range(8)]
+        positions = [np.random.randn(36, 15, 15).astype(np.float32) for _ in range(8)]  # Enhanced Gomoku: 36 input channels
 
         policies, values = self.worker.batch_inference(positions)
 
@@ -404,10 +405,10 @@ class TestMixedPrecisionIntegration:
     def test_warmup_with_mixed_precision(self):
         """Test warmup process with mixed precision."""
         # Should not raise exceptions
-        self.worker.warmup((7, 15, 15))
+        self.worker.warmup((36, 15, 15))  # Enhanced Gomoku: 36 input channels
 
         # Worker should be ready for inference
-        positions = [np.random.randn(7, 15, 15).astype(np.float32) for _ in range(4)]
+        positions = [np.random.randn(36, 15, 15).astype(np.float32) for _ in range(4)]  # Enhanced Gomoku: 36 input channels
         policies, values = self.worker.batch_inference(positions)
 
         assert policies.shape == (4, 225)
@@ -415,7 +416,7 @@ class TestMixedPrecisionIntegration:
 
     def test_accuracy_preservation_fp32_vs_mixed_precision(self):
         """Test that mixed precision preserves reasonable accuracy."""
-        positions = [np.random.randn(7, 15, 15).astype(np.float32) for _ in range(4)]
+        positions = [np.random.randn(36, 15, 15).astype(np.float32) for _ in range(4)]  # Enhanced Gomoku: 36 input channels
 
         # Get FP32 results
         self.worker.use_mixed_precision = False
@@ -442,7 +443,7 @@ def test_mixed_precision_parameter_combinations(use_mixed_precision, device):
         model_path = f.name
         model = create_model_for_game('gomoku')
         with torch.no_grad():
-            dummy_input = torch.randn(1, 7, 15, 15)
+            dummy_input = torch.randn(1, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
             _ = model(dummy_input)
         torch.save(model.state_dict(), model_path)
 
@@ -463,7 +464,7 @@ def test_mixed_precision_parameter_combinations(use_mixed_precision, device):
         assert hasattr(worker, '_mixed_precision_fallback_count')
 
         # Should be able to run inference
-        positions = [np.random.randn(7, 15, 15).astype(np.float32) for _ in range(4)]
+        positions = [np.random.randn(36, 15, 15).astype(np.float32) for _ in range(4)]  # Enhanced Gomoku: 36 input channels
         policies, values = worker.batch_inference(positions)
 
         assert policies.shape == (4, 225)
@@ -473,9 +474,19 @@ def test_mixed_precision_parameter_combinations(use_mixed_precision, device):
         os.unlink(model_path)
 
 
-def test_mixed_precision_mock_worker_compatibility():
-    """Test that MockInferenceWorker maintains compatibility."""
-    mock_worker = MockInferenceWorker(
+@patch('src.neural.cpu_inference.CPUInferenceWorker.batch_inference')
+@patch('src.neural.cpu_inference.CPUInferenceWorker._load_model')
+def test_mixed_precision_cpu_worker_compatibility(mock_load_model, mock_batch_inference):
+    """Test that CPUInferenceWorker maintains compatibility."""
+    # Mock the model loading to avoid file not found error
+    mock_load_model.return_value = None
+
+    # Mock batch inference to return expected shapes
+    mock_policies = np.random.random((4, 225)).astype(np.float32)
+    mock_values = np.random.random(4).astype(np.float32)
+    mock_batch_inference.return_value = (mock_policies, mock_values)
+
+    cpu_worker = CPUInferenceWorker(
         model_path='/dummy/path',
         device='cpu',
         batch_size=32,
@@ -484,12 +495,13 @@ def test_mixed_precision_mock_worker_compatibility():
     )
 
     # Should handle mixed precision parameter gracefully
-    assert hasattr(mock_worker, 'use_mixed_precision')
-    assert mock_worker.use_mixed_precision == True
+    # CPU worker should force mixed precision to False for performance reasons
+    assert hasattr(cpu_worker, 'use_mixed_precision')
+    assert cpu_worker.use_mixed_precision == False  # CPU workers don't use mixed precision
 
     # Should be able to run inference
-    positions = [np.random.randn(7, 15, 15).astype(np.float32) for _ in range(4)]
-    policies, values = mock_worker.batch_inference(positions)
+    positions = [np.random.randn(36, 15, 15).astype(np.float32) for _ in range(4)]  # Enhanced Gomoku: 36 input channels
+    policies, values = cpu_worker.batch_inference(positions)
 
     assert policies.shape == (4, 225)
     assert values.shape == (4,)

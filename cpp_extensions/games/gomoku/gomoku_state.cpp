@@ -409,23 +409,38 @@ std::vector<std::vector<std::vector<float>>> GomokuState::getEnhancedTensorRepre
     // CRITICAL FIX: Don't cache tensors to prevent memory accumulation
     
     try {
-        // Enhanced tensor format (consistent with basic representation):
-        // Channel 0: Current player's stones
-        // Channel 1: Opponent player's stones
-        // Channel 2: Player indicator (all 1s for BLACK/player1, all 0s for WHITE/player2)
-        // Channels 3-18: Previous 8 moves for each player (16 channels)
-        // Channels 19-20: Attack/defense planes (optional)
-        const int num_feature_planes = 21; // Total channels (19 standard + 2 enhanced)
+        // Enhanced tensor format (exact 36-plane specification):
+        // Plane 0: Current player's stones
+        // Plane 1: Opponent player's stones
+        // Plane 2: Empty cells
+        // Plane 3: Player indicator
+        // Planes 4-10: Last 7 moves for current player (7 planes)
+        // Planes 11-17: Last 7 moves for opponent player (7 planes)
+        // Plane 18: Freestyle rule
+        // Plane 19: Renju rule
+        // Plane 20: Omok rule
+        // Plane 21: Allowed moves mask
+        // Plane 22: Immediate five for current player
+        // Plane 23: Immediate five for opponent player
+        // Plane 24: Four threat for current player
+        // Plane 25: Four threat for opponent player
+        // Plane 26: Open three for current player
+        // Plane 27: Open three for opponent player
+        // Planes 28-31: Run-length features for current player (4 directions)
+        // Planes 32-35: Run-length features for opponent player (4 directions)
+        const int num_feature_planes = 36; // Exact specification
         
         // Create fresh tensor without pooling to avoid memory retention
         auto tensor = std::vector<std::vector<std::vector<float>>>(
             num_feature_planes, std::vector<std::vector<float>>(
                 board_size_, std::vector<float>(board_size_, 0.0f)));
 
-        // Channels 0-1: Current and opponent player stones (consistent with basic representation)
-        int p_idx_current = current_player_ - 1;      // 0 for BLACK, 1 for WHITE
-        int p_idx_opponent = 1 - p_idx_current;       // 1 for BLACK, 0 for WHITE
-        
+        int p_idx_current = current_player_ - 1;  // 0 for BLACK, 1 for WHITE
+        int p_idx_opponent = 1 - p_idx_current;   // 1 for BLACK, 0 for WHITE
+
+        // Plane 0: Current player's stones
+        // Plane 1: Opponent player's stones
+        // Plane 2: Empty cells
         for (int r = 0; r < board_size_; ++r) {
             for (int c = 0; c < board_size_; ++c) {
                 int action = coords_to_action(r, c);
@@ -433,148 +448,183 @@ std::vector<std::vector<std::vector<float>>> GomokuState::getEnhancedTensorRepre
                     tensor[0][r][c] = 1.0f; // Current player's stones
                 } else if (is_bit_set(p_idx_opponent, action)) {
                     tensor[1][r][c] = 1.0f; // Opponent player's stones
-                }
-                // Empty squares remain 0.0f in both channels
-            }
-        }
-
-        // Channel 2: Player indicator (all 1s for BLACK/player1, all 0s for WHITE/player2)
-        if (current_player_ == BLACK) {
-            for (int r = 0; r < board_size_; ++r) {
-                for (int c = 0; c < board_size_; ++c) {
-                    tensor[2][r][c] = 1.0f;
-                }
-            }
-        }
-        // For WHITE (player 2), the channel remains all 0s
-
-        // Channels 3-18: Move history (8 pairs)
-        int history_len = move_history_.size();
-        std::vector<int> player1_moves;
-        std::vector<int> player2_moves;
-
-        for(int k = history_len - 1; k >= 0; --k) {
-            int move_action = move_history_[k];
-            if (k % 2 == 0) { // Black's move (player 1)
-                if (player1_moves.size() < 8) {
-                    player1_moves.push_back(move_action);
-                }
-            } else { // White's move (player 2)
-                if (player2_moves.size() < 8) {
-                    player2_moves.push_back(move_action);
+                } else {
+                    tensor[2][r][c] = 1.0f; // Empty cells
                 }
             }
         }
 
-        // Fill history channels starting from channel 3
-        const int num_history_pairs = 8;
-        for(size_t i=0; i < player1_moves.size(); ++i) {
-            auto coords = action_to_coords_pair(player1_moves[i]);
-            int r = coords.first;
-            int c = coords.second;
-            if (r >= 0 && r < board_size_ && c >= 0 && c < board_size_) {
-                tensor[3 + i*2][r][c] = 1.0f;
+        // Plane 3: Player indicator (1.0 for BLACK, 0.0 for WHITE)
+        float player_indicator = (current_player_ == BLACK) ? 1.0f : 0.0f;
+        for (int r = 0; r < board_size_; ++r) {
+            for (int c = 0; c < board_size_; ++c) {
+                tensor[3][r][c] = player_indicator;
             }
         }
 
-        for(size_t i=0; i < player2_moves.size(); ++i) {
-            auto coords = action_to_coords_pair(player2_moves[i]);
-            int r = coords.first;
-            int c = coords.second;
-            if (r >= 0 && r < board_size_ && c >= 0 && c < board_size_) {
-                tensor[4 + i*2][r][c] = 1.0f;
+        // Planes 4-10: Last 7 moves for current player
+        // Planes 11-17: Last 7 moves for opponent player
+        int history_size = std::min(7, static_cast<int>(move_history_.size()));
+        for (int h = 0; h < history_size; ++h) {
+            int move_action = move_history_[move_history_.size() - 1 - h];  // Most recent first
+            auto [move_r, move_c] = action_to_coords_pair(move_action);
+
+            // Determine which player made this move
+            int moves_back = h;
+            int player_who_moved;
+            if (moves_back % 2 == 0) {
+                // Even number of moves back = same parity as current player
+                player_who_moved = current_player_;
+            } else {
+                // Odd number of moves back = opposite parity
+                player_who_moved = (current_player_ == BLACK) ? WHITE : BLACK;
+            }
+
+            int history_player_idx = player_who_moved - 1;  // 0-based
+
+            // Place the move in the appropriate history channel
+            if (history_player_idx == p_idx_current) {
+                tensor[4 + h][move_r][move_c] = 1.0f;  // Current player's history
+            } else {
+                tensor[11 + h][move_r][move_c] = 1.0f; // Opponent's history
             }
         }
-        
-        // Add attack and defense planes (channels 19 and 20)
-        try {
-#ifdef WITH_TORCH
-            if (isGPUEnabled()) {
-                // Use GPU for single state by batching it
-                std::vector<const GomokuState*> single_batch = {this};
-                auto batch_result = computeEnhancedTensorBatch(single_batch);
-                if (!batch_result.empty()) {
-                    // Copy GPU-computed attack/defense planes
-                    for (int r = 0; r < board_size_; ++r) {
-                        for (int c = 0; c < board_size_; ++c) {
-                            tensor[18][r][c] = batch_result[0][17][r][c];  // Attack plane
-                            tensor[19][r][c] = batch_result[0][18][r][c];  // Defense plane
+
+        // Planes 18-20: Rule indicators (all positions same value)
+        for (int r = 0; r < board_size_; ++r) {
+            for (int c = 0; c < board_size_; ++c) {
+                tensor[18][r][c] = (!use_renju_ && !use_omok_) ? 1.0f : 0.0f; // Freestyle
+                tensor[19][r][c] = use_renju_ ? 1.0f : 0.0f;                   // Renju
+                tensor[20][r][c] = use_omok_ ? 1.0f : 0.0f;                    // Omok
+            }
+        }
+
+        // Plane 21: Allowed moves mask
+        std::vector<int> legal_moves = getLegalMoves();
+        for (int action : legal_moves) {
+            auto [r, c] = action_to_coords_pair(action);
+            tensor[21][r][c] = 1.0f;
+        }
+
+        // Set up board accessor for rule engine
+        auto board_accessor = [this](int player_idx, int action) -> bool {
+            return this->is_bit_set(player_idx, action);
+        };
+
+        // Plane 22: Immediate five for current player
+        // Plane 23: Immediate five for opponent player
+        for (int r = 0; r < board_size_; ++r) {
+            for (int c = 0; c < board_size_; ++c) {
+                int action = coords_to_action(r, c);
+                if (!is_bit_set(0, action) && !is_bit_set(1, action)) {
+                    // Check if placing current player's stone here creates five in a row
+                    if (rules_engine_->is_five_in_a_row(action, current_player_, true)) {
+                        tensor[22][r][c] = 1.0f;
+                    }
+                    // Check if placing opponent's stone here creates five in a row
+                    if (rules_engine_->is_five_in_a_row(action, 3 - current_player_, true)) {
+                        tensor[23][r][c] = 1.0f;
+                    }
+                }
+            }
+        }
+
+        // Plane 24: Four threat for current player
+        // Plane 25: Four threat for opponent player
+        for (int r = 0; r < board_size_; ++r) {
+            for (int c = 0; c < board_size_; ++c) {
+                int action = coords_to_action(r, c);
+                if (!is_bit_set(0, action) && !is_bit_set(1, action)) {
+                    // Check for four threats (moves that create a four that threatens to become five)
+                    if (createsFourThreat(action, p_idx_current)) {
+                        tensor[24][r][c] = 1.0f;
+                    }
+                    if (createsFourThreat(action, p_idx_opponent)) {
+                        tensor[25][r][c] = 1.0f;
+                    }
+                }
+            }
+        }
+
+        // Plane 26: Open three for current player
+        // Plane 27: Open three for opponent player
+        for (int r = 0; r < board_size_; ++r) {
+            for (int c = 0; c < board_size_; ++c) {
+                int action = coords_to_action(r, c);
+                if (!is_bit_set(0, action) && !is_bit_set(1, action)) {
+                    if (use_omok_) {
+                        // Use Omok definition of open three
+                        if (createsOmokOpenThree(action, p_idx_current)) {
+                            tensor[26][r][c] = 1.0f;
+                        }
+                        if (createsOmokOpenThree(action, p_idx_opponent)) {
+                            tensor[27][r][c] = 1.0f;
+                        }
+                    } else if (use_renju_) {
+                        // Use Renju definition of open three
+                        if (createsRenjuOpenThree(action, p_idx_current)) {
+                            tensor[26][r][c] = 1.0f;
+                        }
+                        if (createsRenjuOpenThree(action, p_idx_opponent)) {
+                            tensor[27][r][c] = 1.0f;
+                        }
+                    } else {
+                        // Freestyle - simpler open three definition
+                        if (createsFreestyleOpenThree(action, p_idx_current)) {
+                            tensor[26][r][c] = 1.0f;
+                        }
+                        if (createsFreestyleOpenThree(action, p_idx_opponent)) {
+                            tensor[27][r][c] = 1.0f;
                         }
                     }
-                } else {
-                    throw std::runtime_error("GPU batch computation returned empty result");
                 }
-            } else
-#endif
-            {
-                // Use GPU batch computation if available
-#ifdef WITH_TORCH
-                // TODO: Re-implement GPU attack/defense computation using new interface
-                // The new implementation should:
-                // 1. Create a GPUAttackDefenseModule instance using createGPUAttackDefenseModule()
-                // 2. Convert the current board state to torch tensor
-                // 3. Call compute_planes_gpu() method
-                // 4. Convert results back to CPU and populate tensor planes
-                // Example:
-                // auto gpu_module = createGPUAttackDefenseModule(GameType::GOMOKU, board_size_, torch::kCUDA);
-                // auto board_tensor = convertBoardToTensor(board_);
-                // auto [attack_gpu, defense_gpu] = gpu_module->compute_planes_gpu(board_tensor, current_player_);
-                
-                // GPU functions commented out - no longer available
-                // if (alphazero::utils::AttackDefenseModule::isGPUAvailable()) {
-                //     std::vector<const GomokuState*> single_batch = {this};
-                //     auto gpu_result = alphazero::utils::AttackDefenseModule::computeGomokuAttackDefenseGPU(single_batch);
-                //     
-                //     if (gpu_result.size(0) > 0) {
-                //         // Extract attack/defense planes from GPU result
-                //         auto attack_tensor = gpu_result[0][0];  // First batch, first channel (attack)
-                //         auto defense_tensor = gpu_result[0][1]; // First batch, second channel (defense)
-                //         
-                //         // Copy to tensor representation
-                //         for (int r = 0; r < board_size_; ++r) {
-                //             for (int c = 0; c < board_size_; ++c) {
-                //                 tensor[18][r][c] = attack_tensor[r][c].item<float>();  // Attack plane
-                //                 tensor[19][r][c] = defense_tensor[r][c].item<float>(); // Defense plane
-                //             }
-                //         }
-                //         return tensor;
-                //     }
-                // }
-#endif
-                
-                // CPU fallback
-                // auto attack_defense_module = std::make_unique<alphazero::GomokuAttackDefenseModule>(board_size_); // Removed - will be implemented in neural network tasks
             }
-        } catch (const std::exception& e) {
-            // If attack/defense computation fails, just leave those channels as zeros
-            std::cerr << "Warning: Failed to compute attack/defense planes: " << e.what() << std::endl;
-            // Channels 18 and 19 will remain as zeros
         }
-        
+
+        // Planes 28-31: Run-length features for current player (4 directions)
+        // Planes 32-35: Run-length features for opponent player (4 directions)
+        const int DIRS[4][2] = {{1,0}, {0,1}, {1,1}, {1,-1}}; // horizontal, vertical, diagonal, anti-diagonal
+
+        for (int dir = 0; dir < 4; ++dir) {
+            for (int r = 0; r < board_size_; ++r) {
+                for (int c = 0; c < board_size_; ++c) {
+                    int action = coords_to_action(r, c);
+
+                    // Calculate run-length to five for current player in this direction
+                    float current_run_to_five = calculateRunLengthToFive(action, p_idx_current, DIRS[dir][0], DIRS[dir][1]);
+                    tensor[28 + dir][r][c] = current_run_to_five;
+
+                    // Calculate run-length to five for opponent player in this direction
+                    float opponent_run_to_five = calculateRunLengthToFive(action, p_idx_opponent, DIRS[dir][0], DIRS[dir][1]);
+                    tensor[32 + dir][r][c] = opponent_run_to_five;
+                }
+            }
+        }
+
         return tensor;
     } catch (const std::exception& e) {
         std::cerr << "Exception in getEnhancedTensorRepresentation: " << e.what() << std::endl;
-        
-        // Return a default tensor with the correct dimensions (20 channels)
-        const int num_feature_planes = 20; // Option C format
-        
+
+        // Return a default tensor with the correct dimensions (36 channels)
+        const int num_feature_planes = 36; // Exact specification
+
         return std::vector<std::vector<std::vector<float>>>(
-            num_feature_planes, 
+            num_feature_planes,
             std::vector<std::vector<float>>(
-                board_size_, 
+                board_size_,
                 std::vector<float>(board_size_, 0.0f)
             )
         );
     } catch (...) {
         std::cerr << "Unknown exception in getEnhancedTensorRepresentation" << std::endl;
-        
-        // Return a default tensor with the correct dimensions (20 channels)
-        const int num_feature_planes = 20; // Option C format
-        
+
+        // Return a default tensor with the correct dimensions (36 channels)
+        const int num_feature_planes = 36; // Exact specification
+
         return std::vector<std::vector<std::vector<float>>>(
-            num_feature_planes, 
+            num_feature_planes,
             std::vector<std::vector<float>>(
-                board_size_, 
+                board_size_,
                 std::vector<float>(board_size_, 0.0f)
             )
         );
@@ -1641,6 +1691,182 @@ int GomokuState::getRunLengthToFive(int player, int r, int c, int dr, int dc) co
 
     // Simple heuristic: return potential based on consecutive stones and available space
     return consecutive + std::min(gaps, 5 - consecutive);
+}
+
+// Helper methods for 36-plane tensor representation
+bool GomokuState::createsFourThreat(int action, int player_idx) const {
+    auto [r, c] = action_to_coords_pair(action);
+    if (r < 0 || r >= board_size_ || c < 0 || c >= board_size_) return false;
+
+    // Check if position is empty using bitboard representation
+    if (is_bit_set(0, action) || is_bit_set(1, action)) return false;
+
+    const int DIRS[4][2] = {{1,0}, {0,1}, {1,1}, {1,-1}};
+    for (auto& dir : DIRS) {
+        int consecutive = rules_engine_->get_line_length_at_action(action, player_idx,
+            [this](int p_idx, int a) { return this->is_bit_set(p_idx, a); }, dir[0], dir[1]);
+        if (consecutive == 4) {
+            return true; // Creates a four that threatens to become five
+        }
+    }
+    return false;
+}
+
+bool GomokuState::createsOmokOpenThree(int action, int player_idx) const {
+    auto [r, c] = action_to_coords_pair(action);
+    if (r < 0 || r >= board_size_ || c < 0 || c >= board_size_) return false;
+
+    // Check if position is empty using bitboard representation
+    if (is_bit_set(0, action) || is_bit_set(1, action)) return false;
+
+    // Use the existing Omok open three logic from rules engine
+    auto board_accessor = [this, action, player_idx](int p_idx, int a) -> bool {
+        if (a == action && p_idx == player_idx) return true;
+        return this->is_bit_set(p_idx, a);
+    };
+
+    // Use the public Omok forbidden move checker to detect if this creates a forbidden double three
+    // If placing the stone creates a forbidden double three, then it creates at least one open three
+    return rules_engine_->omok_makes_double_three(action, player_idx, board_accessor);
+}
+
+bool GomokuState::createsRenjuOpenThree(int action, int player_idx) const {
+    auto [r, c] = action_to_coords_pair(action);
+    if (r < 0 || r >= board_size_ || c < 0 || c >= board_size_) return false;
+
+    // Check if position is empty using bitboard representation
+    if (is_bit_set(0, action) || is_bit_set(1, action)) return false;
+
+    // Create a board accessor that simulates placing the stone at 'action'
+    auto board_accessor = [this, action, player_idx](int p_idx, int a) -> bool {
+        if (a == action && p_idx == player_idx) return true;
+        return this->is_bit_set(p_idx, a);
+    };
+
+    // Following user's guidance: "I think renju open three function can be also written with the existing functions for renju as same as omok"
+    // Use the public Renju forbidden move checker to detect if this creates a forbidden double three
+    // If placing the stone creates a forbidden double three, then it creates at least one open three
+    return rules_engine_->is_renju_double_three_forbidden(action, player_idx, board_accessor);
+}
+
+bool GomokuState::createsFreestyleOpenThree(int action, int player_idx) const {
+    auto [r, c] = action_to_coords_pair(action);
+    if (r < 0 || r >= board_size_ || c < 0 || c >= board_size_) return false;
+
+    // Check if position is empty using bitboard representation
+    if (is_bit_set(0, action) || is_bit_set(1, action)) return false;
+
+    // Freestyle is simpler - just check for open three patterns
+    auto board_accessor = [this, action, player_idx](int p_idx, int a) -> bool {
+        if (a == action && p_idx == player_idx) return true;
+        return this->is_bit_set(p_idx, a);
+    };
+
+    const int DIRS[4][2] = {{1,0}, {0,1}, {1,1}, {1,-1}};
+    for (auto& dir : DIRS) {
+        auto [r, c] = action_to_coords_pair(action);
+
+        // Check patterns like _XXX_ where _ is empty and X is the player's stone
+        for (int offset = 0; offset < 3; ++offset) {
+            int start_r = r - offset * dir[0];
+            int start_c = c - offset * dir[1];
+
+            bool valid_pattern = true;
+            // Check the three stones
+            for (int i = 0; i < 3; ++i) {
+                int check_r = start_r + i * dir[0];
+                int check_c = start_c + i * dir[1];
+                if (check_r < 0 || check_r >= board_size_ || check_c < 0 || check_c >= board_size_) {
+                    valid_pattern = false;
+                    break;
+                }
+                int check_action = coords_to_action(check_r, check_c);
+                if (!board_accessor(player_idx, check_action)) {
+                    valid_pattern = false;
+                    break;
+                }
+            }
+
+            if (valid_pattern) {
+                // Check that both ends are empty
+                int before_r = start_r - dir[0];
+                int before_c = start_c - dir[1];
+                int after_r = start_r + 3 * dir[0];
+                int after_c = start_c + 3 * dir[1];
+
+                bool before_empty = (before_r >= 0 && before_r < board_size_ &&
+                                   before_c >= 0 && before_c < board_size_ &&
+                                   !is_bit_set(0, coords_to_action(before_r, before_c)) &&
+                                   !is_bit_set(1, coords_to_action(before_r, before_c)));
+                bool after_empty = (after_r >= 0 && after_r < board_size_ &&
+                                  after_c >= 0 && after_c < board_size_ &&
+                                  !is_bit_set(0, coords_to_action(after_r, after_c)) &&
+                                  !is_bit_set(1, coords_to_action(after_r, after_c)));
+
+                if (before_empty && after_empty) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+float GomokuState::calculateRunLengthToFive(int action, int player_idx, int dr, int dc) const {
+    auto [r, c] = action_to_coords_pair(action);
+
+    int consecutive = 0;
+    int gaps = 0;
+    int total_potential = 0;
+
+    // Count in both directions from the position
+    const int MAX_SEARCH = 5; // Maximum distance to search for potential five-in-a-row
+
+    // Count backwards
+    for (int i = 1; i <= MAX_SEARCH; ++i) {
+        int nr = r - i * dr;
+        int nc = c - i * dc;
+        if (nr < 0 || nr >= board_size_ || nc < 0 || nc >= board_size_) break;
+
+        int check_action = coords_to_action(nr, nc);
+        if (is_bit_set(player_idx, check_action)) {
+            consecutive++;
+        } else if (!is_bit_set(0, check_action) && !is_bit_set(1, check_action)) {
+            gaps++;
+            if (gaps > 1) break; // Too many gaps
+        } else {
+            break; // Blocked by opponent
+        }
+    }
+
+    // Count forwards
+    for (int i = 1; i <= MAX_SEARCH; ++i) {
+        int nr = r + i * dr;
+        int nc = c + i * dc;
+        if (nr < 0 || nr >= board_size_ || nc < 0 || nc >= board_size_) break;
+
+        int check_action = coords_to_action(nr, nc);
+        if (is_bit_set(player_idx, check_action)) {
+            consecutive++;
+        } else if (!is_bit_set(0, check_action) && !is_bit_set(1, check_action)) {
+            gaps++;
+            if (gaps > 1) break; // Too many gaps
+        } else {
+            break; // Blocked by opponent
+        }
+    }
+
+    // Include the current position if we're calculating potential
+    if (!is_bit_set(0, action) && !is_bit_set(1, action)) {
+        total_potential = consecutive + 1; // +1 for the stone we might place
+    } else if (is_bit_set(player_idx, action)) {
+        total_potential = consecutive + 1; // +1 for the existing stone
+    } else {
+        total_potential = 0; // Position occupied by opponent
+    }
+
+    // Normalize to [0,1] range where 1.0 means can definitely make five
+    return std::min(total_potential / 5.0f, 1.0f);
 }
 
 } // namespace gomoku

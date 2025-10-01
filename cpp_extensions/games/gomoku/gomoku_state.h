@@ -185,6 +185,13 @@ private:
     int countConsecutive(int player, int r, int c, int dr, int dc) const;
     int getRunLengthToFive(int player, int r, int c, int dr, int dc) const;
 
+    // Helper methods for 36-plane tensor representation
+    bool createsFourThreat(int action, int player_idx) const;
+    bool createsOmokOpenThree(int action, int player_idx) const;
+    bool createsRenjuOpenThree(int action, int player_idx) const;
+    bool createsFreestyleOpenThree(int action, int player_idx) const;
+    float calculateRunLengthToFive(int action, int player_idx, int dr, int dc) const;
+
     // GPU acceleration support
 public:
     // Static methods for GPU initialization

@@ -146,6 +146,39 @@ class MemoryMappedExperienceBuffer(ExperienceBuffer):
             }
             self.index = []
 
+    def __len__(self) -> int:
+        """Return number of examples in buffer."""
+        with self.lock:
+            return len(self.index)
+
+    def add(self, example: TrainingExample) -> None:
+        """Add single training example to buffer.
+
+        Args:
+            example: Training example to add
+        """
+        # Create a single-game result to use existing add_games method
+        game_result = GameResult(
+            winner=1 if example.value > 0 else (0 if example.value == 0 else -1),
+            move_count=example.move_number + 1,
+            game_length_seconds=1.0,
+            examples=[example],
+            final_board="",
+            metadata={"game_type": example.game_type}
+        )
+        self.add_games([game_result])
+
+    def sample(self, batch_size: int) -> List[TrainingExample]:
+        """Sample random batch of examples.
+
+        Args:
+            batch_size: Number of examples to sample
+
+        Returns:
+            List of training examples
+        """
+        return self.sample_batch(batch_size)
+
     def _save_metadata(self) -> None:
         """Save metadata and index to disk."""
         self.metadata['last_modified'] = time.time()

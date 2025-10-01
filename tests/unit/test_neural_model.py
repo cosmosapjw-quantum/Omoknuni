@@ -367,9 +367,9 @@ class TestModelFactory:
         """Test game-specific model creation."""
         games = ['gomoku', 'chess', 'go']
         expected_configs = [
-            (7, 225),   # Gomoku
-            (12, 4096), # Chess
-            (17, 361),  # Go
+            (36, 225),   # Gomoku (enhanced features)
+            (30, 4096),  # Chess (enhanced features)
+            (25, 361),   # Go (enhanced features)
         ]
 
         for game, (input_channels, num_actions) in zip(games, expected_configs):
@@ -626,7 +626,7 @@ class TestModelIntegration:
         model.eval()
 
         # Sample position
-        x = torch.randn(1, 7, 15, 15)
+        x = torch.randn(1, 36, 15, 15)
 
         with torch.no_grad():
             policy_logits, values = model(x)

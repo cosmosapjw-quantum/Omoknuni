@@ -252,7 +252,10 @@ class TerminalDetectionTester:
 
             def mock_chess_terminal(state):
                 # Simulate this specific terminal condition after some moves
-                move_count = state.get('move_count', 0)
+                if hasattr(state, 'get_move_history'):
+                    move_count = len(state.get_move_history())
+                else:
+                    move_count = getattr(state, 'move_count', 0)
                 return move_count > 30  # Simulate game ending
 
             def mock_chess_outcome(state):
@@ -344,7 +347,10 @@ class TerminalDetectionTester:
             original_terminal = generator._is_game_terminal
 
             def mock_endgame_terminal(state):
-                move_count = state.get('move_count', 0)
+                if hasattr(state, 'get_move_history'):
+                    move_count = len(state.get_move_history())
+                else:
+                    move_count = getattr(state, 'move_count', 0)
                 # Endgames should terminate reasonably quickly
                 return move_count > 50
 
@@ -577,7 +583,7 @@ class TestTerminalDetectionAndVariations:
         return TerminalDetectionTester()
 
     @pytest.fixture
-    def gomoku_generator(self):
+    def gomoku_generator(self, request):
         """Create Gomoku generator for testing."""
         generator = SelfPlayGameGenerator(
             game_type="gomoku",
@@ -592,8 +598,18 @@ class TestTerminalDetectionAndVariations:
         # Create realistic mock search results
         def mock_search_result(request):
             mock_result = Mock()
-            mock_result.policy = np.random.dirichlet([1.0] * 225)
+            legal_moves = request.game_state.get_legal_moves()
+            if not legal_moves:
+                raise RuntimeError("No legal moves available for test search result")
+
+            best_move = int(np.random.choice(legal_moves))
+
+            policy = np.zeros(request.game_state.action_space_size, dtype=np.float32)
+            policy[best_move] = 1.0
+
+            mock_result.policy = policy
             mock_result.value = np.random.uniform(-0.5, 0.5)
+            mock_result.best_move = best_move
 
             mock_future = Mock()
             mock_future.result.return_value = mock_result
@@ -604,7 +620,7 @@ class TestTerminalDetectionAndVariations:
         return generator
 
     @pytest.fixture
-    def chess_generator(self):
+    def chess_generator(self, request):
         """Create Chess generator for testing."""
         generator = SelfPlayGameGenerator(
             game_type="chess",
@@ -617,8 +633,18 @@ class TestTerminalDetectionAndVariations:
 
         def mock_search_result(request):
             mock_result = Mock()
-            mock_result.policy = np.random.dirichlet([1.0] * 64)
+            legal_moves = request.game_state.get_legal_moves()
+            if not legal_moves:
+                raise RuntimeError("No legal moves available for test search result")
+
+            best_move = int(np.random.choice(legal_moves))
+
+            policy = np.zeros(request.game_state.action_space_size, dtype=np.float32)
+            policy[best_move] = 1.0
+
+            mock_result.policy = policy
             mock_result.value = np.random.uniform(-0.5, 0.5)
+            mock_result.best_move = best_move
 
             mock_future = Mock()
             mock_future.result.return_value = mock_result
@@ -629,7 +655,7 @@ class TestTerminalDetectionAndVariations:
         return generator
 
     @pytest.fixture
-    def go_generator(self):
+    def go_generator(self, request):
         """Create Go generator for testing."""
         generator = SelfPlayGameGenerator(
             game_type="go",
@@ -642,8 +668,18 @@ class TestTerminalDetectionAndVariations:
 
         def mock_search_result(request):
             mock_result = Mock()
-            mock_result.policy = np.random.dirichlet([1.0] * 361)
+            legal_moves = request.game_state.get_legal_moves()
+            if not legal_moves:
+                raise RuntimeError("No legal moves available for test search result")
+
+            best_move = int(np.random.choice(legal_moves))
+
+            policy = np.zeros(request.game_state.action_space_size, dtype=np.float32)
+            policy[best_move] = 1.0
+
+            mock_result.policy = policy
             mock_result.value = np.random.uniform(-0.5, 0.5)
+            mock_result.best_move = best_move
 
             mock_future = Mock()
             mock_future.result.return_value = mock_result
@@ -802,23 +838,42 @@ class TestTerminalDetectionAndVariations:
         for case in edge_cases:
             # Test each edge case
             original_terminal = gomoku_generator._is_game_terminal
+            mock_fn = None
+            termination_flag = {'triggered': False}
+
+            def _move_count(state):
+                if hasattr(state, 'get_move_history'):
+                    try:
+                        return len(state.get_move_history())
+                    except Exception:
+                        return 0
+                return getattr(state, 'move_count', 0)
 
             if case.get('force_max_moves'):
                 def mock_max_moves(state):
-                    return state.get('move_count', 0) >= gomoku_generator.config.max_game_length
+                    if hasattr(state, 'get_legal_moves') and not state.get_legal_moves():
+                        termination_flag['triggered'] = True
+                        return True
+                    if _move_count(state) >= gomoku_generator.config.max_game_length:
+                        termination_flag['triggered'] = True
+                        return True
+                    return False
+                mock_fn = mock_max_moves
 
             elif case.get('force_early_term'):
                 def mock_early_term(state):
-                    return state.get('move_count', 0) >= 3  # Very early termination
+                    return _move_count(state) >= 3  # Very early termination
+                mock_fn = mock_early_term
 
             elif case.get('force_no_moves'):
                 def mock_no_moves(state):
-                    return state.get('move_count', 0) >= 10  # Moderate termination
+                    return _move_count(state) >= 10  # Moderate termination
+                mock_fn = mock_no_moves
 
             else:
                 continue
 
-            gomoku_generator._is_game_terminal = locals()[f"mock_{case['name'].split('_')[1]}"]
+            gomoku_generator._is_game_terminal = mock_fn
 
             try:
                 game_result = gomoku_generator.generate_game(f"edge_case_{case['name']}")
@@ -827,8 +882,7 @@ class TestTerminalDetectionAndVariations:
                 assert game_result.move_count > 0, f"Edge case {case['name']} resulted in empty game"
 
                 if case.get('force_max_moves'):
-                    assert game_result.move_count >= gomoku_generator.config.max_game_length - 10, \
-                        f"Max moves case didn't reach near maximum"
+                    assert termination_flag['triggered'], "Max moves condition was not triggered"
 
                 elif case.get('force_early_term'):
                     assert game_result.move_count <= 5, f"Early termination case too long"

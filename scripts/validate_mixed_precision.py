@@ -30,7 +30,7 @@ def create_test_model():
         model_path = f.name
         model = create_model_for_game('gomoku')
         with torch.no_grad():
-            dummy_input = torch.randn(1, 7, 15, 15)
+            dummy_input = torch.randn(1, 36, 15, 15)
             _ = model(dummy_input)  # Initialize lazy layers
         torch.save(model.state_dict(), model_path)
     return model_path

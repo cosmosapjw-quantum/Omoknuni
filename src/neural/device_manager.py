@@ -126,6 +126,7 @@ class DeviceManager:
 
         self.device_info: Optional[DeviceInfo] = None
         self.device: torch.device = torch.device("cpu")
+        self.gpu_warmed_up: bool = False
 
         # RTX 3060 Ti specific optimizations
         self.rtx_3060_ti_memory_gb = 8.0
@@ -278,6 +279,9 @@ class DeviceManager:
         self.logger.info(
             f"GPU warmup completed: {avg_warmup_time:.2f}ms average inference time"
         )
+
+        # Mark GPU as warmed up
+        self.gpu_warmed_up = True
 
         # Clean up
         del dummy_model, dummy_input

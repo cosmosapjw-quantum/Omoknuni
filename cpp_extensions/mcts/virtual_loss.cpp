@@ -56,6 +56,11 @@ bool VirtualLossManager::remove_virtual_loss_from_path(const std::vector<NodeInd
 }
 
 bool VirtualLossManager::apply_virtual_loss(NodeIndex node_index, float magnitude) {
+    // CRITICAL: Check if virtual loss is enabled
+    if (!config_.enable_virtual_loss) {
+        return true;  // Success but no-op when disabled
+    }
+
     if (!validate_node_index(node_index)) {
         return false;
     }
@@ -71,6 +76,11 @@ bool VirtualLossManager::apply_virtual_loss(NodeIndex node_index, float magnitud
 }
 
 bool VirtualLossManager::remove_virtual_loss(NodeIndex node_index, float magnitude) {
+    // CRITICAL: Check if virtual loss is enabled
+    if (!config_.enable_virtual_loss) {
+        return true;  // Success but no-op when disabled
+    }
+
     if (!validate_node_index(node_index)) {
         return false;
     }

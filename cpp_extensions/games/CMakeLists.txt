@@ -46,5 +46,5 @@ target_compile_definitions(alphazero_py PRIVATE
 # Install the module to the Python package
 install(TARGETS alphazero_py
     COMPONENT python_modules
-    DESTINATION src
+    DESTINATION ${SKBUILD_PLATLIB_DIR}
 )

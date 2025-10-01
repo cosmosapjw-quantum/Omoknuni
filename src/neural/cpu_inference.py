@@ -19,6 +19,7 @@ import threading
 import logging
 import psutil
 import os
+import math
 from typing import List, Dict, Optional, Tuple, Any
 from queue import Queue, Empty
 from collections import deque
@@ -82,6 +83,9 @@ class CPUInferenceWorker(InferenceWorker):
         self.stop_event = threading.Event()
         self._warmup_completed = False
 
+        # Game-agnostic model info
+        self._model_info = None
+
         # Logging
         self.logger = logging.getLogger(f'CPUInferenceWorker')
         self.logger.setLevel(logging.INFO)
@@ -89,8 +93,39 @@ class CPUInferenceWorker(InferenceWorker):
         # Load model
         self._load_model()
 
+    def _initialize_model_layers(self, input_shape: Tuple[int, int, int]) -> None:
+        """Initialize all model layers with dummy forward pass."""
+        if self.model is None:
+            return
+
+        dummy_input = torch.zeros(1, *input_shape, device=self.device)
+        with torch.no_grad():
+            self.model(dummy_input)
+
+    def _derive_input_shape(self) -> Tuple[int, int, int]:
+        """Derive an appropriate input shape based on detected model info."""
+        if not self._model_info:
+            return (36, 15, 15)
+
+        channels = self._model_info.get('input_channels', 36)
+        num_actions = self._model_info.get('num_actions', 225)
+
+        if num_actions in (225, 324):  # Gomoku/15x15 variants
+            board_dim = 15
+        elif num_actions in (361, 400):  # Go 19x19 or similar
+            board_dim = 19
+        elif num_actions in (82, 100):  # Smaller Go boards (9x9, 10x10)
+            board_dim = int(round(math.sqrt(num_actions)))
+        elif num_actions in (64, 4096, 20480):  # Chess board representations
+            board_dim = 8
+        else:
+            approx_dim = int(round(math.sqrt(num_actions)))
+            board_dim = approx_dim if approx_dim * approx_dim == num_actions else 15
+
+        return (channels, board_dim, board_dim)
+
     def _load_model(self) -> None:
-        """Load neural network model on CPU device."""
+        """Load neural network model on CPU device with game-agnostic approach."""
         try:
             self.logger.info(f"Loading model from {self.model_path} on CPU")
 
@@ -99,45 +134,124 @@ class CPUInferenceWorker(InferenceWorker):
                 self.model = torch.load(self.model_path, map_location='cpu', weights_only=False)
                 self.model.to(self.device)
                 self.model.eval()
+                self._extract_model_info()
                 self.logger.info("Model loaded successfully (full model)")
                 return
             except Exception as e:
                 self.logger.info(f"Full model loading failed, trying state_dict: {e}")
 
-            # Fallback to state dict loading
-            state_dict = torch.load(self.model_path, map_location='cpu', weights_only=False)
+            # Fallback to state dict loading - create a flexible model
+            loaded_data = torch.load(self.model_path, map_location='cpu', weights_only=False)
 
-            # Try to determine input shape from state dict
-            # Look for first conv layer to infer input channels
-            first_conv_weight = None
-            for key, tensor in state_dict.items():
-                if 'conv' in key.lower() and 'weight' in key:
-                    first_conv_weight = tensor
-                    break
-
-            if first_conv_weight is not None:
-                input_channels = first_conv_weight.shape[1]
-                if input_channels == 36:
-                    game_type = 'gomoku'
-                elif input_channels == 30:
-                    game_type = 'chess'
-                elif input_channels == 25:
-                    game_type = 'go'
-                else:
-                    game_type = 'gomoku'
+            # Handle both state dict and full model formats
+            if hasattr(loaded_data, 'state_dict'):
+                # Full model was saved, extract state dict
+                state_dict = loaded_data.state_dict()
+            elif isinstance(loaded_data, dict):
+                # State dict was saved directly
+                state_dict = loaded_data
             else:
-                game_type = 'gomoku'
+                # Try to use as model directly and extract state dict
+                state_dict = loaded_data.state_dict() if hasattr(loaded_data, 'state_dict') else loaded_data
 
-            self.model = create_model_for_game(game_type)
-            self.model.load_state_dict(state_dict)
+            self._model_info = self._analyze_state_dict(state_dict)
+
+            # Create model based on detected architecture
+            self.model = self._create_flexible_model(self._model_info)
+
+            # Handle PolicyHead lazy initialization
+            expected_input_shape = self._derive_input_shape()
+
+            if 'policy_head.fc.weight' in state_dict:
+                # PolicyHead is already initialized in saved model - initialize ours too before loading
+                self._initialize_model_layers(expected_input_shape)
+                self.model.load_state_dict(state_dict)
+            else:
+                # PolicyHead not initialized in saved model - load first then initialize
+                self.model.load_state_dict(state_dict)
+                self._initialize_model_layers(expected_input_shape)
             self.model.to(self.device)
             self.model.eval()
 
-            self.logger.info(f"Model loaded successfully on CPU (game: {game_type})")
+            self.logger.info(f"Model loaded successfully on CPU (channels: {self._model_info['input_channels']}, "
+                           f"actions: {self._model_info['num_actions']})")
 
         except Exception as e:
             self.logger.error(f"Failed to load model: {e}")
             raise RuntimeError(f"CPU model loading failed: {e}")
+
+    def _analyze_state_dict(self, state_dict: dict) -> dict:
+        """Analyze state dict to extract model architecture information."""
+        info = {
+            'input_channels': 36,  # Default to Gomoku
+            'num_actions': 225,    # Default to Gomoku
+            'num_blocks': 20,      # Default blocks
+            'hidden_channels': 256 # Default channels
+        }
+
+        # Extract input channels from initial conv layer
+        if 'initial_conv.weight' in state_dict:
+            weight_shape = state_dict['initial_conv.weight'].shape
+            info['input_channels'] = weight_shape[1]  # [out_channels, in_channels, h, w]
+            info['hidden_channels'] = weight_shape[0]
+
+        # Extract number of actions from policy head
+        if 'policy_head.fc.weight' in state_dict:
+            policy_shape = state_dict['policy_head.fc.weight'].shape
+            info['num_actions'] = policy_shape[0]  # [num_actions, hidden_size]
+
+        # Count residual blocks
+        max_block_idx = -1
+        for key in state_dict.keys():
+            if 'residual_blocks.' in key:
+                parts = key.split('.')
+                if len(parts) >= 2:
+                    try:
+                        block_idx = int(parts[1])
+                        max_block_idx = max(max_block_idx, block_idx)
+                    except ValueError:
+                        pass
+
+        if max_block_idx >= 0:
+            info['num_blocks'] = max_block_idx + 1
+
+        return info
+
+    def _create_flexible_model(self, model_info: dict) -> torch.nn.Module:
+        """Create model with flexible architecture based on detected parameters."""
+        from src.neural.model import AlphaZeroNet
+
+        return AlphaZeroNet(
+            input_channels=model_info['input_channels'],
+            num_actions=model_info['num_actions'],
+            num_blocks=model_info['num_blocks'],
+            hidden_channels=model_info['hidden_channels']
+        )
+
+    def _extract_model_info(self) -> None:
+        """Extract model information from loaded model."""
+        if self.model is None:
+            return
+
+        # Try to extract from model attributes
+        info = {
+            'input_channels': getattr(self.model, 'input_channels', 36),
+            'num_actions': getattr(self.model, 'num_actions', 225),
+            'num_blocks': getattr(self.model, 'num_blocks', 20),
+            'hidden_channels': getattr(self.model, 'hidden_channels', 256)
+        }
+
+        # Try to infer from first layer if attributes not available
+        if hasattr(self.model, 'initial_conv') and hasattr(self.model.initial_conv, 'weight'):
+            weight_shape = self.model.initial_conv.weight.shape
+            info['input_channels'] = weight_shape[1]
+            info['hidden_channels'] = weight_shape[0]
+
+        if hasattr(self.model, 'policy_head') and hasattr(self.model.policy_head, 'fc'):
+            policy_shape = self.model.policy_head.fc.weight.shape
+            info['num_actions'] = policy_shape[0]
+
+        self._model_info = info
 
     def warmup(self, input_shape: Tuple[int, int, int]) -> None:
         """Warmup CPU inference with dummy calls.
@@ -229,9 +343,10 @@ class CPUInferenceWorker(InferenceWorker):
                 except Exception as e:
                     self.logger.error(f"CPU inference failed for request {request.leaf_node_id}: {e}")
                     # Put error result (Gomoku 15x15 = 225 actions)
+                    action_count = self._model_info['num_actions'] if self._model_info else 225
                     error_result = InferenceResult(
                         node_id=request.leaf_node_id,
-                        policy=np.zeros(225),  # Safe fallback
+                        policy=np.zeros(action_count),  # Safe fallback aligned with model
                         value=0.0,
                         path=request.path,
                         processing_time_ms=0.0
@@ -303,8 +418,9 @@ class CPUInferenceWorker(InferenceWorker):
 
         except Exception as e:
             self.logger.error(f"CPU batch inference failed: {e}")
-            # Return safe fallback results (Gomoku 15x15 = 225 actions)
-            policies_np = np.zeros((batch_size, 225))
+            # Return safe fallback results with dynamic action space
+            num_actions = self._model_info['num_actions'] if self._model_info else 225
+            policies_np = np.zeros((batch_size, num_actions))
             values_np = np.zeros(batch_size)
             return policies_np, values_np
 

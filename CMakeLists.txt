@@ -1,6 +1,36 @@
 cmake_minimum_required(VERSION 3.18...3.25)
 project(omoknuni LANGUAGES CXX CUDA)
 
+# Sanitizer options
+option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
+option(ENABLE_TSAN "Enable ThreadSanitizer" OFF)
+option(ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
+
+if((ENABLE_ASAN AND ENABLE_TSAN) OR (ENABLE_ASAN AND ENABLE_UBSAN) OR (ENABLE_TSAN AND ENABLE_UBSAN))
+    message(FATAL_ERROR "Multiple sanitizers enabled. Please enable only one of ENABLE_ASAN, ENABLE_TSAN, ENABLE_UBSAN.")
+endif()
+
+set(SANITIZER_COMPILE_FLAGS "")
+set(SANITIZER_LINK_FLAGS "")
+
+if(ENABLE_ASAN)
+    list(APPEND SANITIZER_COMPILE_FLAGS "-fsanitize=address" "-fno-omit-frame-pointer" "-g" "-O1")
+    list(APPEND SANITIZER_LINK_FLAGS "-fsanitize=address")
+elseif(ENABLE_TSAN)
+    list(APPEND SANITIZER_COMPILE_FLAGS "-fsanitize=thread" "-fno-omit-frame-pointer" "-g" "-O1")
+    list(APPEND SANITIZER_LINK_FLAGS "-fsanitize=thread")
+elseif(ENABLE_UBSAN)
+    list(APPEND SANITIZER_COMPILE_FLAGS "-fsanitize=undefined" "-fno-omit-frame-pointer" "-g" "-O1")
+    list(APPEND SANITIZER_LINK_FLAGS "-fsanitize=undefined")
+endif()
+
+if(SANITIZER_COMPILE_FLAGS)
+    message(STATUS "Sanitizer build enabled with flags: ${SANITIZER_COMPILE_FLAGS}")
+    add_compile_options(${SANITIZER_COMPILE_FLAGS})
+    add_link_options(${SANITIZER_LINK_FLAGS})
+    set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type" FORCE)
+endif()
+
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -247,6 +247,16 @@ class SelfPlayAnalyzer:
 
         rows, cols = zip(*positions)
 
+        corner_zone = max(2, min(board_h, board_w) // 3)
+
+        def _in_corner(r: int, c: int) -> bool:
+            return (
+                (r < corner_zone and c < corner_zone)
+                or (r < corner_zone and c >= board_w - corner_zone)
+                or (r >= board_h - corner_zone and c < corner_zone)
+                or (r >= board_h - corner_zone and c >= board_w - corner_zone)
+            )
+
         return {
             'mean_row': np.mean(rows),
             'mean_col': np.mean(cols),
@@ -256,8 +266,7 @@ class SelfPlayAnalyzer:
                 abs(r - board_h//2) + abs(c - board_w//2)
                 for r, c in positions
             ]),
-            'corner_ratio': sum(1 for r, c in positions
-                              if (r in [0, board_h-1]) and (c in [0, board_w-1])) / len(positions),
+            'corner_ratio': sum(1 for r, c in positions if _in_corner(r, c)) / len(positions),
             'edge_ratio': sum(1 for r, c in positions
                             if (r in [0, board_h-1]) or (c in [0, board_w-1])) / len(positions)
         }
@@ -747,15 +756,25 @@ class TestGameVariations:
         """Test Gomoku with Renju/Omok variations."""
         # Test different Dirichlet alphas
         configs = [
-            {'game_type': 'gomoku', 'dirichlet_alpha': 0.3},  # Standard Gomoku
-            {'game_type': 'gomoku', 'dirichlet_alpha': 0.15}, # Renju (more constrained)
+            {'game_type': 'gomoku', 'dirichlet_alpha': 0.3, 'rule_variant': 'standard'},  # Standard Gomoku
+            {'game_type': 'gomoku', 'dirichlet_alpha': 0.15, 'rule_variant': 'renju'},   # Renju (more constrained)
         ]
 
         for config in configs:
             generator = SelfPlayGameGenerator(
                 game_type=config['game_type'],
-                model_path="/tmp/test.pth"
+                model_path="/tmp/test.pth",
+                num_threads=2,
+                mcts_simulations=100,
+                temperature_schedule=[(10, 1.0)],
+                add_dirichlet_noise=True,
+                # Propagate variant override when provided
+                # Older constructor signature ignores unknown kwargs, so we set env temporarily
             )
+
+            if 'rule_variant' in config:
+                generator.config.rule_variant = config['rule_variant']
+                generator._set_game_specific_params()
 
             # Verify alpha was set correctly based on game type
             expected_alpha = config.get('dirichlet_alpha', 0.3)

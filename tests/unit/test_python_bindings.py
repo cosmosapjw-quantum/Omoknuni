@@ -12,11 +12,13 @@ import sys
 import os
 import numpy as np
 
-# Add build directory to path for testing
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'cpp_extensions', 'games'))
+# Add source directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+
+from src.utils.alphazero_py_import import require_alphazero_py
 
 try:
-    import alphazero_py
+    alphazero_py = require_alphazero_py()
 except ImportError as e:
     raise ImportError(f"Cannot import alphazero_py module. Build may be required: {e}")
 
@@ -78,9 +80,13 @@ class TestPythonBindings(unittest.TestCase):
         self.assertFalse(game.is_terminal())
 
         # Test legal moves
-        legal_moves = game.get_legal_moves()
+        legal_moves_mask = game.get_legal_moves()
+        self.assertIsInstance(legal_moves_mask, np.ndarray)
+        self.assertEqual(legal_moves_mask.dtype, bool)
+        self.assertEqual(len(legal_moves_mask), 225)  # All positions initially legal
+        legal_moves = np.where(legal_moves_mask)[0]
         self.assertEqual(len(legal_moves), 225)  # All positions initially legal
-        self.assertTrue(all(isinstance(move, int) for move in legal_moves))
+        self.assertTrue(all(isinstance(move, (int, np.integer)) for move in legal_moves))
 
         # Test move validation
         self.assertTrue(game.is_legal_move(0))
@@ -91,25 +97,26 @@ class TestPythonBindings(unittest.TestCase):
         game = self.module.create_game(self.module.GameType.GOMOKU)
 
         initial_player = game.get_current_player()
-        legal_moves = game.get_legal_moves()
+        legal_moves_mask = game.get_legal_moves()
+        legal_moves = np.where(legal_moves_mask)[0]
         first_move = legal_moves[0]
 
         # Make a move
         game.make_move(first_move)
         self.assertEqual(game.get_current_player(), 3 - initial_player)  # Player switched
-        self.assertNotIn(first_move, game.get_legal_moves())  # Move no longer legal
+        self.assertFalse(game.get_legal_moves()[first_move])  # Move no longer legal
 
         # Undo the move
         game.undo_move()
         self.assertEqual(game.get_current_player(), initial_player)  # Player restored
-        self.assertIn(first_move, game.get_legal_moves())  # Move legal again
+        self.assertTrue(game.get_legal_moves()[first_move])  # Move legal again
 
     def test_numpy_tensor_integration(self):
         """Test numpy array compatibility for neural network features."""
         game = self.module.create_game(self.module.GameType.GOMOKU)
 
         # Test tensor representation
-        tensor = game.get_tensor_representation()
+        tensor = game.get_enhanced_tensor_representation()
         self.assertIsInstance(tensor, np.ndarray)
         self.assertEqual(tensor.dtype, np.float32)
         self.assertEqual(len(tensor.shape), 3)  # (channels, height, width)
@@ -180,8 +187,9 @@ class TestPythonBindings(unittest.TestCase):
         self.assertGreater(len(game_str), 0)
 
         # Test action to string conversion
-        legal_moves = game.get_legal_moves()
-        if legal_moves:
+        legal_moves_mask = game.get_legal_moves()
+        legal_moves = np.where(legal_moves_mask)[0]
+        if len(legal_moves) > 0:
             action_str = game.action_to_string(legal_moves[0])
             self.assertIsInstance(action_str, str)
 
@@ -200,7 +208,8 @@ class TestPythonBindings(unittest.TestCase):
         self.assertEqual(hash1, hash2)
 
         # After different moves, hashes should differ
-        legal_moves = game1.get_legal_moves()
+        legal_moves_mask = game1.get_legal_moves()
+        legal_moves = np.where(legal_moves_mask)[0]
         if len(legal_moves) >= 2:
             game1.make_move(legal_moves[0])
             game2.make_move(legal_moves[1])
@@ -209,9 +218,10 @@ class TestPythonBindings(unittest.TestCase):
     def test_game_cloning(self):
         """Test game state cloning."""
         original = self.module.create_game(self.module.GameType.GOMOKU)
-        legal_moves = original.get_legal_moves()
+        legal_moves_mask = original.get_legal_moves()
+        legal_moves = np.where(legal_moves_mask)[0]
 
-        if legal_moves:
+        if len(legal_moves) > 0:
             original.make_move(legal_moves[0])
 
             # Test clone

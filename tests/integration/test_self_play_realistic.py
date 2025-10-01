@@ -60,7 +60,7 @@ class RealGameStateSimulator:
         self.game_type = game_type
         self.move_count = 0
         self.terminal = False
-        self.current_player = 0
+        self.current_player = 1
         self.winner = None
 
         # Use ENHANCED tensor shapes that match updated create_model_for_game function
@@ -77,7 +77,7 @@ class RealGameStateSimulator:
             self.action_space = 361  # 19x19 board
             self.board_size = 19
 
-    def get_tensor_representation(self) -> np.ndarray:
+    def get_enhanced_tensor_representation(self) -> np.ndarray:
         """Return realistic tensor representation with proper shape and values."""
         tensor = np.zeros(self.tensor_shape, dtype=np.float32)
 
@@ -128,7 +128,7 @@ class RealGameStateSimulator:
     def make_move(self, move: int) -> None:
         """Apply move in-place."""
         self.move_count += 1
-        self.current_player = 1 - self.current_player
+        self.current_player = 3 - self.current_player  # Toggle between 1 and 2
 
         # Simulate game termination
         if self.move_count >= 100 or np.random.random() < 0.02:  # 2% chance per move
@@ -136,16 +136,16 @@ class RealGameStateSimulator:
             if np.random.random() < 0.1:  # 10% draws
                 self.winner = None
             else:
-                self.winner = np.random.choice([0, 1])
+                self.winner = np.random.choice([1, 2])
 
     def get_game_result(self) -> int:
         """Get game result as enum value for alphazero_py compatibility."""
         if not self.terminal:
             return -1  # Game not finished
 
-        if self.winner == 0:
+        if self.winner == 1:
             return 0  # WIN_PLAYER1
-        elif self.winner == 1:
+        elif self.winner == 2:
             return 1  # WIN_PLAYER2
         else:
             return 2  # DRAW
@@ -153,6 +153,10 @@ class RealGameStateSimulator:
     def to_string(self) -> str:
         """Human-readable board representation."""
         return f"{self.game_type.title()} game, move {self.move_count}, player {self.current_player}"
+
+    def get_current_player(self) -> int:
+        """Get current player to move (1 or 2)."""
+        return self.current_player
 
 
 def create_realistic_model(game_type: str, save_path: str) -> None:
@@ -176,6 +180,12 @@ def create_realistic_model(game_type: str, save_path: str) -> None:
         hidden_channels=256,
         use_se=True
     )
+
+    # Initialize lazily-created layers (policy head FC, etc.) before saving
+    board_size = 15 if game_type == "gomoku" else 8 if game_type == "chess" else 19
+    dummy_input = torch.zeros(1, input_channels, board_size, board_size)
+    with torch.no_grad():
+        model(dummy_input)
 
     # Save in the format expected by CPU inference worker (raw state_dict)
     # The worker expects to be able to load this directly as a state_dict
@@ -211,99 +221,72 @@ class TestRealisticSelfPlayIntegration:
         if not self.device_info.is_cuda_available:
             pytest.skip("GPU not available")
 
-        with patch('src.training.self_play.GAMES_AVAILABLE', True), \
-             patch('src.training.self_play.alphazero_py') as mock_alphazero:
+        mock_game_state = RealGameStateSimulator(self.game_type)
 
-            # Mock game creation with realistic simulator
-            mock_game_state = RealGameStateSimulator(self.game_type)
-            mock_alphazero.create_game.return_value = mock_game_state
+        # Create real GPU inference worker
+        gpu_worker = GPUInferenceWorker(
+            model_path=self.model_path,
+            batch_size=32,  # Smaller batch for testing
+            timeout_ms=1000.0  # 1s timeout for testing
+        )
 
-            # Mock GameResult enum
-            class MockGameResult:
-                WIN_PLAYER1 = 0
-                WIN_PLAYER2 = 1
-                DRAW = 2
-            mock_alphazero.GameResult = MockGameResult
+        try:
+            # Test GPU inference functionality using batch_inference method
+            test_state = mock_game_state.get_enhanced_tensor_representation()
+            test_batch = [test_state]
+            policies, values = gpu_worker.batch_inference(test_batch)
 
-            # Create real GPU inference worker
-            gpu_worker = GPUInferenceWorker(
-                model_path=self.model_path,
-                batch_size=32,  # Smaller batch for testing
-                timeout_ms=1000.0  # 1s timeout for testing
-            )
+            assert policies.shape == (1, 225)  # (batch_size, num_actions)
+            assert values.shape == (1,)        # (batch_size,)
+            assert isinstance(values[0], (float, np.floating))
+            assert -1.0 <= values[0] <= 1.0
+            assert np.abs(policies[0].sum() - 1.0) < 1e-5  # Normalized probability
 
-            try:
-                # Test GPU inference functionality using batch_inference method
-                test_state = mock_game_state.get_tensor_representation()
-                test_batch = [test_state]
-                policies, values = gpu_worker.batch_inference(test_batch)
+            # Test with multiple states in batch
+            batch_size = 4
+            test_batch = [mock_game_state.get_enhanced_tensor_representation() for _ in range(batch_size)]
+            policies, values = gpu_worker.batch_inference(test_batch)
+            assert policies.shape == (batch_size, 225)
+            assert values.shape == (batch_size,)
 
-                assert policies.shape == (1, 225)  # (batch_size, num_actions)
-                assert values.shape == (1,)        # (batch_size,)
-                assert isinstance(values[0], (float, np.floating))
-                assert -1.0 <= values[0] <= 1.0
-                assert np.abs(policies[0].sum() - 1.0) < 1e-5  # Normalized probability
+            # Verify all policies are normalized
+            for i in range(batch_size):
+                assert np.abs(policies[i].sum() - 1.0) < 1e-5
 
-                # Test with multiple states in batch
-                batch_size = 4
-                test_batch = [mock_game_state.get_tensor_representation() for _ in range(batch_size)]
-                policies, values = gpu_worker.batch_inference(test_batch)
-                assert policies.shape == (batch_size, 225)
-                assert values.shape == (batch_size,)
-
-                # Verify all policies are normalized
-                for i in range(batch_size):
-                    assert np.abs(policies[i].sum() - 1.0) < 1e-5
-
-            finally:
-                # GPUInferenceWorker doesn't need explicit stop for batch_inference
-                pass
+        finally:
+            # GPUInferenceWorker doesn't need explicit stop for batch_inference
+            pass
 
     @pytest.mark.cpu_only
     def test_real_cpu_inference_integration(self):
         """Test with actual CPU inference worker."""
-        with patch('src.training.self_play.GAMES_AVAILABLE', True), \
-             patch('src.training.self_play.alphazero_py') as mock_alphazero:
+        mock_game_state = RealGameStateSimulator(self.game_type)
+        cpu_worker = CPUInferenceWorker(model_path=self.model_path)
 
-            # Mock game creation
-            mock_game_state = RealGameStateSimulator(self.game_type)
-            mock_alphazero.create_game.return_value = mock_game_state
+        try:
+            # Warmup required before batch inference
+            test_state = mock_game_state.get_enhanced_tensor_representation()
+            cpu_worker.warmup(test_state.shape)  # (C, H, W)
 
-            # Mock GameResult enum
-            class MockGameResult:
-                WIN_PLAYER1 = 0
-                WIN_PLAYER2 = 1
-                DRAW = 2
-            mock_alphazero.GameResult = MockGameResult
+            # Test CPU inference functionality using batch_inference method
+            test_batch = [test_state]
+            policies, values = cpu_worker.batch_inference(test_batch)
 
-            # Create real CPU inference worker
-            cpu_worker = CPUInferenceWorker(model_path=self.model_path)
+            assert policies.shape == (1, 225)  # (batch_size, num_actions)
+            assert values.shape == (1,)        # (batch_size,)
+            assert isinstance(values[0], (float, np.floating))
+            assert -1.0 <= values[0] <= 1.0
 
-            try:
-                # CRITICAL: Warmup is required before batch_inference!
-                # This is the kind of real integration requirement mocks miss
-                test_state = mock_game_state.get_tensor_representation()
-                cpu_worker.warmup(test_state.shape)  # (C, H, W)
+            # Test with multiple states in batch
+            batch_size = 4
+            test_batch = [mock_game_state.get_enhanced_tensor_representation() for _ in range(batch_size)]
+            policies, values = cpu_worker.batch_inference(test_batch)
+            assert policies.shape == (batch_size, 225)
+            assert values.shape == (batch_size,)
 
-                # Test CPU inference functionality using batch_inference method
-                test_batch = [test_state]
-                policies, values = cpu_worker.batch_inference(test_batch)
-
-                assert policies.shape == (1, 225)  # (batch_size, num_actions)
-                assert values.shape == (1,)        # (batch_size,)
-                assert isinstance(values[0], (float, np.floating))
-                assert -1.0 <= values[0] <= 1.0
-
-                # Test with multiple states in batch
-                batch_size = 4
-                test_batch = [mock_game_state.get_tensor_representation() for _ in range(batch_size)]
-                policies, values = cpu_worker.batch_inference(test_batch)
-                assert policies.shape == (batch_size, 225)
-                assert values.shape == (batch_size,)
-
-            finally:
-                # CPUInferenceWorker doesn't need explicit stop for batch_inference
-                pass
+        finally:
+            # CPUInferenceWorker doesn't need explicit stop for batch_inference
+            pass
 
     def test_inference_worker_fallback(self):
         """Test fallback from GPU to CPU when GPU unavailable/fails."""
@@ -367,7 +350,7 @@ class TestRealisticSelfPlayIntegration:
         def worker_thread():
             try:
                 for _ in range(requests_per_thread):
-                    test_state = RealGameStateSimulator(self.game_type).get_tensor_representation()
+                    test_state = RealGameStateSimulator(self.game_type).get_enhanced_tensor_representation()
                     policies, values = gpu_worker.batch_inference([test_state])
                     results.append((policies[0], values[0]))
                     time.sleep(0.01)  # Small delay
@@ -413,7 +396,7 @@ class TestRealisticSelfPlayIntegration:
             # Process many batches using batch_inference
             for _ in range(50):
                 test_states = [
-                    RealGameStateSimulator(self.game_type).get_tensor_representation()
+                    RealGameStateSimulator(self.game_type).get_enhanced_tensor_representation()
                     for _ in range(8)
                 ]
                 gpu_worker.batch_inference(test_states)
@@ -446,7 +429,7 @@ class TestRealisticSelfPlayIntegration:
             for i in range(10):
                 simulator = RealGameStateSimulator(self.game_type)
                 examples.append(TrainingExample(
-                    state=simulator.get_tensor_representation(),
+                    state=simulator.get_enhanced_tensor_representation(),
                     policy=np.random.dirichlet([1.0] * 225).astype(np.float32),
                     value=np.random.uniform(-1.0, 1.0),
                     game_type=self.game_type,
@@ -487,12 +470,16 @@ class TestRealisticSelfPlayIntegration:
             pytest.skip("GPU not available for consistency test")
 
         # Create both workers with same model
-        gpu_worker = GPUInferenceWorker(model_path=self.model_path, batch_size=8)
+        gpu_worker = GPUInferenceWorker(
+            model_path=self.model_path,
+            batch_size=8,
+            use_mixed_precision=False
+        )
         cpu_worker = CPUInferenceWorker(model_path=self.model_path)
 
         try:
             # Warmup CPU worker
-            test_state = RealGameStateSimulator(self.game_type).get_tensor_representation()
+            test_state = RealGameStateSimulator(self.game_type).get_enhanced_tensor_representation()
             cpu_worker.warmup(test_state.shape)
 
             # Test with same inputs

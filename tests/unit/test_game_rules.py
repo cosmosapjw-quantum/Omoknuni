@@ -15,11 +15,13 @@ import time
 import numpy as np
 from typing import List, Set, Tuple
 
-# Add build directory to path for testing
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'cpp_extensions', 'games'))
+# Add source directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+
+from src.utils.alphazero_py_import import require_alphazero_py
 
 try:
-    import alphazero_py
+    alphazero_py = require_alphazero_py()
 except ImportError as e:
     raise ImportError(f"Cannot import alphazero_py module. Build may be required: {e}")
 
@@ -41,13 +43,15 @@ class TestGomokuRules(unittest.TestCase):
 
     def test_legal_moves_initial(self):
         """Test all positions are legal initially."""
-        legal_moves = self.game.get_legal_moves()
+        legal_moves_mask = self.game.get_legal_moves()
+        legal_moves = np.where(legal_moves_mask)[0]
         self.assertEqual(len(legal_moves), 225)
         self.assertEqual(set(legal_moves), set(range(225)))
 
     def test_move_making_reduces_legal_moves(self):
         """Test that making moves reduces available legal moves."""
-        initial_count = len(self.game.get_legal_moves())
+        initial_legal_moves_mask = self.game.get_legal_moves()
+        initial_count = len(np.where(initial_legal_moves_mask)[0])
 
         # Make a move in the center
         center_move = 7 * 15 + 7  # (7,7) in 15x15 board
@@ -56,7 +60,8 @@ class TestGomokuRules(unittest.TestCase):
         self.game.make_move(center_move)
 
         # Check legal moves reduced by 1 and doesn't include the played move
-        new_legal_moves = self.game.get_legal_moves()
+        new_legal_moves_mask = self.game.get_legal_moves()
+        new_legal_moves = np.where(new_legal_moves_mask)[0]
         self.assertEqual(len(new_legal_moves), initial_count - 1)
         self.assertNotIn(center_move, new_legal_moves)
 
@@ -75,7 +80,7 @@ class TestGomokuRules(unittest.TestCase):
     def test_move_undo(self):
         """Test move undo restores previous state."""
         initial_player = self.game.get_current_player()
-        initial_legal_count = len(self.game.get_legal_moves())
+        initial_legal_count = np.sum(self.game.get_legal_moves())
 
         # Make a move
         move = 112  # Center of board
@@ -83,14 +88,14 @@ class TestGomokuRules(unittest.TestCase):
 
         # Verify state changed
         self.assertEqual(self.game.get_current_player(), 3 - initial_player)
-        self.assertEqual(len(self.game.get_legal_moves()), initial_legal_count - 1)
+        self.assertEqual(np.sum(self.game.get_legal_moves()), initial_legal_count - 1)
 
         # Undo the move
         self.game.undo_move()
 
         # Verify state restored
         self.assertEqual(self.game.get_current_player(), initial_player)
-        self.assertEqual(len(self.game.get_legal_moves()), initial_legal_count)
+        self.assertEqual(np.sum(self.game.get_legal_moves()), initial_legal_count)
         self.assertTrue(self.game.is_legal_move(move))
 
     def test_invalid_moves(self):
@@ -236,13 +241,19 @@ class TestGomokuRules(unittest.TestCase):
 
         for i in range(max_moves):
             legal_moves = self.game.get_legal_moves()
-            if not legal_moves or self.game.is_terminal():
+            if not legal_moves.any() or self.game.is_terminal():
                 break
-            self.game.make_move(legal_moves[0])
+            # Get first legal move from boolean mask
+            legal_move_indices = np.where(legal_moves)[0]
+            if len(legal_move_indices) > 0:
+                self.game.make_move(legal_move_indices[0])
+            else:
+                break
             moves_made += 1
 
         # Verify game state is consistent
-        self.assertLessEqual(len(self.game.get_legal_moves()), 225 - moves_made)
+        legal_moves_count = np.sum(self.game.get_legal_moves())
+        self.assertLessEqual(legal_moves_count, 225 - moves_made)
 
 
 class TestChessRules(unittest.TestCase):
@@ -264,11 +275,11 @@ class TestChessRules(unittest.TestCase):
         """Test initial legal moves are reasonable."""
         legal_moves = self.game.get_legal_moves()
         # Should have 20 legal opening moves (16 pawn moves + 4 knight moves)
-        self.assertEqual(len(legal_moves), 20)
+        self.assertEqual(np.sum(legal_moves), 20)
 
     def test_pawn_moves(self):
         """Test basic pawn movement rules."""
-        initial_legal_count = len(self.game.get_legal_moves())
+        initial_legal_count = np.sum(self.game.get_legal_moves())
 
         # Make a standard pawn move (e2-e4)
         legal_moves = self.game.get_legal_moves()
@@ -280,16 +291,16 @@ class TestChessRules(unittest.TestCase):
         # Verify player switched
         self.assertEqual(self.game.get_current_player(), 2)  # Black's turn
         # Legal move count may be the same in opening, just verify we have moves
-        self.assertGreater(len(self.game.get_legal_moves()), 0)
+        self.assertGreater(np.sum(self.game.get_legal_moves()), 0)
 
     def test_move_undo_chess(self):
         """Test chess move undo functionality."""
         initial_player = self.game.get_current_player()
-        initial_moves = self.game.get_legal_moves()
+        initial_moves_mask = self.game.get_legal_moves()
         initial_hash = self.game.get_hash()
 
         # Make a move
-        move = initial_moves[0]
+        move = np.where(initial_moves_mask)[0][0]
         self.game.make_move(move)
 
         # Verify state changed
@@ -310,7 +321,8 @@ class TestChessRules(unittest.TestCase):
         self.assertFalse(self.game.is_legal_move(self.game.get_action_space_size()))
 
         # Test that only initial legal moves are valid
-        legal_moves = set(self.game.get_legal_moves())
+        legal_moves_mask = self.game.get_legal_moves()
+        legal_moves = set(np.where(legal_moves_mask)[0])
         for test_move in range(min(100, self.game.get_action_space_size())):
             if test_move in legal_moves:
                 self.assertTrue(self.game.is_legal_move(test_move))
@@ -338,7 +350,7 @@ class TestChessRules(unittest.TestCase):
 
     def test_chess_tensor_representation(self):
         """Test chess tensor representation has correct dimensions."""
-        tensor = self.game.get_tensor_representation()
+        tensor = self.game.get_enhanced_tensor_representation()
         self.assertEqual(len(tensor.shape), 3)  # (channels, height, width)
         self.assertEqual(tensor.shape[1], 8)    # 8x8 board
         self.assertEqual(tensor.shape[2], 8)    # 8x8 board
@@ -368,7 +380,7 @@ class TestGoRules(unittest.TestCase):
 
     def test_go_move_making(self):
         """Test basic Go move making."""
-        initial_legal_count = len(self.game.get_legal_moves())
+        initial_legal_count = np.sum(self.game.get_legal_moves())
 
         # Make a move on the board
         corner_move = 0  # Top-left corner
@@ -379,12 +391,12 @@ class TestGoRules(unittest.TestCase):
         # Verify state changed
         self.assertEqual(self.game.get_current_player(), 2)  # White's turn
         new_legal_moves = self.game.get_legal_moves()
-        self.assertNotIn(corner_move, new_legal_moves)
+        self.assertFalse(new_legal_moves[corner_move])  # Move should be illegal now
 
     def test_go_move_undo(self):
         """Test Go move undo functionality."""
         initial_player = self.game.get_current_player()
-        initial_moves = self.game.get_legal_moves()
+        initial_moves_mask = self.game.get_legal_moves()
         initial_hash = self.game.get_hash()
 
         # Make a move
@@ -416,7 +428,7 @@ class TestGoRules(unittest.TestCase):
 
     def test_go_tensor_representation(self):
         """Test Go tensor representation has correct dimensions."""
-        tensor = self.game.get_tensor_representation()
+        tensor = self.game.get_enhanced_tensor_representation()
         self.assertEqual(len(tensor.shape), 3)  # (channels, height, width)
         self.assertEqual(tensor.shape[1], 19)   # 19x19 board
         self.assertEqual(tensor.shape[2], 19)   # 19x19 board
@@ -455,8 +467,10 @@ class TestCrossGameRuleConsistency(unittest.TestCase):
                 initial_hash = game.get_hash()
                 legal_moves = game.get_legal_moves()
 
-                if legal_moves:
-                    game.make_move(legal_moves[0])
+                if legal_moves.any():
+                    legal_move_indices = np.where(legal_moves)[0]
+                    if len(legal_move_indices) > 0:
+                        game.make_move(legal_move_indices[0])
                     game.undo_move()
                     self.assertEqual(game.get_hash(), initial_hash,
                                    f"{name} undo should restore state")
@@ -465,7 +479,7 @@ class TestCrossGameRuleConsistency(unittest.TestCase):
         """Test all games produce valid tensor representations."""
         for name, game in self.games.items():
             with self.subTest(game=name):
-                tensor = game.get_tensor_representation()
+                tensor = game.get_enhanced_tensor_representation()
                 self.assertIsInstance(tensor, np.ndarray, f"{name} should return numpy array")
                 self.assertEqual(len(tensor.shape), 3, f"{name} tensor should be 3D")
                 self.assertEqual(tensor.dtype, np.float32, f"{name} tensor should be float32")
@@ -524,10 +538,11 @@ class TestGameRulePerformance(unittest.TestCase):
         for name, game in self.games.items():
             with self.subTest(game=name):
                 legal_moves = game.get_legal_moves()
-                if not legal_moves:
+                if not legal_moves.any():
                     self.skipTest(f"No legal moves available for {name}")
 
-                move = legal_moves[0]
+                legal_move_indices = np.where(legal_moves)[0]
+                move = legal_move_indices[0]
                 start_time = time.time()
                 iterations = 1000
 
@@ -550,7 +565,7 @@ class TestGameRulePerformance(unittest.TestCase):
                 iterations = 1000
 
                 for _ in range(iterations):
-                    tensor = game.get_tensor_representation()
+                    tensor = game.get_enhanced_tensor_representation()
                     # Ensure tensor is valid
                     self.assertGreater(tensor.size, 0)
 

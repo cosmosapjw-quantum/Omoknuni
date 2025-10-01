@@ -27,6 +27,8 @@ from src.training.self_play import (
     save_games_to_disk, load_games_from_disk
 )
 from specs.contracts.training_api import GameResult, TrainingExample
+from src.core.search_coordinator import SearchResult
+from src.games.game_state import create_game_state
 
 
 class TestSelfPlayConfig:
@@ -73,20 +75,19 @@ class TestSelfPlayGameGenerator:
     @pytest.fixture
     def generator(self, mock_model_path):
         """Create test generator with mocked dependencies."""
-        with patch('src.training.self_play.GAMES_AVAILABLE', False):
-            generator = SelfPlayGameGenerator(
-                game_type="gomoku",
-                model_path=mock_model_path,
-                mcts_simulations=100,  # Reduced for testing
-                temperature_schedule=[(10, 1.0), (100, 0.1)],
-                num_threads=2  # Reduced for testing
-            )
+        generator = SelfPlayGameGenerator(
+            game_type="gomoku",
+            model_path=mock_model_path,
+            mcts_simulations=100,  # Reduced for testing
+            temperature_schedule=[(10, 1.0), (100, 0.1)],
+            num_threads=2  # Reduced for testing
+        )
 
-            # Mock the components
-            generator.inference_worker = Mock()
-            generator.search_coordinator = Mock()
+        # Mock the components to avoid launching background threads during unit tests
+        generator.inference_worker = Mock()
+        generator.search_coordinator = Mock()
 
-            return generator
+        return generator
 
     def test_initialization(self, mock_model_path):
         """Test generator initialization."""
@@ -137,20 +138,22 @@ class TestSelfPlayGameGenerator:
     def test_move_selection_deterministic(self, generator):
         """Test deterministic move selection (temperature = 0)."""
         policy = np.array([0.1, 0.3, 0.6])
+        best_move = int(np.argmax(policy))
 
         # With temperature 0, should always select best move
         for _ in range(10):
-            move = generator._select_move_with_temperature(policy, 0.0)
-            assert move == 2  # Index of maximum value
+            move = generator._select_move_with_temperature(policy, 0.0, best_move)
+            assert move == best_move  # Index of maximum value
 
     def test_move_selection_stochastic(self, generator):
         """Test stochastic move selection with temperature."""
         policy = np.array([0.1, 0.3, 0.6])
+        best_move = int(np.argmax(policy))
 
         # With temperature > 0, should sample probabilistically
         moves = []
         for _ in range(100):
-            move = generator._select_move_with_temperature(policy, 1.0)
+            move = generator._select_move_with_temperature(policy, 1.0, best_move)
             moves.append(move)
 
         # Should sample all three moves
@@ -159,13 +162,12 @@ class TestSelfPlayGameGenerator:
 
         # Move 2 should be most frequent (highest probability)
         move_counts = np.bincount(moves)
-        assert np.argmax(move_counts) == 2
+        assert np.argmax(move_counts) == best_move
 
     def test_training_example_creation(self, generator):
         """Test creation of training examples."""
-        # Mock game state
-        game_state = generator._create_mock_game_state()
-        policy = np.random.dirichlet([1.0] * 225)  # 15x15 Gomoku
+        game_state = create_game_state('gomoku')
+        policy = np.random.dirichlet(np.ones(game_state.action_space_size))
 
         example = generator._create_training_example(
             game_state=game_state,
@@ -227,29 +229,39 @@ class TestSelfPlayGameGenerator:
 
         assert examples[0].value == 0.0  # Draw value
 
-    @patch('src.training.self_play.SearchCoordinator')
-    @patch('src.training.self_play.GPUInferenceWorker')
-    def test_generate_game_mock(self, mock_gpu_worker, mock_coordinator, generator):
-        """Test game generation with mocked components."""
-        # Setup mocks
-        mock_search_result = Mock()
-        mock_search_result.policy = np.random.dirichlet([1.0] * 225)
-        mock_search_result.value = 0.5
+    def test_generate_game_uses_mcts_policy(self, generator):
+        """Test game generation path using provided MCTS policy."""
+        action_space = create_game_state('gomoku').action_space_size
 
-        mock_future = Mock()
-        mock_future.result.return_value = mock_search_result
+        futures = []
+        chosen_moves = [12, 48, 96]
 
-        generator.search_coordinator.submit_search.return_value = mock_future
+        for idx, move in enumerate(chosen_moves):
+            policy = np.zeros(action_space, dtype=np.float32)
+            policy[move] = 1.0
+            search_result = SearchResult(
+                request_id=f"req_{idx}",
+                best_move=move,
+                policy=policy,
+                value=0.5,
+                processing_time_ms=5.0
+            )
+            future = Future()
+            future.set_result(search_result)
+            futures.append(future)
 
-        # Mock terminal condition after a few moves
-        with patch.object(generator, '_is_game_terminal', side_effect=[False, False, False, True]):
+        generator.search_coordinator.submit_search.side_effect = futures
+
+        with patch.object(generator, '_get_temperature', return_value=0.0), \
+             patch.object(generator, '_is_game_terminal', side_effect=[False, False, False, True]):
             result = generator.generate_game("test_game")
 
         assert isinstance(result, GameResult)
-        assert result.move_count == 3
-        assert len(result.examples) == 3  # All moves saved (save_from_move=0)
+        assert result.move_count == len(chosen_moves)
+        assert len(result.examples) == len(chosen_moves)
         assert result.metadata['game_id'] == "test_game"
         assert result.metadata['game_type'] == "gomoku"
+        assert result.metadata['move_history'][:len(chosen_moves)] == chosen_moves
 
     def test_generate_games_parallel(self, generator):
         """Test parallel game generation."""
@@ -306,28 +318,13 @@ class TestSelfPlayGameGenerator:
         assert stats['average_generation_time_seconds'] == 11.2
         assert stats['games_per_hour'] == pytest.approx(3600 / 11.2, rel=1e-3)
 
-    def test_mock_game_operations(self, generator):
-        """Test mock game state operations."""
-        # Test mock game state creation
-        game_state = generator._create_mock_game_state()
+    def test_board_string_representation(self, generator):
+        """Ensure board string is produced from real game state."""
+        game_state = create_game_state('gomoku')
+        board_str = generator._get_board_string(game_state)
 
-        assert 'board' in game_state
-        assert 'current_player' in game_state
-        assert 'move_count' in game_state
-        assert 'terminal' in game_state
-
-        assert game_state['board'].shape == (15, 15)
-        assert game_state['current_player'] == 0
-        assert game_state['move_count'] == 0
-        assert game_state['terminal'] is False
-
-        # Test mock move
-        initial_player = game_state['current_player']
-        generator._make_mock_move(game_state, 112)  # Center position
-
-        assert game_state['current_player'] != initial_player  # Player switched
-        assert game_state['move_count'] == 1
-        assert game_state['board'][7, 7] == 1  # Move was recorded
+        assert isinstance(board_str, str)
+        assert len(board_str) > 0
 
 
 class TestFactoryFunctions:

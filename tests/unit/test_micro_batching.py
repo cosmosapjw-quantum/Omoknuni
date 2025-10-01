@@ -23,7 +23,6 @@ from unittest.mock import Mock, patch, MagicMock
 # Import worker implementation
 from src.neural.inference_worker import (
     GPUInferenceWorker,
-    MockInferenceWorker,
     create_inference_worker
 )
 
@@ -50,7 +49,7 @@ class TestMicroBatchingLogic:
             # Create and save a valid model
             model = create_model_for_game('gomoku')
             with torch.no_grad():
-                dummy_input = torch.randn(1, 7, 15, 15)
+                dummy_input = torch.randn(1, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
                 _ = model(dummy_input)  # Initialize lazy layers
             torch.save(model.state_dict(), self.model_path)
 
@@ -180,7 +179,7 @@ class TestMicroBatchingLogic:
         for i in range(target_requests):
             request = InferenceRequest(
                 leaf_node_id=i,
-                features=np.random.randn(7, 15, 15).astype(np.float32),
+                features=np.random.randn(36, 15, 15).astype(np.float32),  # Enhanced Gomoku: 36 input channels
                 thread_id=0,
                 path=[i]
             )
@@ -201,7 +200,7 @@ class TestMicroBatchingLogic:
         for i in range(5):
             request = InferenceRequest(
                 leaf_node_id=i,
-                features=np.random.randn(7, 15, 15).astype(np.float32),
+                features=np.random.randn(36, 15, 15).astype(np.float32),  # Enhanced Gomoku: 36 input channels
                 thread_id=0,
                 path=[i]
             )
@@ -266,7 +265,7 @@ class TestMicroBatchingLogic:
         for i in range(50):
             request = InferenceRequest(
                 leaf_node_id=i,
-                features=np.random.randn(7, 15, 15).astype(np.float32),
+                features=np.random.randn(36, 15, 15).astype(np.float32),  # Enhanced Gomoku: 36 input channels
                 thread_id=0,
                 path=[i]
             )
@@ -326,7 +325,7 @@ class TestMicroBatchingIntegration:
             self.model_path = f.name
             model = create_model_for_game('gomoku')
             with torch.no_grad():
-                dummy_input = torch.randn(1, 7, 15, 15)
+                dummy_input = torch.randn(1, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
                 _ = model(dummy_input)
             torch.save(model.state_dict(), self.model_path)
 
@@ -353,7 +352,7 @@ class TestMicroBatchingIntegration:
         # Add multiple requests
         positions = []
         for i in range(40):
-            position = np.random.randn(7, 15, 15).astype(np.float32)
+            position = np.random.randn(36, 15, 15).astype(np.float32)  # Enhanced Gomoku: 36 input channels
             positions.append(position)
             request = InferenceRequest(
                 leaf_node_id=i,
@@ -393,7 +392,7 @@ class TestMicroBatchingIntegration:
                 for i in range(30):
                     request = InferenceRequest(
                         leaf_node_id=round_idx * 30 + i,
-                        features=np.random.randn(7, 15, 15).astype(np.float32),
+                        features=np.random.randn(36, 15, 15).astype(np.float32),  # Enhanced Gomoku: 36 input channels
                         thread_id=0,
                         path=[round_idx * 30 + i]
                     )
@@ -431,7 +430,7 @@ def test_micro_batching_parameter_variations(batch_size, timeout_ms):
         model_path = f.name
         model = create_model_for_game('gomoku')
         with torch.no_grad():
-            dummy_input = torch.randn(1, 7, 15, 15)
+            dummy_input = torch.randn(1, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
             _ = model(dummy_input)
         torch.save(model.state_dict(), model_path)
 
@@ -454,7 +453,7 @@ def test_micro_batching_parameter_variations(batch_size, timeout_ms):
         for i in range(min(batch_size, 20)):  # Add some requests
             request = InferenceRequest(
                 leaf_node_id=i,
-                features=np.random.randn(7, 15, 15).astype(np.float32),
+                features=np.random.randn(36, 15, 15).astype(np.float32),  # Enhanced Gomoku: 36 input channels
                 thread_id=0,
                 path=[i]
             )

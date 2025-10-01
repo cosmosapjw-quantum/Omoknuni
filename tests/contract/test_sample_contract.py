@@ -21,7 +21,7 @@ class TestGameStateContract:
         """Test that game state interface can be imported."""
         try:
             # This will fail until we implement the interface
-            from core.game_state import IGameState
+            from games.game_state import IGameState
 
             assert IGameState is not None
         except ImportError:

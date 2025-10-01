@@ -1563,7 +1563,7 @@ class TestGPUInference:
 
 def test_full_self_play_game():
     """Complete game generation works end-to-end"""
-    game = GomokuGame()
+    game = GomokuState()
     mcts = MCTSEngine()
     
     examples = play_self_play_game(game, mcts)

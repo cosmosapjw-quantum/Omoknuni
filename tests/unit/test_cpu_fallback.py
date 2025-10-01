@@ -36,7 +36,7 @@ class TestCPUInferenceWorker:
             model = create_model_for_game('gomoku')
             # Initialize lazy layers
             with torch.no_grad():
-                dummy_input = torch.randn(1, 7, 15, 15)
+                dummy_input = torch.randn(1, 36, 15, 15)
                 _ = model(dummy_input)
             torch.save(model, model_path)
 
@@ -75,7 +75,7 @@ class TestCPUInferenceWorker:
 
     def test_cpu_worker_warmup(self, cpu_worker):
         """Test CPU worker warmup process."""
-        input_shape = (7, 15, 15)
+        input_shape = (36, 15, 15)
 
         # Initial state
         assert not cpu_worker._warmup_completed
@@ -89,7 +89,7 @@ class TestCPUInferenceWorker:
 
     def test_cpu_batch_inference(self, cpu_worker):
         """Test CPU batch inference functionality."""
-        input_shape = (7, 15, 15)
+        input_shape = (36, 15, 15)
         cpu_worker.warmup(input_shape)
 
         # Create test positions
@@ -116,7 +116,7 @@ class TestCPUInferenceWorker:
 
     def test_cpu_inference_loop(self, cpu_worker):
         """Test CPU inference loop with queue processing."""
-        input_shape = (7, 15, 15)
+        input_shape = (36, 15, 15)
         cpu_worker.warmup(input_shape)
 
         # Setup queues
@@ -154,7 +154,7 @@ class TestCPUInferenceWorker:
 
     def test_cpu_metrics_collection(self, cpu_worker):
         """Test CPU performance metrics collection."""
-        input_shape = (7, 15, 15)
+        input_shape = (36, 15, 15)
         cpu_worker.warmup(input_shape)
 
         # Run some inferences to generate metrics
@@ -175,7 +175,7 @@ class TestCPUInferenceWorker:
 
     def test_cpu_error_handling(self, cpu_worker):
         """Test CPU worker error handling and safe fallback."""
-        input_shape = (7, 15, 15)
+        input_shape = (36, 15, 15)
         cpu_worker.warmup(input_shape)
 
         # Mock model to raise an error
@@ -207,7 +207,7 @@ class TestCPUFallbackInference:
 
             model = create_model_for_game('gomoku')
             with torch.no_grad():
-                dummy_input = torch.randn(1, 7, 15, 15)
+                dummy_input = torch.randn(1, 36, 15, 15)
                 _ = model(dummy_input)
             torch.save(model, model_path)
 
@@ -319,7 +319,7 @@ class TestGPUWorkerFallback:
 
             model = create_model_for_game('gomoku')
             with torch.no_grad():
-                dummy_input = torch.randn(1, 7, 15, 15)
+                dummy_input = torch.randn(1, 36, 15, 15)
                 _ = model(dummy_input)
             torch.save(model, model_path)
 
@@ -344,7 +344,7 @@ class TestGPUWorkerFallback:
     def test_gpu_worker_fallback_on_inference_error(self, model_path):
         """Test GPU worker falls back to CPU on inference errors."""
         worker = GPUInferenceWorker(model_path=model_path, device='cpu')  # Use CPU to avoid real GPU
-        worker.warmup((7, 15, 15))
+        worker.warmup((36, 15, 15))
 
         try:
             # Mock GPU inference to fail
@@ -448,7 +448,7 @@ class TestGPUWorkerFallback:
     def test_gpu_worker_safe_fallback_on_double_failure(self, model_path):
         """Test safe fallback when both GPU and CPU fail."""
         worker = GPUInferenceWorker(model_path=model_path, device='cpu')
-        worker.warmup((7, 15, 15))
+        worker.warmup((36, 15, 15))
 
         try:
             # Mock both GPU and CPU to fail

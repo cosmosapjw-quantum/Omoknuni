@@ -362,20 +362,99 @@ class RealGameState:
     def get_features(self) -> np.ndarray:
         """Get feature representation for neural network."""
         if GAMES_AVAILABLE:
-            return self.game.get_tensor_representation()
+            return self.game.get_enhanced_tensor_representation()
         else:
-            # Simple fallback - create basic feature planes
-            features = np.zeros((self.feature_planes, self.board_size, self.board_size), dtype=np.float32)
+            # Enhanced fallback - create enhanced feature planes matching C++ implementation
+            if self.game_type == "gomoku":
+                # Gomoku uses 36 feature planes (8 history + 4 meta features)
+                features = np.zeros((36, self.board_size, self.board_size), dtype=np.float32)
+            elif self.game_type == "chess":
+                # Chess uses 119 feature planes
+                features = np.zeros((119, self.board_size, self.board_size), dtype=np.float32)
+            elif self.game_type == "go":
+                # Go uses 25 feature planes
+                features = np.zeros((25, self.board_size, self.board_size), dtype=np.float32)
+            else:
+                # Default fallback
+                features = np.zeros((self.feature_planes, self.board_size, self.board_size), dtype=np.float32)
 
-            # Player 1 pieces
+            # Current position - player 1 pieces
             features[0] = (self.board == 1).astype(np.float32)
-            # Player 2 pieces
+            # Current position - player 2 pieces
             features[1] = (self.board == -1).astype(np.float32)
-            # Current player
+
+            # Fill remaining features with basic patterns
+            # Current player indicator (plane 2)
             features[2] = np.full((self.board_size, self.board_size),
-                                self.current_player, dtype=np.float32)
+                                self.current_player - 1, dtype=np.float32)  # 0 or 1
+
+            # Move count indicator (plane 3)
+            move_count_normalized = min(getattr(self, 'move_count', 0) / 100.0, 1.0)
+            features[3] = np.full((self.board_size, self.board_size),
+                                move_count_normalized, dtype=np.float32)
 
             return features
+
+    def get_current_player(self) -> int:
+        """Get current player to move."""
+        if GAMES_AVAILABLE:
+            return self.game.get_current_player()
+        else:
+            return self.current_player
+
+    @property
+    def action_space_size(self) -> int:
+        """Get action space size for the game."""
+        return self.action_space
+
+    def clone(self) -> 'RealGameState':
+        """Create a copy of the game state."""
+        if GAMES_AVAILABLE:
+            new_state = RealGameState(self.game_type)
+            new_state.game = self.game.clone()
+            return new_state
+        else:
+            new_state = RealGameState(self.game_type)
+            new_state.board = self.board.copy()
+            new_state.current_player = self.current_player
+            new_state.move_count = self.move_count
+            return new_state
+
+    def get_legal_moves(self) -> list:
+        """Get list of legal move indices."""
+        if GAMES_AVAILABLE:
+            legal_moves_mask = self.game.get_legal_moves()
+            return list(np.where(legal_moves_mask)[0])
+        else:
+            # Simple fallback - all empty positions are legal
+            legal_moves = []
+            for i in range(self.board_size):
+                for j in range(self.board_size):
+                    if self.board[i, j] == 0:
+                        legal_moves.append(i * self.board_size + j)
+            return legal_moves
+
+    def make_move(self, move: int) -> 'RealGameState':
+        """Apply move and return new state."""
+        if GAMES_AVAILABLE:
+            new_state = self.clone()
+            new_state.game.make_move(move)
+            return new_state
+        else:
+            new_state = self.clone()
+            row, col = move // self.board_size, move % self.board_size
+            new_state.board[row, col] = self.current_player
+            new_state.current_player = -self.current_player
+            new_state.move_count += 1
+            return new_state
+
+    def is_terminal(self) -> bool:
+        """Check if game is finished."""
+        if GAMES_AVAILABLE:
+            return self.game.is_terminal()
+        else:
+            # Simple fallback - check if board is full
+            return not np.any(self.board == 0)
 
 
 class BatchSizeOptimizer:

@@ -271,7 +271,8 @@ class RealGameState:
         """Create a copy of the game state."""
         new_state = RealGameState(self.game_type)
         if GAMES_AVAILABLE:
-            new_state.game = self.game.copy()
+            # Game states may be immutable, just assign the current state
+            new_state.game = self.game
         else:
             new_state.board = self.board.copy()
             new_state.current_player = self.current_player
@@ -281,19 +282,21 @@ class RealGameState:
     def apply_move(self, move: int):
         """Apply a move to the game state."""
         if GAMES_AVAILABLE:
-            self.game.apply_move(move)
+            # make_move modifies the game in place
+            self.game.make_move(move)
         else:
             # Simple fallback implementation
             row, col = divmod(move, self.board_size)
             if row < self.board_size and col < self.board_size and self.board[row, col] == 0:
                 self.board[row, col] = self.current_player
-                self.current_player = -self.current_player
+                self.current_player = 3 - self.current_player  # Toggle between 1 and 2
                 self.move_count += 1
 
     def get_legal_moves(self) -> List[int]:
         """Get list of legal moves."""
         if GAMES_AVAILABLE:
-            return self.game.get_legal_moves()
+            legal_moves_mask = self.game.get_legal_moves()
+            return np.where(legal_moves_mask)[0].tolist()
         else:
             # Simple fallback - empty squares
             legal_moves = []
@@ -303,6 +306,12 @@ class RealGameState:
                     if row < self.board_size and col < self.board_size and self.board[row, col] == 0:
                         legal_moves.append(move)
             return legal_moves
+
+    def make_move(self, move: int) -> 'RealGameState':
+        """Apply move and return new state (compatibility method)."""
+        new_state = self.clone()
+        new_state.apply_move(move)
+        return new_state
 
     def is_terminal(self) -> bool:
         """Check if game is over."""
@@ -315,7 +324,7 @@ class RealGameState:
     def get_features(self) -> np.ndarray:
         """Get feature representation for neural network."""
         if GAMES_AVAILABLE:
-            return self.game.get_tensor_representation()
+            return self.game.get_enhanced_tensor_representation()
         else:
             # Simple fallback - create basic feature planes
             features = np.zeros((self.feature_planes, self.board_size, self.board_size), dtype=np.float32)
@@ -329,6 +338,31 @@ class RealGameState:
                                 self.current_player, dtype=np.float32)
 
             return features
+
+    def get_current_player(self) -> int:
+        """Get current player to move."""
+        if GAMES_AVAILABLE:
+            return self.game.get_current_player()
+        else:
+            return self.current_player
+
+    @property
+    def action_space_size(self) -> int:
+        """Get action space size for the game."""
+        return self.action_space
+
+    def clone(self) -> 'RealGameState':
+        """Create a copy of the game state."""
+        if GAMES_AVAILABLE:
+            new_state = RealGameState(self.game_type)
+            new_state.game = self.game.clone()
+            return new_state
+        else:
+            new_state = RealGameState(self.game_type)
+            new_state.board = self.board.copy()
+            new_state.current_player = self.current_player
+            new_state.move_count = self.move_count
+            return new_state
 
 
 class VirtualLossOptimizer:
@@ -521,8 +555,7 @@ class VirtualLossOptimizer:
                     simulations=config.simulations_per_search,
                     temperature=1.0,
                     add_noise=False,
-                    # Pass virtual loss configuration
-                    extra_params=vl_config
+                    # Note: virtual loss configuration handled by coordinator
                 )
 
                 future = coordinator.submit_search(request)

@@ -97,15 +97,67 @@ PYBIND11_MODULE(alphazero_py, m) {
     
     // Game interface
     py::class_<core::IGameState>(m, "IGameState")
-        .def("get_legal_moves", &core::IGameState::getLegalMoves)
-        .def("is_legal_move", &core::IGameState::isLegalMove)
-        .def("make_move", &core::IGameState::makeMove)
+        .def("get_legal_moves", [](const core::IGameState& state) {
+            auto legal_moves_list = state.getLegalMoves();
+            int action_space_size = state.getActionSpaceSize();
+
+            // Create boolean numpy array
+            auto result = py::array_t<bool>(action_space_size);
+            auto buf = result.mutable_unchecked<1>();
+
+            // Initialize all to false
+            for (int i = 0; i < action_space_size; i++) {
+                buf(i) = false;
+            }
+
+            // Set legal moves to true
+            for (int move : legal_moves_list) {
+                if (move >= 0 && move < action_space_size) {
+                    buf(move) = true;
+                } else if (move == -1 && action_space_size > 0) {
+                    // Handle Go pass move: map -1 to last index (board_size² for Go)
+                    buf(action_space_size - 1) = true;
+                }
+            }
+
+            return result;
+        })
+        .def("is_legal_move", [](const core::IGameState& state, int action) {
+            int action_space_size = state.getActionSpaceSize();
+            // Handle Go pass move: map last index back to -1
+            if (action == action_space_size - 1) {
+                // Check if this is actually a pass move by testing if -1 is legal
+                if (state.isLegalMove(-1)) {
+                    return true;
+                }
+            }
+            return state.isLegalMove(action);
+        })
+        .def("make_move", [](core::IGameState& state, int action) {
+            int action_space_size = state.getActionSpaceSize();
+            // Handle Go pass move: map last index back to -1
+            if (action == action_space_size - 1 && state.isLegalMove(-1)) {
+                state.makeMove(-1);
+            } else {
+                state.makeMove(action);
+            }
+        })
+        .def("apply_move_inplace", [](core::IGameState& state, int action) {
+            int action_space_size = state.getActionSpaceSize();
+            // Handle Go pass move: map last index back to -1
+            if (action == action_space_size - 1 && state.isLegalMove(-1)) {
+                state.makeMove(-1);
+            } else {
+                state.makeMove(action);
+            }
+        })
         .def("undo_move", &core::IGameState::undoMove)
         .def("is_terminal", &core::IGameState::isTerminal)
         .def("get_game_result", &core::IGameState::getGameResult)
         .def("get_current_player", &core::IGameState::getCurrentPlayer)
         .def("get_board_size", &core::IGameState::getBoardSize)
         .def("get_action_space_size", &core::IGameState::getActionSpaceSize)
+        .def_property_readonly("action_space_size", &core::IGameState::getActionSpaceSize)
         .def("get_tensor_representation", [](const core::IGameState& state) {
             return tensorToNumpy(state.getTensorRepresentation());
         })
@@ -115,12 +167,16 @@ PYBIND11_MODULE(alphazero_py, m) {
         .def("get_enhanced_tensor_representation", [](const core::IGameState& state) {
             return tensorToNumpy(state.getEnhancedTensorRepresentation());
         })
+        .def("extract_features", [](const core::IGameState& state) {
+            return tensorToNumpy(state.getBasicTensorRepresentation());  // Use basic 7-channel representation for contract compatibility
+        })
         .def("get_hash", &core::IGameState::getHash)
         .def("action_to_string", &core::IGameState::actionToString)
         .def("string_to_action", &core::IGameState::stringToAction)
         .def("to_string", &core::IGameState::toString)
         .def("get_move_history", &core::IGameState::getMoveHistory)
         .def("clone", &core::IGameState::clone)
+        .def("copy", &core::IGameState::clone)  // Alias for contract compatibility
         .def("batch_clone", &core::IGameState::batchClone)
         .def("copy_from", &core::IGameState::copyFrom);
     
@@ -175,13 +231,13 @@ PYBIND11_MODULE(alphazero_py, m) {
         .def(py::init<>())
         .def(py::init<int>(), py::arg("board_size") = 15)
         .def(py::init<int, bool, bool, int, bool>(),
-             py::arg("board_size") = 15, py::arg("use_renju") = false, 
+             py::arg("board_size") = 15, py::arg("use_renju") = false,
              py::arg("use_omok") = false, py::arg("seed") = 0,
              py::arg("use_pro_long_opening") = false)
         .def("get_renju_rules", &games::gomoku::GomokuState::getRenjuRules)
         .def("get_omok_rules", &games::gomoku::GomokuState::getOmokRules)
         .def("get_pro_long_opening", &games::gomoku::GomokuState::getProLongOpening);
-    
+
 }
 
 } // namespace python

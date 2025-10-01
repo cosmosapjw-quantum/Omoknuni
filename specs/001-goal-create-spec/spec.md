@@ -2,7 +2,8 @@
 
 **Feature Branch**: `001-goal-create-spec`
 **Created**: 2025-09-16
-**Status**: Draft
+**Status**: Alpha Release (v1.0.0-alpha)
+**Release Date**: 2025-10-01
 **Input**: User description: Create spec.md  the authoritative specification for a high-performance, game-agnostic AlphaZero engine (Gomoku/Chess/Go) on a single machine (Ryzen 5900X, 64GB RAM, RTX 3060 Ti 8GB).
 
 ## Problem & Goals
@@ -12,7 +13,7 @@ Ship a production-ready AlphaZero-style reinforcement learning engine that achie
 Primary objectives:
 - Achieve superhuman play in Gomoku within 48 hours of training
 - Reach strong amateur level in Chess (960-capable) within 1 week of training
-- Demonstrate competitive performance on Go (9×9 to 19×19 board sizes)
+- Demonstrate competitive performance on Go (9ï¿½9 to 19ï¿½19 board sizes)
 - Maintain 30-40k simulations per second including neural network inference time
 - Sustain 80-92% GPU utilization with 32-64 average batch sizes
 - Operate as game-agnostic engine requiring no code changes between games
@@ -53,9 +54,9 @@ Key architectural principles:
 ## Functional Requirements
 
 ### Core Game Engine Requirements
-- **FR-001**: System MUST support Gomoku (15×15 board, 5-in-a-row victory condition)
+- **FR-001**: System MUST support Gomoku (15ï¿½15 board, 5-in-a-row victory condition)
 - **FR-002**: System MUST support Chess including Chess 960 position generation
-- **FR-003**: System MUST support Go on variable board sizes from 9×9 to 19×19
+- **FR-003**: System MUST support Go on variable board sizes from 9ï¿½9 to 19ï¿½19
 - **FR-004**: System MUST enforce legal move validation before policy normalization
 - **FR-005**: System MUST detect terminal game states and provide terminal values
 - **FR-006**: System MUST apply moves in-place without creating board state copies during search

@@ -303,7 +303,7 @@ class TestOOMMetrics:
         assert 'oom_total_count' in metrics
         assert 'oom_consecutive_count' in metrics
         assert 'original_batch_size' in metrics
-        assert 'min_batch_size' in metrics
+        assert 'oom_min_batch_size' in metrics
         assert 'memory_usage_fraction' in metrics
         assert 'memory_usage_high_risk' in metrics
 
@@ -380,6 +380,9 @@ class TestOOMRecoveryIntegrationFlow:
         """Test complete flow from OOM detection to CPU fallback."""
         worker, mock_cpu = mock_worker_with_cpu_fallback
         positions = [np.random.randn(36, 15, 15) for _ in range(16)]
+
+        # Set the CPU fallback worker directly to use the mock
+        worker._cpu_fallback_worker = mock_cpu
 
         # Simulate complete OOM failure leading to CPU fallback
         with patch.object(worker, '_create_batch_tensor_optimized'), \

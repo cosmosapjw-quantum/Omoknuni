@@ -34,17 +34,14 @@ from specs.contracts.training_api import (
 
 # Import core components
 from src.core.search_coordinator import SearchCoordinator, SearchRequest, SearchResult
+from src.games.game_state import create_game_state, GameStateWrapper
 from src.neural.inference_worker import GPUInferenceWorker
 from src.telemetry.metrics import MetricsCollector
 
-# Game bindings (will be available after C++ compilation)
-try:
-    import alphazero_py
-    GAMES_AVAILABLE = True
-except ImportError:
-    # Fallback for testing without compiled extensions
-    GAMES_AVAILABLE = False
-    alphazero_py = None
+# Game bindings
+from src.utils.alphazero_py_import import require_alphazero_py
+
+alphazero_py = require_alphazero_py()
 
 
 @dataclass
@@ -61,6 +58,7 @@ class SelfPlayConfig:
     num_threads: int = 8
     max_game_length: int = 512  # Prevent infinite games
     save_positions_from_move: int = 0  # Start saving training data from move N
+    rule_variant: str = "standard"
 
 
 class SelfPlayGameGenerator(SelfPlayGenerator):
@@ -83,16 +81,22 @@ class SelfPlayGameGenerator(SelfPlayGenerator):
             add_dirichlet_noise: Add exploration noise at root
             num_threads: MCTS search threads
         """
+        # Allow environment-driven rule variants for testing and deployment overrides
+        variant_override = os.environ.get('SELF_PLAY_RULE_VARIANT')
+
         self.config = SelfPlayConfig(
             game_type=game_type,
             mcts_simulations=mcts_simulations,
             temperature_schedule=temperature_schedule or [(30, 1.0), (1000, 0.1)],
             add_dirichlet_noise=add_dirichlet_noise,
-            num_threads=num_threads
+            num_threads=num_threads,
+            rule_variant=variant_override or "standard"
         )
 
         self.model_path = model_path
         self.logger = logging.getLogger(__name__)
+
+        self._game_state_kwargs: Dict[str, Any] = {}
 
         # Set game-specific parameters
         self._set_game_specific_params()
@@ -111,15 +115,38 @@ class SelfPlayGameGenerator(SelfPlayGenerator):
 
     def _set_game_specific_params(self) -> None:
         """Set game-specific parameters like Dirichlet noise."""
-        game_params = {
-            'gomoku': {'dirichlet_alpha': 0.3, 'max_game_length': 225},
-            'chess': {'dirichlet_alpha': 0.2, 'max_game_length': 512},
-            'go': {'dirichlet_alpha': 0.03, 'max_game_length': 722}  # 19x19 + pass moves
-        }
+        variant = getattr(self.config, 'rule_variant', 'standard') or 'standard'
 
-        params = game_params.get(self.config.game_type, game_params['gomoku'])
-        self.config.dirichlet_alpha = params['dirichlet_alpha']
-        self.config.max_game_length = params['max_game_length']
+        # Reset game state configuration for each variant update
+        self._game_state_kwargs = {}
+
+        if self.config.game_type == 'gomoku':
+            variant_alphas = {
+                'standard': 0.3,
+                'renju': 0.15,
+                'omok': 0.25,
+            }
+            self.config.dirichlet_alpha = variant_alphas.get(variant, 0.3)
+            self.config.max_game_length = 225
+
+            if variant == 'renju':
+                self._game_state_kwargs['use_renju'] = True
+            elif variant == 'omok':
+                self._game_state_kwargs['use_omok'] = True
+        elif self.config.game_type == 'chess':
+            self.config.dirichlet_alpha = 0.2
+            self.config.max_game_length = 512
+            if variant == 'chess960':
+                self._game_state_kwargs['chess960'] = True
+        elif self.config.game_type == 'go':
+            self.config.dirichlet_alpha = 0.03
+            self.config.max_game_length = 722  # 19x19 + pass moves
+            if variant in {'japanese', 'korean', 'chinese'}:
+                self._game_state_kwargs['rule_set'] = variant
+        else:
+            # Fallback to Gomoku defaults for unknown game types
+            self.config.dirichlet_alpha = 0.3
+            self.config.max_game_length = 225
 
     def _ensure_components_initialized(self) -> None:
         """Lazy initialization of GPU inference and search coordinator."""
@@ -164,18 +191,15 @@ class SelfPlayGameGenerator(SelfPlayGenerator):
         start_time = time.time()
         self.logger.debug(f"Starting self-play game {game_id}")
 
-        # Create game state
-        if GAMES_AVAILABLE:
-            game_type_enum = getattr(alphazero_py.GameType, self.config.game_type.upper())
-            game_state = alphazero_py.create_game(game_type_enum)
-        else:
-            # Mock game state for testing
-            game_state = self._create_mock_game_state()
+        # Create game state using real C++ bindings
+        game_state: GameStateWrapper = create_game_state(
+            self.config.game_type,
+            **self._game_state_kwargs
+        )
 
         # Track game data
         game_examples = []
         move_history = []
-        position_values = []
 
         move_count = 0
 
@@ -206,18 +230,16 @@ class SelfPlayGameGenerator(SelfPlayGenerator):
                         game_id=game_id
                     )
                     game_examples.append(training_example)
-                    position_values.append(search_result.value)
 
-                # Apply temperature-based move selection
+                # Apply temperature-based move selection using MCTS policy
                 move_action = self._select_move_with_temperature(
-                    search_result.policy, temperature
+                    policy=search_result.policy,
+                    temperature=temperature,
+                    best_move=search_result.best_move
                 )
 
-                # Make the move
-                if GAMES_AVAILABLE:
-                    game_state.make_move(move_action)
-                else:
-                    self._make_mock_move(game_state, move_action)
+                # Make the move (C++ wrapper returns new state)
+                game_state = game_state.make_move(move_action)
 
                 move_history.append(move_action)
                 move_count += 1
@@ -343,19 +365,29 @@ class SelfPlayGameGenerator(SelfPlayGenerator):
         # Return last temperature if past all thresholds
         return self.config.temperature_schedule[-1][1]
 
-    def _select_move_with_temperature(self, policy: np.ndarray, temperature: float) -> int:
-        """Select move using temperature-scaled policy."""
-        if temperature == 0.0:
-            # Deterministic selection
-            return np.argmax(policy)
+    def _select_move_with_temperature(self, policy: np.ndarray, temperature: float,
+                                      best_move: int) -> int:
+        """Select a move using temperature-scaled MCTS policy."""
+        if policy.ndim != 1:
+            raise ValueError("Policy must be a 1D probability distribution")
 
-        # Temperature scaling
-        scaled_logits = np.log(policy + 1e-8) / temperature
-        scaled_probs = np.exp(scaled_logits - np.max(scaled_logits))
-        scaled_probs /= np.sum(scaled_probs)
+        if temperature <= 1e-5:
+            return int(best_move)
 
-        # Sample from scaled distribution
-        return np.random.choice(len(policy), p=scaled_probs)
+        support = np.flatnonzero(policy > 0.0)
+
+        if support.size == 0:
+            return int(best_move)
+
+        adjusted_temperature = max(temperature, 1e-3)
+        scaled = np.power(policy[support], 1.0 / adjusted_temperature)
+        total = scaled.sum()
+
+        if not np.isfinite(total) or total <= 0.0:
+            return int(best_move)
+
+        probs = scaled / total
+        return int(np.random.choice(support, p=probs))
 
     def _create_training_example(self,
                                 game_state: Any,
@@ -363,13 +395,14 @@ class SelfPlayGameGenerator(SelfPlayGenerator):
                                 move_number: int,
                                 game_id: str) -> TrainingExample:
         """Create training example from current position."""
-        # Extract features from game state
-        if GAMES_AVAILABLE:
+        if hasattr(game_state, 'get_features'):
+            features = game_state.get_features()
+        elif hasattr(game_state, 'get_tensor_representation'):
             features = game_state.get_tensor_representation()
-            features_array = np.array(features)
         else:
-            # Mock features for testing
-            features_array = np.random.rand(36, 15, 15).astype(np.float32)
+            raise RuntimeError("Game state does not expose feature tensors")
+
+        features_array = np.asarray(features, dtype=np.float32)
 
         return TrainingExample(
             state=features_array,
@@ -398,60 +431,29 @@ class SelfPlayGameGenerator(SelfPlayGenerator):
             else:  # Loss for current player
                 example.value = -1.0
 
-    def _determine_game_outcome(self, game_state: Any) -> Dict[str, Any]:
+    def _determine_game_outcome(self, game_state: GameStateWrapper) -> Dict[str, Any]:
         """Determine the outcome of a completed game."""
-        if GAMES_AVAILABLE:
-            if game_state.is_terminal():
-                result = game_state.get_game_result()
-                if result == alphazero_py.GameResult.WIN_PLAYER1:
-                    return {'winner': 0, 'result': 'win_player1'}
-                elif result == alphazero_py.GameResult.WIN_PLAYER2:
-                    return {'winner': 1, 'result': 'win_player2'}
-                else:
-                    return {'winner': None, 'result': 'draw'}
-            else:
-                return {'winner': None, 'result': 'max_moves_reached'}
-        else:
-            # Mock outcome for testing
-            return {'winner': np.random.choice([0, 1, None]), 'result': 'mock_game'}
+        if not game_state.is_terminal():
+            return {'winner': None, 'result': 'max_moves_reached'}
 
-    def _is_game_terminal(self, game_state: Any) -> bool:
+        result = game_state.cpp_state.get_game_result()
+
+        if result == alphazero_py.GameResult.WIN_PLAYER1:
+            return {'winner': 0, 'result': 'win_player1'}
+        if result == alphazero_py.GameResult.WIN_PLAYER2:
+            return {'winner': 1, 'result': 'win_player2'}
+        if result == alphazero_py.GameResult.DRAW:
+            return {'winner': None, 'result': 'draw'}
+
+        raise RuntimeError(f"Unexpected game result: {result}")
+
+    def _is_game_terminal(self, game_state: GameStateWrapper) -> bool:
         """Check if game is in terminal state."""
-        if GAMES_AVAILABLE:
-            return game_state.is_terminal()
-        else:
-            # Mock terminal check
-            return np.random.random() < 0.01  # 1% chance of termination per move
+        return game_state.is_terminal()
 
-    def _get_board_string(self, game_state: Any) -> str:
+    def _get_board_string(self, game_state: GameStateWrapper) -> str:
         """Get human-readable board representation."""
-        if GAMES_AVAILABLE:
-            return game_state.to_string()
-        else:
-            return "Mock board state"
-
-    # Mock implementations for testing without compiled C++ extensions
-
-    def _create_mock_game_state(self) -> Dict[str, Any]:
-        """Create mock game state for testing."""
-        return {
-            'board': np.zeros((15, 15), dtype=int),
-            'current_player': 0,
-            'move_count': 0,
-            'terminal': False
-        }
-
-    def _make_mock_move(self, game_state: Dict[str, Any], action: int) -> None:
-        """Make move in mock game state."""
-        board_size = 15  # Assume Gomoku
-        row, col = action // board_size, action % board_size
-        game_state['board'][row, col] = game_state['current_player'] + 1
-        game_state['current_player'] = 1 - game_state['current_player']
-        game_state['move_count'] += 1
-
-        # Simple termination condition
-        if game_state['move_count'] > 20:
-            game_state['terminal'] = np.random.random() < 0.1
+        return game_state.to_string()
 
 
 # Factory functions and utilities

@@ -23,12 +23,12 @@ class TestDummyModel:
 
     def test_model_creation_and_forward_pass(self):
         """Test dummy model creation and forward pass."""
-        model = DummyModel((7, 15, 15), num_actions=225)
+        model = DummyModel((36, 15, 15), num_actions=225)
         model.eval()
 
         # Test forward pass
         batch_size = 2
-        test_input = torch.randn(batch_size, 7, 15, 15)
+        test_input = torch.randn(batch_size, 36, 15, 15)
 
         with torch.no_grad():
             policy, value = model(test_input)

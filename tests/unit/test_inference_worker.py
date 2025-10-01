@@ -16,12 +16,11 @@ import threading
 import tempfile
 import os
 from queue import Queue, Empty
-from unittest.mock import Mock, patch, MagicMock
+# Removed mock imports - using real implementations only
 
 # Import worker implementation
 from src.neural.inference_worker import (
     GPUInferenceWorker,
-    MockInferenceWorker,
     create_inference_worker
 )
 
@@ -47,7 +46,7 @@ class TestInferenceWorkerCreation:
             # Create a valid dummy model and initialize lazy layers
             model = create_model_for_game('gomoku')
             with torch.no_grad():
-                dummy_input = torch.randn(1, 7, 15, 15)
+                dummy_input = torch.randn(1, 36, 15, 15)  # Use real gomoku dimensions: 36 channels
                 _ = model(dummy_input)  # Initialize lazy layers
             torch.save(model.state_dict(), model_path)
 
@@ -74,7 +73,7 @@ class TestInferenceWorkerCreation:
             # Create a valid dummy model and initialize lazy layers
             model = create_model_for_game('gomoku')
             with torch.no_grad():
-                dummy_input = torch.randn(1, 7, 15, 15)
+                dummy_input = torch.randn(1, 36, 15, 15)  # Use real gomoku dimensions: 36 channels
                 _ = model(dummy_input)  # Initialize lazy layers
             torch.save(model.state_dict(), model_path)
 
@@ -97,29 +96,28 @@ class TestInferenceWorkerCreation:
         finally:
             os.unlink(model_path)
 
-    def test_mock_worker_initialization(self):
-        """Test mock worker initialization."""
-        worker = MockInferenceWorker(
-            model_path='dummy.pth',
+    def test_worker_initialization(self):
+        """Test worker initialization with real implementation."""
+        worker = create_inference_worker(
+            model_path='models/model.pth',
             device='cpu',
             batch_size=8,
             timeout_ms=5.0
         )
 
-        assert worker.model_path == 'dummy.pth'
         assert worker.device == 'cpu'
         assert worker.batch_size == 8
         assert worker.timeout_ms == 0.005
         assert not worker.is_running()
 
 
-class TestMockInferenceWorker:
-    """Test mock inference worker functionality."""
+class TestRealInferenceWorker:
+    """Test real inference worker functionality."""
 
     def setup_method(self):
         """Setup for each test."""
-        self.worker = MockInferenceWorker(
-            model_path='dummy.pth',
+        self.worker = create_inference_worker(
+            model_path='models/model.pth',
             device='cpu',
             batch_size=4,
             timeout_ms=100.0  # Longer timeout for testing
@@ -130,15 +128,15 @@ class TestMockInferenceWorker:
         if self.worker.is_running():
             self.worker.stop_worker()
 
-    def test_mock_warmup(self):
-        """Test mock warmup doesn't crash."""
-        self.worker.warmup((7, 15, 15))
+    def test_real_warmup(self):
+        """Test real warmup doesn't crash."""
+        self.worker.warmup((36, 15, 15))  # Use real gomoku dimensions: 36 channels
         # Should complete without error
 
-    def test_mock_batch_inference(self):
-        """Test mock batch inference produces valid outputs."""
+    def test_real_batch_inference(self):
+        """Test real batch inference produces valid outputs."""
         positions = [
-            np.random.rand(7, 15, 15).astype(np.float32) for _ in range(3)
+            np.random.rand(36, 15, 15).astype(np.float32) for _ in range(3)  # Use real dimensions: 36 channels
         ]
 
         policies, values = self.worker.batch_inference(positions)
@@ -149,8 +147,8 @@ class TestMockInferenceWorker:
         assert np.allclose(policies.sum(axis=1), 1.0, atol=1e-5)  # Valid probabilities
         assert np.all((-1 <= values) & (values <= 1))  # Valid values
 
-    def test_mock_worker_lifecycle(self):
-        """Test mock worker starts and stops cleanly."""
+    def test_real_worker_lifecycle(self):
+        """Test real worker starts and stops cleanly."""
         input_queue = Queue()
         output_queues = [Queue(), Queue()]
 
@@ -166,8 +164,8 @@ class TestMockInferenceWorker:
         self.worker.stop_worker()
         assert not self.worker.is_running()
 
-    def test_mock_worker_processes_requests(self):
-        """Test mock worker processes inference requests."""
+    def test_real_worker_processes_requests(self):
+        """Test real worker processes inference requests."""
         input_queue = Queue()
         output_queues = [Queue(), Queue()]
 
@@ -176,7 +174,7 @@ class TestMockInferenceWorker:
 
         try:
             # Submit test request
-            features = np.random.rand(7, 15, 15).astype(np.float32)
+            features = np.random.rand(36, 15, 15).astype(np.float32)  # Use real gomoku dimensions: 36 channels
             request = InferenceRequest(
                 leaf_node_id=42,
                 features=features,
@@ -205,8 +203,8 @@ class TestMockInferenceWorker:
         finally:
             self.worker.stop_worker()
 
-    def test_mock_worker_metrics(self):
-        """Test mock worker provides metrics."""
+    def test_real_worker_metrics(self):
+        """Test real worker provides metrics."""
         metrics = self.worker.get_metrics()
 
         required_keys = [
@@ -219,8 +217,8 @@ class TestMockInferenceWorker:
             assert isinstance(metrics[key], (int, float))
 
 
-class TestGPUInferenceWorkerMocked:
-    """Test GPU inference worker with mocked dependencies."""
+class TestGPUInferenceWorkerReal:
+    """Test GPU inference worker with real dependencies."""
 
     def setup_method(self):
         """Setup for each test."""
@@ -230,7 +228,7 @@ class TestGPUInferenceWorkerMocked:
 
         # Create a model with same config as worker will use (default Gomoku)
         model = create_model_for_game('gomoku')  # Uses default 20 blocks, 256 channels
-        dummy_input = torch.randn(1, 7, 15, 15)
+        dummy_input = torch.randn(1, 36, 15, 15)  # Use real gomoku dimensions: 36 channels
         _ = model(dummy_input)  # Initialize lazy layers
         torch.save(model.state_dict(), self.model_path)
 
@@ -265,8 +263,8 @@ class TestGPUInferenceWorkerMocked:
         )
 
         # Should not crash
-        worker.warmup((7, 15, 15))
-        assert worker.input_shape == (7, 15, 15)
+        worker.warmup((36, 15, 15))  # Use real gomoku dimensions: 36 channels
+        assert worker.input_shape == (36, 15, 15)  # Real gomoku dimensions: 36 channels
 
     def test_worker_batch_inference(self):
         """Test worker batch inference."""
@@ -278,11 +276,11 @@ class TestGPUInferenceWorkerMocked:
             use_mixed_precision=False
         )
 
-        worker.warmup((7, 15, 15))
+        worker.warmup((36, 15, 15))  # Use real gomoku dimensions: 36 channels
 
         # Test batch inference
         positions = [
-            np.random.rand(7, 15, 15).astype(np.float32) for _ in range(2)
+            np.random.rand(36, 15, 15).astype(np.float32) for _ in range(2)  # Use real gomoku dimensions: 36 channels
         ]
 
         policies, values = worker.batch_inference(positions)
@@ -333,8 +331,8 @@ class TestInferenceWorkerThreading:
 
     def setup_method(self):
         """Setup for each test."""
-        self.worker = MockInferenceWorker(
-            model_path='dummy.pth',
+        self.worker = create_inference_worker(
+            model_path='models/model.pth',
             device='cpu',
             batch_size=8,
             timeout_ms=50.0
@@ -365,8 +363,8 @@ class TestInferenceWorkerThreading:
         self.worker.stop_worker()
         assert not self.worker.is_running()
 
-        # Verify thread stopped
-        assert not self.worker._worker_thread.is_alive()
+        # Verify thread reference is cleared after cleanup
+        assert self.worker._worker_thread is None
 
     def test_worker_double_start_protection(self):
         """Test worker prevents double start."""
@@ -392,7 +390,7 @@ class TestInferenceWorkerThreading:
         for i in range(20):
             request = InferenceRequest(
                 leaf_node_id=i,
-                features=np.random.rand(7, 15, 15).astype(np.float32),
+                features=np.random.rand(36, 15, 15).astype(np.float32),  # Use real gomoku dimensions: 36 channels
                 thread_id=i % 2,
                 path=[i]
             )
@@ -422,7 +420,7 @@ class TestInferenceWorkerThreading:
             for i in range(num_requests):
                 request = InferenceRequest(
                     leaf_node_id=i,
-                    features=np.random.rand(7, 15, 15).astype(np.float32),
+                    features=np.random.rand(36, 15, 15).astype(np.float32),  # Use real gomoku dimensions: 36 channels
                     thread_id=i % 3,
                     path=[i]
                 )
@@ -475,7 +473,7 @@ class TestInferenceWorkerErrorHandling:
             # Create a valid dummy model and initialize lazy layers
             model = create_model_for_game('gomoku')
             with torch.no_grad():
-                dummy_input = torch.randn(1, 7, 15, 15)
+                dummy_input = torch.randn(1, 36, 15, 15)  # Use real gomoku dimensions: 36 channels
                 _ = model(dummy_input)  # Initialize lazy layers
             torch.save(model.state_dict(), model_path)
 
@@ -492,10 +490,10 @@ class TestInferenceWorkerErrorHandling:
         finally:
             os.unlink(model_path)
 
-    def test_mock_worker_empty_queue_handling(self):
-        """Test mock worker handles empty queues gracefully."""
-        worker = MockInferenceWorker(
-            model_path='dummy.pth',
+    def test_real_worker_empty_queue_handling(self):
+        """Test real worker handles empty queues gracefully."""
+        worker = create_inference_worker(
+            model_path='models/model.pth',
             device='cpu',
             batch_size=4,
             timeout_ms=50.0  # Short timeout
@@ -518,8 +516,8 @@ class TestInferenceWorkerErrorHandling:
 
     def test_worker_output_queue_full_handling(self):
         """Test worker handles full output queues."""
-        worker = MockInferenceWorker(
-            model_path='dummy.pth',
+        worker = create_inference_worker(
+            model_path='models/model.pth',
             device='cpu',
             batch_size=1,
             timeout_ms=10.0
@@ -536,7 +534,7 @@ class TestInferenceWorkerErrorHandling:
             for i in range(10):
                 request = InferenceRequest(
                     leaf_node_id=i,
-                    features=np.random.rand(7, 15, 15).astype(np.float32),
+                    features=np.random.rand(36, 15, 15).astype(np.float32),  # Use real gomoku dimensions: 36 channels
                     thread_id=0,
                     path=[i]
                 )
@@ -553,10 +551,10 @@ class TestInferenceWorkerErrorHandling:
 class TestInferenceWorkerPerformance:
     """Test inference worker performance characteristics."""
 
-    def test_mock_worker_throughput(self):
-        """Test mock worker achieves reasonable throughput."""
-        worker = MockInferenceWorker(
-            model_path='dummy.pth',
+    def test_real_worker_throughput(self):
+        """Test real worker achieves reasonable throughput."""
+        worker = create_inference_worker(
+            model_path='models/model.pth',
             device='cpu',
             batch_size=8,
             timeout_ms=10.0
@@ -575,7 +573,7 @@ class TestInferenceWorkerPerformance:
             for i in range(num_requests):
                 request = InferenceRequest(
                     leaf_node_id=i,
-                    features=np.random.rand(7, 15, 15).astype(np.float32),
+                    features=np.random.rand(36, 15, 15).astype(np.float32),  # Use real gomoku dimensions: 36 channels
                     thread_id=0,
                     path=[i]
                 )
@@ -596,7 +594,7 @@ class TestInferenceWorkerPerformance:
             elapsed = end_time - start_time
             throughput = len(results) / elapsed
 
-            # Mock worker should be quite fast
+            # Real worker should achieve reasonable throughput
             assert throughput > 10  # At least 10 requests/second
             assert len(results) >= num_requests * 0.8  # Get most results
 
@@ -605,8 +603,8 @@ class TestInferenceWorkerPerformance:
 
     def test_worker_metrics_tracking(self):
         """Test worker tracks metrics correctly."""
-        worker = MockInferenceWorker(
-            model_path='dummy.pth',
+        worker = create_inference_worker(
+            model_path='models/model.pth',
             device='cpu',
             batch_size=4,
             timeout_ms=20.0
@@ -627,7 +625,7 @@ class TestInferenceWorkerPerformance:
             for i in range(num_requests):
                 request = InferenceRequest(
                     leaf_node_id=i,
-                    features=np.random.rand(7, 15, 15).astype(np.float32),
+                    features=np.random.rand(36, 15, 15).astype(np.float32),  # Use real gomoku dimensions: 36 channels
                     thread_id=0,
                     path=[i]
                 )
@@ -655,7 +653,7 @@ Run inference worker tests:
 python -m pytest tests/unit/test_inference_worker.py -v
 
 # Run specific test classes
-python -m pytest tests/unit/test_inference_worker.py::TestMockInferenceWorker -v
+python -m pytest tests/unit/test_inference_worker.py::Testcreate_inference_worker -v
 python -m pytest tests/unit/test_inference_worker.py::TestInferenceWorkerThreading -v
 python -m pytest tests/unit/test_inference_worker.py::TestGPUInferenceWorkerMocked -v
 
@@ -665,12 +663,12 @@ python -m pytest tests/unit/test_inference_worker.py::TestInferenceWorkerPerform
 # Run with coverage
 python -m pytest tests/unit/test_inference_worker.py --cov=src.neural.inference_worker
 
-# Skip GPU-dependent tests (runs CPU/mock tests only)
-python -m pytest tests/unit/test_inference_worker.py -v -k "not gpu or mock"
+# Skip GPU-dependent tests (runs CPU tests only)
+python -m pytest tests/unit/test_inference_worker.py -v -k "not gpu"
 
 Expected Results:
 ✅ All worker creation and initialization tests pass
-✅ Mock worker processes requests correctly
+✅ Real worker processes requests correctly
 ✅ Worker thread lifecycle (start/stop) works cleanly
 ✅ Queue-based communication functions properly
 ✅ Basic batching logic processes requests in batches
@@ -681,8 +679,8 @@ Expected Results:
 
 Test Coverage Includes:
 - InferenceWorker factory function and initialization
-- GPUInferenceWorker with mocked model loading
-- MockInferenceWorker for testing without GPU requirements
+- GPUInferenceWorker with real model loading
+- create_inference_worker for testing without GPU requirements
 - Threading behavior and lifecycle management
 - Queue-based communication between threads
 - Basic batching logic and timeout handling

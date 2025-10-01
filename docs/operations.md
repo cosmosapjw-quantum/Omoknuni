@@ -367,12 +367,12 @@ The AlphaZero engine includes a comprehensive error handling framework designed 
 **Check Error Summary:**
 ```bash
 # View error statistics from the error reporter
-python -c "
+python << 'EOF'
 from src.utils.errors import error_reporter
 summary = error_reporter.get_error_summary()
-print(f'Total errors: {summary[\"total_errors\"]}')
-print(f'Error types: {summary[\"error_counts\"]}')
-"
+print(f"Total errors: {summary['total_errors']}")
+print(f"Error types: {summary['error_counts']}")
+EOF
 ```
 
 **Monitor Thread Health:**
@@ -444,7 +444,7 @@ python -m pytest tests/unit/test_error_handling.py -v -k "ModelValidator"
 **Manual Error Simulation:**
 ```bash
 # Test error handling under controlled conditions
-python -c "
+python << 'EOF'
 from src.utils.errors import ThreadHealthMonitor, InferenceError
 
 # Simulate thread failures
@@ -455,7 +455,7 @@ for i in range(5):
     print(f'Failure {i+1}: continue={should_continue}')
     if not should_continue:
         break
-"
+EOF
 ```
 
 ---

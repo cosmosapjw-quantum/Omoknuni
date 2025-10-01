@@ -19,7 +19,8 @@ import os
 from unittest.mock import Mock, patch, MagicMock
 
 # Import worker implementation
-from src.neural.inference_worker import GPUInferenceWorker, MockInferenceWorker
+from src.neural.inference_worker import GPUInferenceWorker
+from src.neural.cpu_inference import CPUInferenceWorker
 from src.neural.model import create_model_for_game
 
 # Import contract interfaces
@@ -38,7 +39,7 @@ class TestPinnedMemorySetup:
             # Create and save a valid model
             model = create_model_for_game('gomoku')
             with torch.no_grad():
-                dummy_input = torch.randn(1, 7, 15, 15)
+                dummy_input = torch.randn(1, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
                 _ = model(dummy_input)  # Initialize lazy layers
             torch.save(model.state_dict(), self.model_path)
 
@@ -101,7 +102,7 @@ class TestPinnedMemoryBufferManagement:
             self.model_path = f.name
             model = create_model_for_game('gomoku')
             with torch.no_grad():
-                dummy_input = torch.randn(1, 7, 15, 15)
+                dummy_input = torch.randn(1, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
                 _ = model(dummy_input)
             torch.save(model.state_dict(), self.model_path)
 
@@ -121,7 +122,7 @@ class TestPinnedMemoryBufferManagement:
 
     def test_setup_pinned_memory_buffers_success(self):
         """Test successful pinned memory buffer allocation."""
-        input_shape = (7, 15, 15)
+        input_shape = (36, 15, 15)  # Enhanced Gomoku: 36 input channels
         batch_size = 32
 
         self.worker._setup_pinned_memory_buffers(batch_size, input_shape)
@@ -132,7 +133,7 @@ class TestPinnedMemoryBufferManagement:
 
         # Should allocate input buffer
         assert self.worker._pinned_input_buffer is not None
-        assert self.worker._pinned_input_buffer.shape == (expected_capacity, 7, 15, 15)
+        assert self.worker._pinned_input_buffer.shape == (expected_capacity, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
         assert self.worker._pinned_input_buffer.is_pinned()
 
         # Should allocate output buffers
@@ -145,7 +146,7 @@ class TestPinnedMemoryBufferManagement:
 
     def test_setup_pinned_memory_buffers_reuse_existing(self):
         """Test buffer reuse when current buffers are sufficient."""
-        input_shape = (7, 15, 15)
+        input_shape = (36, 15, 15)  # Enhanced Gomoku: 36 input channels
 
         # Setup initial buffers
         self.worker._setup_pinned_memory_buffers(32, input_shape)
@@ -160,7 +161,7 @@ class TestPinnedMemoryBufferManagement:
 
     def test_setup_pinned_memory_buffers_expansion(self):
         """Test buffer expansion when larger capacity needed."""
-        input_shape = (7, 15, 15)
+        input_shape = (36, 15, 15)  # Enhanced Gomoku: 36 input channels
 
         # Setup initial buffers
         self.worker._setup_pinned_memory_buffers(16, input_shape)
@@ -174,7 +175,7 @@ class TestPinnedMemoryBufferManagement:
 
     def test_setup_pinned_memory_buffers_failure_fallback(self):
         """Test fallback when pinned memory allocation fails."""
-        input_shape = (7, 15, 15)
+        input_shape = (36, 15, 15)  # Enhanced Gomoku: 36 input channels
 
         with patch('torch.empty', side_effect=RuntimeError("CUDA out of memory")):
             self.worker._setup_pinned_memory_buffers(32, input_shape)
@@ -186,7 +187,7 @@ class TestPinnedMemoryBufferManagement:
 
     def test_cleanup_pinned_buffers(self):
         """Test pinned memory buffer cleanup."""
-        input_shape = (7, 15, 15)
+        input_shape = (36, 15, 15)  # Enhanced Gomoku: 36 input channels
 
         # Setup buffers
         self.worker._setup_pinned_memory_buffers(32, input_shape)
@@ -210,7 +211,7 @@ class TestOptimizedTensorOperations:
             self.model_path = f.name
             model = create_model_for_game('gomoku')
             with torch.no_grad():
-                dummy_input = torch.randn(1, 7, 15, 15)
+                dummy_input = torch.randn(1, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
                 _ = model(dummy_input)
             torch.save(model.state_dict(), self.model_path)
 
@@ -224,7 +225,7 @@ class TestOptimizedTensorOperations:
             )
 
         # Setup pinned memory buffers
-        input_shape = (7, 15, 15)
+        input_shape = (36, 15, 15)  # Enhanced Gomoku: 36 input channels
         self.worker._setup_pinned_memory_buffers(32, input_shape)
 
     def teardown_method(self):
@@ -234,7 +235,7 @@ class TestOptimizedTensorOperations:
 
     def test_create_batch_tensor_optimized_with_pinned_memory(self):
         """Test optimized batch tensor creation using pinned memory."""
-        positions = [np.random.randn(7, 15, 15).astype(np.float32) for _ in range(4)]
+        positions = [np.random.randn(36, 15, 15).astype(np.float32) for _ in range(4)]  # Enhanced Gomoku: 36 input channels
 
         # Ensure pinned memory is enabled and buffer exists
         assert self.worker._use_pinned_memory == True
@@ -245,18 +246,18 @@ class TestOptimizedTensorOperations:
 
         # Should return a valid tensor with correct shape
         assert isinstance(batch_tensor, torch.Tensor)
-        assert batch_tensor.shape == (4, 7, 15, 15)
+        assert batch_tensor.shape == (4, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
         assert batch_tensor.device.type == 'cuda'  # Should be on GPU device
 
     def test_create_batch_tensor_optimized_fallback_standard(self):
         """Test fallback to standard tensor creation."""
-        positions = [np.random.randn(7, 15, 15).astype(np.float32) for _ in range(4)]
+        positions = [np.random.randn(36, 15, 15).astype(np.float32) for _ in range(4)]  # Enhanced Gomoku: 36 input channels
 
         # Disable pinned memory
         self.worker._use_pinned_memory = False
 
         with patch('torch.tensor') as mock_tensor:
-            mock_tensor.return_value = torch.randn(4, 7, 15, 15)
+            mock_tensor.return_value = torch.randn(4, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
 
             batch_tensor = self.worker._create_batch_tensor_optimized(positions)
 
@@ -267,10 +268,10 @@ class TestOptimizedTensorOperations:
     def test_create_batch_tensor_optimized_batch_too_large(self):
         """Test fallback when batch size exceeds buffer capacity."""
         # Create batch larger than buffer capacity
-        positions = [np.random.randn(7, 15, 15).astype(np.float32) for _ in range(100)]
+        positions = [np.random.randn(36, 15, 15).astype(np.float32) for _ in range(100)]  # Enhanced Gomoku: 36 input channels
 
         with patch('torch.tensor') as mock_tensor:
-            mock_tensor.return_value = torch.randn(100, 7, 15, 15)
+            mock_tensor.return_value = torch.randn(100, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
 
             batch_tensor = self.worker._create_batch_tensor_optimized(positions)
 
@@ -336,7 +337,7 @@ class TestPinnedMemoryIntegration:
             self.model_path = f.name
             model = create_model_for_game('gomoku')
             with torch.no_grad():
-                dummy_input = torch.randn(1, 7, 15, 15)
+                dummy_input = torch.randn(1, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
                 _ = model(dummy_input)
             torch.save(model.state_dict(), self.model_path)
 
@@ -355,7 +356,7 @@ class TestPinnedMemoryIntegration:
 
     def test_warmup_with_pinned_memory_setup(self):
         """Test warmup process sets up pinned memory buffers."""
-        input_shape = (7, 15, 15)
+        input_shape = (36, 15, 15)  # Enhanced Gomoku: 36 input channels
 
         # On CPU, pinned memory should be disabled
         self.worker.warmup(input_shape)
@@ -378,7 +379,7 @@ class TestPinnedMemoryIntegration:
             use_mixed_precision=False
         )
 
-        input_shape = (7, 15, 15)
+        input_shape = (36, 15, 15)  # Enhanced Gomoku: 36 input channels
         worker.warmup(input_shape)
 
         # Should setup pinned memory on CUDA
@@ -387,7 +388,7 @@ class TestPinnedMemoryIntegration:
 
     def test_batch_inference_with_optimized_transfers(self):
         """Test batch inference uses optimized tensor operations."""
-        positions = [np.random.randn(7, 15, 15).astype(np.float32) for _ in range(4)]
+        positions = [np.random.randn(36, 15, 15).astype(np.float32) for _ in range(4)]  # Enhanced Gomoku: 36 input channels
 
         policies, values = self.worker.batch_inference(positions)
 
@@ -424,7 +425,7 @@ class TestPinnedMemoryMetrics:
             self.model_path = f.name
             model = create_model_for_game('gomoku')
             with torch.no_grad():
-                dummy_input = torch.randn(1, 7, 15, 15)
+                dummy_input = torch.randn(1, 36, 15, 15)  # Enhanced Gomoku: 36 input channels
                 _ = model(dummy_input)
             torch.save(model.state_dict(), self.model_path)
 
@@ -465,7 +466,7 @@ class TestPinnedMemoryMetrics:
         )
 
         # Setup pinned memory buffers
-        input_shape = (7, 15, 15)
+        input_shape = (36, 15, 15)  # Enhanced Gomoku: 36 input channels
         worker._setup_pinned_memory_buffers(32, input_shape)
 
         metrics = worker._get_memory_efficiency_metrics()
@@ -488,19 +489,42 @@ class TestPinnedMemoryMetrics:
         assert 'pinned_buffer_capacity' in metrics
 
 
-def test_pinned_memory_mock_worker_compatibility():
-    """Test that MockInferenceWorker maintains compatibility."""
-    mock_worker = MockInferenceWorker(
-        model_path='/dummy/path',
-        device='cpu',
-        batch_size=32,
-        timeout_ms=5.0,
-        use_mixed_precision=False
-    )
+def test_pinned_memory_cpu_worker_compatibility():
+    """Test that CPUInferenceWorker maintains compatibility."""
+    from src.neural.model import create_model_for_game
+    import tempfile
+    import os
+
+    # Create a real model for testing
+    with tempfile.NamedTemporaryFile(suffix='.pth', delete=False) as f:
+        model_path = f.name
+
+    try:
+        model = create_model_for_game('gomoku')
+        with torch.no_grad():
+            dummy_input = torch.randn(1, model.input_channels, 15, 15)
+            _ = model(dummy_input)
+        torch.save(model.state_dict(), model_path)
+
+        cpu_worker = CPUInferenceWorker(
+            model_path=model_path,
+            device='cpu',
+            batch_size=32,
+            timeout_ms=5.0,
+            use_mixed_precision=False
+        )
+
+        # Warmup the worker
+        cpu_worker.warmup((36, 15, 15))
+
+    finally:
+        # Clean up
+        if os.path.exists(model_path):
+            os.unlink(model_path)
 
     # Should be able to run inference without pinned memory features
-    positions = [np.random.randn(7, 15, 15).astype(np.float32) for _ in range(4)]
-    policies, values = mock_worker.batch_inference(positions)
+    positions = [np.random.randn(36, 15, 15).astype(np.float32) for _ in range(4)]  # Enhanced Gomoku: 36 input channels
+    policies, values = cpu_worker.batch_inference(positions)
 
     assert policies.shape == (4, 225)
     assert values.shape == (4,)
