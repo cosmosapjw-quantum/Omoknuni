@@ -7,10 +7,12 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 🔧 **In Development: C++ Simulation Runner** - Closing 122-163× performance gap (Spec 002)
 
 ### Current Status
-- **Version**: 1.0.0-alpha + Spec 002 (Phase 0 Complete, Phase 1 In Progress)
+- **Version**: 1.0.0-alpha + Spec 002 (Phases 0-2 Complete, Phase 3 In Progress)
 - **Alpha Release Date**: 2025-10-01
 - **Spec 002 Phase 0**: ✅ COMPLETE (2025-10-02) - Training pipeline unblocked
-- **Spec 002 Phase 1**: 🔄 IN PROGRESS (1/3 complete) - Build & move storage
+- **Spec 002 Phase 1**: ✅ COMPLETE (2025-10-02) - Build & move storage
+- **Spec 002 Phase 2**: ✅ COMPLETE (2025-10-02) - C++ runner core implementation
+- **Spec 002 Phase 3**: 🔄 IN PROGRESS (1/4 complete) - Python integration
 - **Target**: Increase throughput from 246 → 30,000-40,000 sims/sec
 
 ### Active Work: C++ MCTS Simulation Runner
@@ -32,12 +34,24 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - ✅ T004: Signal handler guard (worker thread compatibility)
 - ✅ T005: Training pipeline smoke test (validates all fixes)
 
-**Phase 1 In Progress** (1/3 complete):
+**Phase 1 Complete** (2025-10-02):
 - ✅ T006: Build wiring with sanitizer support (ASan/TSan/UBSan)
-- ⏳ T007: Contract tests for SimulationRunner API (next)
-- ⏳ T008: Native move storage in MCTSTree (1000MB→20MB reduction)
+- ✅ T007: Contract tests for SimulationRunner API (12 tests passing)
+- ✅ T008: Native move storage in MCTSTree (1000MB→20MB reduction achieved)
 
-**Next**: T007 - Contract tests to establish TDD workflow for C++ runner
+**Phase 2 Complete** (2025-10-02):
+- ✅ T009: Select leaf implementation with PUCT selector and virtual loss
+- ✅ T010: Expand node with terminal detection and inference callback
+- ✅ T011: Backup value with sign flipping and virtual loss removal
+- ✅ T012: Pipeline connection (select → expand → backup)
+
+**Phase 3 In Progress** (1/4 complete):
+- ✅ T013: PyInferenceCallback bridge - Python/C++ inference integration (16 tests passing)
+- ⏳ T014: AlphaZeroMCTS refactor - Wire C++ runner into Python MCTS (next)
+- ⏳ T015: SearchCoordinator fix - Cleanup shutdown logic and GPU worker integration
+- ⏳ T016: Inference bridge - CppInferenceBridge wrapper for GPUInferenceWorker
+
+**Next**: T014 - AlphaZeroMCTS refactor to use C++ SimulationRunner
 
 See [PYTHON_FIXES_REQUIRED.md](specs/002-cpp-simulation-runner/PYTHON_FIXES_REQUIRED.md) for comprehensive analysis and [MIGRATION.md](specs/002-cpp-simulation-runner/MIGRATION.md) for deployment guide.
 
