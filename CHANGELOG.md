@@ -166,9 +166,18 @@ All 5 Phase 0 tasks (T001-T005) completed successfully:
   - ✅ Memory usage: 276.57 MB total for 10M nodes (well under 400MB target)
   - ✅ Move storage: 19.07 MB for 10M nodes (2 bytes per node as designed)
   - ✅ Bytes per node: <64 bytes (target met)
-- **Status**: ✅ Complete (commit pending)
+- **Status**: ✅ Complete (commit c4bd022)
 
-**Next Task**: T009 (Select Leaf) - Phase 2 begins
+---
+
+### **Phase 1 Complete - Build & Move Storage Ready** (2025-10-02)
+
+All 3 Phase 1 tasks (T006-T008) completed successfully:
+- ✅ Build wiring with sanitizer support (ASan/TSan/UBSan)
+- ✅ SimulationRunner API contract tests (12 tests passing)
+- ✅ Move storage implementation (52× memory efficiency)
+
+**Next Phase**: Phase 2 - C++ Runner Core (T009-T012)
 
 ### Spec 002: C++ MCTS Simulation Runner - Documentation Complete (2025-10-02)
 - **SPEC DOCUMENTATION**: Complete specification and implementation plan for C++ simulation runner

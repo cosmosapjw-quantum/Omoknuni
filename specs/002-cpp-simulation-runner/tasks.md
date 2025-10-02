@@ -101,7 +101,7 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
   - **Test files**: `tests/unit/test_tree_move_storage.cpp` (C++ standalone), `tests/contract/test_move_storage_api.py` (Python)
   - **Acceptance**: ✅ C++ tests pass (8/8), Python tests pass (10/10), memory 19.07MB for 10M nodes (vs 1000MB)
   - **Est**: 2h
-  - **Completed**: 2025-10-02 by implement-next
+  - **Completed**: 2025-10-02 by implement-next (c4bd022)
 
 ## Phase 2 — C++ Runner Core
 
