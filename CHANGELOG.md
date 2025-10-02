@@ -207,7 +207,7 @@ All 3 Phase 1 tasks (T006-T008) completed successfully:
   - ✅ Legal move selection via PUCT
   - ✅ Game state properly updated during traversal
   - ✅ Terminal node detection working
-- **Status**: ✅ Complete (commit pending)
+- **Status**: ✅ Complete (commit 79f96b5)
 
 **Next Task**: T010 (Expand Node) - Neural network inference and child allocation
 

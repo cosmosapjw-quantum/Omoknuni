@@ -116,7 +116,7 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
   - **Test file**: `tests/unit/test_simulation_select_leaf.cpp` (C++ standalone with deterministic TestGameState fixture)
   - **Acceptance**: ✅ Path buffer populated, legal move selection verified, virtual loss applied, 4/4 tests passing
   - **Est**: 2h
-  - **Completed**: 2025-10-02 by implement-next
+  - **Completed**: 2025-10-02 by implement-next (79f96b5)
 
 - [ ] **T010** Expand node
   - **File**: `cpp_extensions/mcts/simulation_runner.cpp:expand_node()`
