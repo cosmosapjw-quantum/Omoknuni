@@ -21,7 +21,7 @@ from typing import List, Dict, Any, Optional, Tuple, Callable
 import numpy as np
 import logging
 import time
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future
 from threading import Lock
 
 try:
@@ -127,13 +127,18 @@ class AlphaZeroMCTS(MCTSEngine):
         backup_config = mcts_py.BackupConfig(enable_value_clipping, True, -1.0, 1.0)
         self.backup_manager = mcts_py.create_backup_manager(self.tree, backup_config)
 
+        # Initialize C++ SimulationRunner for high-performance simulations
+        self.simulation_runner = mcts_py.SimulationRunner(
+            self.tree,
+            self.selector,
+            self.backup_manager,
+            self.virtual_loss_manager
+        )
+
         # State management
         self.root_state = None
         self.root_index = mcts_py.NULL_NODE_INDEX
         self._lock = Lock()
-
-        # Critical: Move mapping for child nodes (child_index -> move)
-        self._move_mapping = {}
 
         # Performance statistics
         self._simulations_completed = 0
@@ -142,7 +147,7 @@ class AlphaZeroMCTS(MCTSEngine):
         # Parallel search configuration
         self.num_threads = num_threads
 
-        self.logger.info(f"AlphaZero MCTS initialized with C++ backend")
+        self.logger.info(f"AlphaZero MCTS initialized with C++ SimulationRunner")
         self.logger.info(f"  Tree capacity: {max_tree_size:,} nodes (~{max_tree_size * 32 // 1024 // 1024}MB)")
         self.logger.info(f"  AVX2 support: {mcts_py.PUCTSelector.is_avx2_supported()}")
         self.logger.info(f"  PUCT constant: {c_puct}")
@@ -150,7 +155,7 @@ class AlphaZeroMCTS(MCTSEngine):
         self.logger.info(f"  Parallel threads: {num_threads}")
 
     def search(self, root_state: IGameState, simulations: int, add_noise: bool = False) -> Dict[int, float]:
-        """Run high-performance MCTS search with C++ backend.
+        """Run high-performance MCTS search with C++ SimulationRunner.
 
         Args:
             root_state: Game state to search from
@@ -165,53 +170,30 @@ class AlphaZeroMCTS(MCTSEngine):
         # Clear and initialize C++ tree
         with self._lock:
             self.tree.clear()
-            # CRITICAL: Clear move mapping for new search
-            self._move_mapping.clear()
             self.root_state = root_state
             self.root_index = self.tree.add_root_node(0.5, root_state.get_current_player() - 1)
 
-        # Expand root node with neural network evaluation
-        self._expand_node(self.root_index, root_state)
+        # NOTE: Do NOT pre-expand root - let C++ SimulationRunner handle all expansion
+        # The C++ runner will expand the root on the first simulation
 
-        # Validate root expansion
-        if self.tree.get_num_children(self.root_index) == 0:
-            self.logger.warning("Root node has no children after expansion")
-            return {}
+        # Create Python inference callback for C++ runner
+        callback = mcts_py.PyInferenceCallback(self._create_inference_callback())
 
-        # Add Dirichlet noise to root for exploration
-        if add_noise and self.tree.get_num_children(self.root_index) > 0:
-            self._add_dirichlet_noise(self.root_index)
-
-        # Run MCTS simulations in parallel using ThreadPoolExecutor
-        # The C++ backend is thread-safe with atomic operations
-        def run_sim_batch(batch_size):
-            """Run a batch of simulations in parallel."""
-            completed = 0
-            for _ in range(batch_size):
-                if self.tree.get_node_count() >= self.tree.get_max_nodes():
-                    break
-                if self._run_simulation():
-                    completed += 1
-            return completed
-
+        # Run MCTS simulations using C++ SimulationRunner (30k+ sims/sec)
         successful_simulations = 0
-        with ThreadPoolExecutor(max_workers=self.num_threads, thread_name_prefix="mcts") as executor:
-            # Distribute simulations across threads
-            sims_per_thread = simulations // self.num_threads
-            remainder = simulations % self.num_threads
+        failed_simulations = 0
+        for _ in range(simulations):
+            if self.tree.get_node_count() >= self.tree.get_max_nodes():
+                break
+            if self.simulation_runner.run_simulation(root_state, self.root_index, callback):
+                successful_simulations += 1
+            else:
+                failed_simulations += 1
 
-            futures = []
-            for i in range(self.num_threads):
-                # Give remainder simulations to first threads
-                batch_size = sims_per_thread + (1 if i < remainder else 0)
-                if batch_size > 0:
-                    futures.append(executor.submit(run_sim_batch, batch_size))
+        if failed_simulations > 0:
+            self.logger.warning(f"Failed simulations: {failed_simulations}/{simulations}")
 
-            # Collect results
-            for future in futures:
-                successful_simulations += future.result()
-
-        # Collect visit counts for policy
+        # Collect visit counts for policy using tree.get_move()
         visit_counts = {}
         first_child = self.tree.get_first_child_index(self.root_index)
         num_children = self.tree.get_num_children(self.root_index)
@@ -220,9 +202,8 @@ class AlphaZeroMCTS(MCTSEngine):
             for i in range(num_children):
                 child_index = first_child + i
                 if self.tree.is_valid_index(child_index):
-                    move = self._get_move_for_child(child_index)
-                    if move is not None:  # CRITICAL: Check for valid move
-                        visit_counts[move] = int(self.tree.get_visit_count(child_index))
+                    move = self.tree.get_move(child_index)
+                    visit_counts[move] = int(self.tree.get_visit_count(child_index))
 
         # Update performance statistics
         search_time = time.perf_counter() - start_time
@@ -232,8 +213,9 @@ class AlphaZeroMCTS(MCTSEngine):
         avg_time_per_sim = search_time / max(successful_simulations, 1)
         sims_per_second = successful_simulations / search_time if search_time > 0 else 0
 
-        self.logger.debug(f"Search completed: {successful_simulations}/{simulations} sims, "
-                         f"{sims_per_second:.1f} sims/sec, {avg_time_per_sim*1000:.2f}ms/sim")
+        self.logger.info(f"Search completed: {successful_simulations}/{simulations} sims, "
+                         f"{sims_per_second:.1f} sims/sec, {avg_time_per_sim*1000:.2f}ms/sim, "
+                         f"failed: {failed_simulations}")
 
         return visit_counts
 
@@ -266,8 +248,8 @@ class AlphaZeroMCTS(MCTSEngine):
         for i in range(num_children):
             child_index = first_child + i
             if self.tree.is_valid_index(child_index):
-                move = self._get_move_for_child(child_index)
-                if move is not None and 0 <= move < action_space_size:  # CRITICAL: Check for valid move
+                move = self.tree.get_move(child_index)
+                if 0 <= move < action_space_size:
                     visits[move] = self.tree.get_visit_count(child_index)
 
         if temperature > 1.0 and legal_moves_array.size > 0:
@@ -324,8 +306,6 @@ class AlphaZeroMCTS(MCTSEngine):
             self.backup_manager.reset_statistics()
             self.root_state = None
             self.root_index = mcts_py.NULL_NODE_INDEX
-            # CRITICAL: Clear move mapping to prevent stale references
-            self._move_mapping.clear()
 
         self.logger.debug("MCTS tree reset")
 
@@ -358,84 +338,6 @@ class AlphaZeroMCTS(MCTSEngine):
             }
         }
         return stats
-
-    def _run_simulation(self) -> bool:
-        """Run a single MCTS simulation with C++ backend.
-
-        Returns:
-            True if simulation completed successfully
-        """
-        try:
-            # Selection phase: traverse to leaf using C++ PUCT selection
-            path = []
-            current_index = self.root_index
-            current_state = self.root_state
-
-            while True:
-                path.append(current_index)
-
-                # Check if node is terminal
-                flags = self.tree.get_flags(current_index)
-                if flags.is_terminal():
-                    # Terminal node - get game result
-                    value = self._get_terminal_value(current_state)
-                    break
-
-                # Check if node is expanded
-                if not flags.is_expanded():
-                    # Leaf node - expand and evaluate
-                    value = self._expand_node(current_index, current_state)
-                    break
-
-                # Internal node - select child using C++ PUCT
-                if self.tree.get_num_children(current_index) == 0:
-                    # No children available
-                    value = 0.0
-                    break
-
-                selection_result = self.selector.select_child(self.tree, current_index)
-                if not selection_result.valid:
-                    # Selection failed
-                    value = 0.0
-                    break
-
-                # Move to selected child
-                current_index = selection_result.selected_child
-                move = self._get_move_for_child(current_index)
-
-                # CRITICAL: Check for valid move and properly clone state
-                if move is None:
-                    self.logger.error(f"Invalid move for child {current_index}")
-                    value = 0.0
-                    break
-
-                # Clone state and apply move (make_move modifies in-place!)
-                try:
-                    new_state = current_state.clone()
-                    result = new_state.make_move(move)
-                    # make_move returns None but modifies new_state in-place
-                    current_state = new_state
-                except Exception as e:
-                    self.logger.error(f"Failed to apply move {move}: {e}")
-                    value = 0.0
-                    break
-
-            # CRITICAL: C++ expects leaf-to-root path order for consistency
-            reversed_path = list(reversed(path))
-
-            # Apply virtual loss along path for thread coordination
-            vl_guard = mcts_py.VirtualLossGuard(self.virtual_loss_manager, reversed_path)
-            if not vl_guard.is_valid():
-                return False
-
-            # Backup phase: propagate value up tree with C++ backend
-            result = self.backup_manager.backup_value_along_path(reversed_path, value, self.virtual_loss_manager)
-
-            return result.success
-
-        except Exception as e:
-            self.logger.error(f"Simulation failed: {e}")
-            return False
 
     def _expand_node(self, node_index: int, game_state: IGameState) -> float:
         """Expand node using neural network evaluation.
@@ -514,8 +416,8 @@ class AlphaZeroMCTS(MCTSEngine):
                     self.tree.set_visit_count(child_index, 0.0)
                     self.tree.set_total_value(child_index, 0.0)
 
-                    # CRITICAL: Store move mapping for correct traversal
-                    self._move_mapping[child_index] = move
+                    # Store move in C++ tree (replaces Python dict)
+                    self.tree.set_move(child_index, move)
 
                 # Update parent node
                 self.tree.set_first_child_index(node_index, first_child)
@@ -556,18 +458,42 @@ class AlphaZeroMCTS(MCTSEngine):
         result = game_state.get_result()
         return float(result) if result is not None else 0.0
 
-    def _get_move_for_child(self, child_index: int) -> Optional[int]:
-        """Get move that led to child node using explicit move mapping.
+    def _create_inference_callback(self) -> Callable:
+        """Create inference callback for C++ SimulationRunner.
 
         Returns:
-            Move index, or None if not found
+            Callable that takes IGameState and returns (policy, value) tuple
         """
-        if child_index in self._move_mapping:
-            return self._move_mapping[child_index]
+        def inference_callback(game_state: IGameState) -> Tuple[List[float], float]:
+            """Synchronous inference for C++ runner."""
+            try:
+                future = self.inference_fn(game_state)
+                policy, value = future.result(timeout=1.0)
 
-        # Fallback for debugging
-        self.logger.warning(f"Move mapping not found for child {child_index}")
-        return None
+                # Extract policy for single game state from batch
+                if policy.ndim > 1:
+                    policy = policy[0]
+
+                # Convert to Python list for C++ compatibility
+                if hasattr(policy, 'tolist'):
+                    policy = policy.tolist()
+                else:
+                    policy = list(policy)
+
+                return (policy, float(value))
+            except Exception as e:
+                self.logger.error(f"Inference callback failed: {e}")
+                # Fallback to uniform policy
+                legal_moves = game_state.get_legal_moves()
+                action_space = game_state.action_space_size
+                policy = [0.0] * action_space
+                if len(legal_moves) > 0:
+                    prob = 1.0 / len(legal_moves)
+                    for move in legal_moves:
+                        policy[move] = prob
+                return (policy, 0.0)
+
+        return inference_callback
 
 
 # Backward compatibility

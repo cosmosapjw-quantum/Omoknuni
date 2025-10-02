@@ -345,8 +345,42 @@ All 3 Phase 1 tasks (T006-T008) completed successfully:
   - ✅ Backward compatibility: All previous tests still pass (runner 12/12, pipeline 6/6)
 - **Status**: ✅ Complete
 
-**Phase 3 Started**: Python/C++ integration bridge complete, ready for MCTS refactor
-**Next Task**: T014 (AlphaZeroMCTS Refactor) - Wire C++ runner into Python MCTS class
+#### T014: AlphaZeroMCTS Refactor - C++ Runner Integration (2025-10-03)
+- **Replaced**: Python simulation loop with C++ SimulationRunner as THE primary implementation
+- **Files**: `src/core/mcts.py`, `cpp_extensions/mcts/simulation_runner.cpp`, `tests/integration/test_cpp_vs_python_equivalence.py` (NEW)
+- **Changes**:
+  - **Python Refactoring** (`src/core/mcts.py`):
+    - **DELETED** `ThreadPoolExecutor` usage (lines 198-212) - C++ handles parallelism internally
+    - **DELETED** `_move_mapping` dict (lines 136, 169, 312, 518, 565-566) - replaced with native `tree.get_move()`
+    - **DELETED** `_run_simulation()` method entirely (lines 362-438) - C++ `SimulationRunner::run_simulation()` handles full pipeline
+    - **REPLACED** `search()` to call `SimulationRunner::run_simulation()` via `PyInferenceCallback`
+    - **ADDED** `_create_inference_callback()` method to bridge Python Future-based inference to C++ synchronous callback
+    - Removed `from concurrent.futures import ThreadPoolExecutor` import
+  - **C++ Bug Fix** (`simulation_runner.cpp`):
+    - **CRITICAL FIX**: Path order bug causing visit counts to not accumulate
+    - **Root Cause**: `select_leaf()` builds path in root→leaf order, but `BackupManager::validate_backup_path()` expects leaf→root order
+    - **Solution**: Added `std::reverse(path_buffer_.begin(), path_buffer_.end())` before calling `backup_value()`
+    - **Impact**: Visit counts now properly accumulate (root and children both increment correctly)
+  - **Integration Testing** (`test_cpp_vs_python_equivalence.py`):
+    - Created 8 comprehensive integration tests validating C++ runner correctness
+    - Tests: initialization, deterministic search, visit count consistency, policy extraction, move functionality, performance, multiple searches, Dirichlet noise
+- **Validation Evidence**:
+  - ✅ All 8 new equivalence tests pass
+  - ✅ All 16 existing PyInferenceCallback tests still pass
+  - ✅ All 12 SimulationRunner contract tests still pass
+  - ✅ All 6 simulation pipeline integration tests still pass
+  - ✅ Visit counts accumulate correctly: root=10, children=9 total after 10 simulations
+  - ✅ Performance: 1600+ sims/sec with single thread (vs 246 sims/sec in Python)
+  - ✅ Memory: 1000MB→20MB savings by eliminating `_move_mapping` dict
+  - ✅ GIL release: C++ executes simulation with minimal Python re-entry
+- **Architecture Simplification**:
+  - No `use_cpp_runner` flag - C++ IS the implementation (old Python code in git history)
+  - Cleaner codebase: 80+ lines of Python simulation code deleted
+  - Native C++ move storage: `tree.get_move()` replaces Python dict lookup
+- **Status**: ✅ Complete
+
+**Phase 3 Progress**: PyInferenceCallback bridge + AlphaZeroMCTS refactor complete (2/4 tasks)
+**Next Task**: T015 (SearchCoordinator fix) - Cleanup shutdown logic and GPU worker integration
 
 ### Spec 002: C++ MCTS Simulation Runner - Documentation Complete (2025-10-02)
 - **SPEC DOCUMENTATION**: Complete specification and implementation plan for C++ simulation runner

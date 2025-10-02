@@ -6,7 +6,7 @@
 #include "simulation_runner.hpp"
 #include "../utils/igamestate.h"
 #include <stdexcept>
-#include <algorithm>
+#include <algorithm>  // for std::reverse
 #include <cmath>
 
 namespace mcts {
@@ -52,6 +52,10 @@ bool SimulationRunner::run_simulation(IGameState& root_state,
     // Updates visit counts and Q-values atomically
     // Removes virtual loss applied during selection
     // Sign flips at each level: leaf→parent→grandparent...
+    //
+    // CRITICAL: BackupManager expects path in leaf-to-root order,
+    // but select_leaf builds it in root-to-leaf order, so reverse it
+    std::reverse(path_buffer_.begin(), path_buffer_.end());
     backup_value(path_buffer_, leaf_value);
 
     // Simulation completed successfully
