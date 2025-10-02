@@ -143,16 +143,20 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
   - **Est**: 1.5h
   - **Completed**: 2025-10-02 by implement-next
 
-- [ ] **T012** Connect pipeline
+- [x] **T012** Connect pipeline
   - **File**: `cpp_extensions/mcts/simulation_runner.cpp:run_simulation()`
   - **Changes**:
-    - Connect: `select_leaf()` → `expand_node()` → `backup_value()`
-    - Guard virtual loss with RAII scope
-    - Return `bool` success flag
-  - **Update**: `tests/contract/test_simulation_runner_api.py` (remove `NotImplementedError` assertions)
-  - **Test**: Integration test running 100 simulations without error
-  - **Acceptance**: Contract tests pass, full pipeline works on dummy fixture
+    - Implemented run_simulation() connecting select_leaf() → expand_node() → backup_value()
+    - Clones game state to preserve root during traversal
+    - Virtual loss managed automatically (applied in select_leaf, removed in backup_value)
+    - Returns bool success flag (true on success, false if clone fails)
+    - Uses path_buffer_ member for reuse across simulations
+  - **Tests**:
+    - Contract tests: `tests/contract/test_simulation_runner_api.py` (12 tests, all passing)
+    - Integration tests: `tests/integration/test_simulation_pipeline.py` (6 tests, all passing)
+  - **Acceptance**: ✅ Contract tests pass (12/12), integration tests pass (6/6), full pipeline validated
   - **Est**: 2h
+  - **Completed**: 2025-10-02 by implement-next
 
 ## Phase 3 — Python Integration
 
@@ -260,10 +264,10 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
 
 ## Tracking
 - **Total Tasks**: 23 (Phase 0: 5, Phase 1: 3, Phase 2: 4, Phase 3: 4, Phase 4: 4, Phase 5: 3)
-- **Completed**: 11 / 23 (47.8%) (Phase 0: ✅ 5/5, Phase 1: ✅ 3/3, Phase 2: 🔄 3/4)
-- **Next Up**: T012 (Connect Pipeline) - Complete Phase 2
+- **Completed**: 12 / 23 (52.2%) (Phase 0: ✅ 5/5, Phase 1: ✅ 3/3, Phase 2: ✅ 4/4)
+- **Next Up**: T013 (PyInferenceCallback Bridge) - Start Phase 3
 - **Critical Path**: T001-T005 (Phase 0) → T006-T008 (Phase 1) → T009-T012 (Phase 2) → T013-T016 (Phase 3) → T017-T020 (Phase 4) → T021-T023 (Phase 5)
 - **Estimated Total**: 5 days (0.5 + 1 + 1.5 + 1 + 1 + 0.5 buffer)
 - **Phase 1 Complete**: Build wiring, contract tests, move storage
-- **Phase 2 In Progress**: Select leaf (T009), expansion (T010), and backup (T011) complete, connect pipeline pending
+- **Phase 2 Complete**: Select leaf, expansion, backup, and pipeline connection all implemented and tested
 - Update this checklist after each task completion to stay aligned with Spec-Driven Development.

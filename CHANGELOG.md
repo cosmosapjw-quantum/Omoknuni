@@ -274,7 +274,39 @@ All 3 Phase 1 tasks (T006-T008) completed successfully:
   - ✅ Terminal values propagate (+1.0 win → -1.0 opponent loss)
 - **Status**: ✅ Complete
 
-**Next Task**: T012 (Connect Pipeline) - Implement run_simulation() to connect select → expand → backup
+#### T012: Connect Pipeline (2025-10-02)
+- **Implemented**: `SimulationRunner::run_simulation()` - Complete MCTS simulation pipeline
+- **File**: `cpp_extensions/mcts/simulation_runner.cpp`
+- **Changes**:
+  - **Core Implementation**:
+    - Connected three phases: select_leaf() → expand_node() → backup_value()
+    - Clones root game state to preserve original during traversal
+    - Uses path_buffer_ member variable (pre-allocated, reused across simulations)
+    - Virtual loss automatically managed (applied during selection, removed during backup)
+    - Returns bool success flag (true on success, false if state clone fails)
+  - **Execution Flow**:
+    1. **Clone state**: Preserve root state, create working copy for simulation
+    2. **Selection**: Traverse tree using PUCT, apply moves, build path, apply virtual loss
+    3. **Expansion**: Evaluate leaf (terminal or inference), allocate children with priors
+    4. **Backup**: Propagate value up path with sign flipping, remove virtual loss, update stats
+  - **Testing**:
+    - Contract tests: `tests/contract/test_simulation_runner_api.py` (12 tests)
+      - API surface validation, instantiation, type checking, lifecycle management
+    - Integration tests: `tests/integration/test_simulation_pipeline.py` (6 new tests)
+      - Single simulation, multiple simulations, tree statistics, different tree sizes
+      - Root state preservation, callback interface validation
+- **Validation**:
+  - ✅ All 12 contract tests pass
+  - ✅ All 6 integration tests pass
+  - ✅ Backward compatibility: All previous tests still pass (expansion 6/6, backup 6/6)
+  - ✅ Full pipeline executes without errors
+  - ✅ Game state properly cloned and preserved
+  - ✅ Path buffer reused across simulations
+  - ✅ Virtual loss managed correctly throughout pipeline
+- **Status**: ✅ Complete - Phase 2 finished!
+
+**Phase 2 Complete**: All four C++ runner core tasks (T009-T012) implemented and tested
+**Next Phase**: Phase 3 - Python Integration (T013-T016)
 
 ### Spec 002: C++ MCTS Simulation Runner - Documentation Complete (2025-10-02)
 - **SPEC DOCUMENTATION**: Complete specification and implementation plan for C++ simulation runner

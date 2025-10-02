@@ -27,9 +27,35 @@ SimulationRunner::SimulationRunner(MCTSTree& tree,
 bool SimulationRunner::run_simulation(IGameState& root_state,
                                        NodeIndex root_index,
                                        InferenceCallback& inference_fn) {
-    // TODO: Phase 2 - Implement full simulation logic
-    // For now, return stub that throws
-    throw std::runtime_error("SimulationRunner::run_simulation not implemented yet - Phase 1 stub");
+    // Clone the root state to preserve original during traversal
+    // Each simulation needs its own game state copy for move application
+    std::unique_ptr<IGameState> current_state = root_state.clone();
+
+    if (!current_state) {
+        // Clone failed - should not happen but handle gracefully
+        return false;
+    }
+
+    // Phase 1: Selection - Traverse tree to leaf using PUCT
+    // Updates path_buffer_ with nodes from root to leaf
+    // Applies moves to current_state during traversal
+    // Applies virtual loss to prevent thread collisions
+    NodeIndex leaf = select_leaf(root_index, *current_state, path_buffer_);
+
+    // Phase 2: Expansion - Evaluate leaf with neural network and add children
+    // If terminal: returns game result value, no children added
+    // If non-terminal: calls inference, masks policy, allocates children
+    // Returns value estimate for this position
+    float leaf_value = expand_node(leaf, *current_state, inference_fn);
+
+    // Phase 3: Backup - Propagate value up the path with sign flipping
+    // Updates visit counts and Q-values atomically
+    // Removes virtual loss applied during selection
+    // Sign flips at each level: leaf→parent→grandparent...
+    backup_value(path_buffer_, leaf_value);
+
+    // Simulation completed successfully
+    return true;
 }
 
 NodeIndex SimulationRunner::select_leaf(NodeIndex root,
