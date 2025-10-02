@@ -10,7 +10,7 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - **Version**: 1.0.0-alpha + Spec 002 (Phase 0 Complete, Phase 1 In Progress)
 - **Alpha Release Date**: 2025-10-01
 - **Spec 002 Phase 0**: ✅ COMPLETE (2025-10-02) - Training pipeline unblocked
-- **Spec 002 Phase 1**: 🔄 IN PROGRESS - Build & move storage
+- **Spec 002 Phase 1**: 🔄 IN PROGRESS (1/3 complete) - Build & move storage
 - **Target**: Increase throughput from 246 → 30,000-40,000 sims/sec
 
 ### Active Work: C++ MCTS Simulation Runner
@@ -32,7 +32,12 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - ✅ T004: Signal handler guard (worker thread compatibility)
 - ✅ T005: Training pipeline smoke test (validates all fixes)
 
-**Next**: Phase 1 - Build wiring and native move storage (1000MB→20MB reduction)
+**Phase 1 In Progress** (1/3 complete):
+- ✅ T006: Build wiring with sanitizer support (ASan/TSan/UBSan)
+- ⏳ T007: Contract tests for SimulationRunner API (next)
+- ⏳ T008: Native move storage in MCTSTree (1000MB→20MB reduction)
+
+**Next**: T007 - Contract tests to establish TDD workflow for C++ runner
 
 See [PYTHON_FIXES_REQUIRED.md](specs/002-cpp-simulation-runner/PYTHON_FIXES_REQUIRED.md) for comprehensive analysis and [MIGRATION.md](specs/002-cpp-simulation-runner/MIGRATION.md) for deployment guide.
 

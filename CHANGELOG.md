@@ -82,10 +82,34 @@ All 5 Phase 0 tasks (T001-T005) completed successfully:
 - ✅ Signal handler guard (worker thread compatibility)
 - ✅ Integration test (validates all fixes work together)
 
-**Next Phase**: Phase 1 - Build & Move Storage (T006-T008)
-- Build wiring for C++ simulation runner
-- Implement native move storage in MCTSTree (1000MB→20MB reduction)
-- Set up contract tests for C++ components
+**Next Phase**: Phase 1 - Build & Move Storage (T006-T008) - IN PROGRESS
+
+#### T006: Build Wiring (2025-10-02)
+- **Added**: C++ simulation runner to build system with sanitizer support
+- **Changes**:
+  - **CMakeLists.txt**: Added `simulation_runner.cpp/hpp` to `mcts_core` library
+  - **Sanitizer Configuration**: Added `ENABLE_ASAN`, `ENABLE_TSAN`, `ENABLE_UBSAN` cmake options with proper flag handling as lists
+  - **pyproject.toml**: Added cmake configuration documentation for sanitizer builds
+  - **simulation_runner.cpp**: Commented out game interface include (Phase 2 dependency)
+- **Sanitizer Usage**:
+  ```bash
+  # AddressSanitizer
+  pip install -e . --config-settings=cmake.args="-DENABLE_ASAN=ON"
+
+  # ThreadSanitizer
+  pip install -e . --config-settings=cmake.args="-DENABLE_TSAN=ON"
+
+  # UndefinedBehaviorSanitizer
+  pip install -e . --config-settings=cmake.args="-DENABLE_UBSAN=ON"
+  ```
+- **Impact**: Build system ready for C++ runner implementation, sanitizer support for memory leak and thread safety detection
+- **Validation**:
+  - ✅ Regular build succeeds: `pip install -e . --force-reinstall --config-settings build-dir=build`
+  - ✅ ASan build succeeds and runtime detected
+  - ✅ mcts_py module imports successfully
+- **Status**: ✅ Complete (commit 4749fe51)
+
+**Next Tasks**: T007 (Contract tests), T008 (Move storage)
 
 ### Spec 002: C++ MCTS Simulation Runner - Documentation Complete (2025-10-02)
 - **SPEC DOCUMENTATION**: Complete specification and implementation plan for C++ simulation runner

@@ -66,14 +66,16 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
 
 ## Phase 1 — Build & Move Storage
 
-- [ ] **T006** Build wiring
-  - **Files**: `cpp_extensions/mcts/CMakeLists.txt`, `setup.py`
+- [x] **T006** Build wiring
+  - **Files**: `cpp_extensions/mcts/CMakeLists.txt`, `pyproject.toml`, `simulation_runner.cpp`
   - **Changes**:
-    - Add `simulation_runner.cpp` to `add_library(mcts_py ...)` in CMakeLists
-    - Add ASan/TSan flags: `-fsanitize=address -fsanitize=thread`
-    - Update `setup.py` scikit-build cmake_args
-  - **Acceptance**: `pip install -e . --force-reinstall --config-settings build-dir=build` succeeds
+    - Add `simulation_runner.cpp` to `add_library(mcts_core ...)` in CMakeLists
+    - Add sanitizer options: `ENABLE_ASAN`, `ENABLE_TSAN`, `ENABLE_UBSAN` with proper flags as list
+    - Update `pyproject.toml` scikit-build config with sanitizer documentation
+    - Comment out game interface include in `simulation_runner.cpp` (Phase 2 dependency)
+  - **Acceptance**: ✅ `pip install -e . --force-reinstall --config-settings build-dir=build` succeeds, ASan build works with `-DENABLE_ASAN=ON`
   - **Est**: 30min
+  - **Completed**: 2025-10-02 by implement-next (4749fe51)
 
 - [ ] **T007** Contract tests (failing)
   - **File**: `tests/contract/test_simulation_runner_api.py` (NEW)
@@ -243,7 +245,7 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
 
 ## Tracking
 - **Total Tasks**: 23 (Phase 0: 5, Phase 1: 3, Phase 2: 4, Phase 3: 4, Phase 4: 4, Phase 5: 3)
-- **Completed**: 5 / 23 (Phase 0: ✅ 5/5 COMPLETE)
+- **Completed**: 6 / 23 (Phase 0: ✅ 5/5, Phase 1: 🔄 1/3)
 - **Critical Path**: T001-T005 (Phase 0) → T006-T008 (Phase 1) → T009-T012 (Phase 2) → T013-T016 (Phase 3) → T017-T020 (Phase 4) → T021-T023 (Phase 5)
 - **Estimated Total**: 5 days (0.5 + 1 + 1.5 + 1 + 1 + 0.5 buffer)
 - Update this checklist after each task completion to stay aligned with Spec-Driven Development.

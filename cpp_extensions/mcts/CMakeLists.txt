@@ -5,6 +5,26 @@ project(mcts_core)
 # Find OpenMP
 find_package(OpenMP REQUIRED)
 
+# Sanitizer configuration (optional, enabled via cmake args)
+option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
+option(ENABLE_TSAN "Enable ThreadSanitizer" OFF)
+option(ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
+
+# Sanitizer flags (as list to avoid quoting issues)
+set(SANITIZER_FLAGS)
+if(ENABLE_ASAN)
+    list(APPEND SANITIZER_FLAGS -fsanitize=address -fno-omit-frame-pointer -g -O1)
+    message(STATUS "AddressSanitizer enabled")
+endif()
+if(ENABLE_TSAN)
+    list(APPEND SANITIZER_FLAGS -fsanitize=thread -g -O1)
+    message(STATUS "ThreadSanitizer enabled")
+endif()
+if(ENABLE_UBSAN)
+    list(APPEND SANITIZER_FLAGS -fsanitize=undefined -g -O1)
+    message(STATUS "UndefinedBehaviorSanitizer enabled")
+endif()
+
 # Create static library for MCTS components
 add_library(mcts_core STATIC
     tree.cpp
@@ -15,6 +35,8 @@ add_library(mcts_core STATIC
     virtual_loss.hpp
     backup.cpp
     backup.hpp
+    simulation_runner.cpp
+    simulation_runner.hpp
 )
 
 # Set compile features and flags
@@ -35,7 +57,11 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang
         -mavx2         # Enable AVX2 for vectorized PUCT selection
         -mfma          # Enable FMA instructions
         -fopenmp
+        ${SANITIZER_FLAGS}
     )
+    if(SANITIZER_FLAGS)
+        target_link_options(mcts_core PRIVATE ${SANITIZER_FLAGS})
+    endif()
 endif()
 
 # Add compile definitions
@@ -53,6 +79,7 @@ add_executable(mcts_compile_test
     selection.cpp
     virtual_loss.cpp
     backup.cpp
+    simulation_runner.cpp
 )
 
 # Create minimal main function for compilation test

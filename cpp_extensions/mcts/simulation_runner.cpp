@@ -4,7 +4,8 @@
  */
 
 #include "simulation_runner.hpp"
-#include "../games/interface.h"
+// Note: Game interface headers will be included in Phase 2 when implementing actual logic
+// #include "../games/interface.h"  // TODO: Phase 2 - Re-enable when implementing expansion
 #include <stdexcept>
 #include <algorithm>
 #include <cmath>

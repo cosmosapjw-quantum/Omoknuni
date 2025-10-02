@@ -58,8 +58,13 @@ viz = [
 [tool.scikit-build]
 wheel.expand-macos-universal-tags = true
 
-# Removed cmake.define sections to fix build configuration issues
-# These will be configured directly in CMakeLists.txt
+# CMake configuration
+# Sanitizer options can be enabled via config-settings:
+#   pip install -e . --config-settings=cmake.args="-DENABLE_ASAN=ON"
+#   pip install -e . --config-settings=cmake.args="-DENABLE_TSAN=ON"
+#   pip install -e . --config-settings=cmake.args="-DENABLE_UBSAN=ON"
+cmake.verbose = false
+cmake.build-type = "Release"
 
 [tool.black]
 line-length = 88

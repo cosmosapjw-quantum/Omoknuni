@@ -42,9 +42,10 @@ This plan translates the revised specification into incremental, test-driven wor
 
 ---
 
-## Phase 1 – Build & Move Storage (1 day)
+## Phase 1 – Build & Move Storage 🔄 IN PROGRESS (1 day)
 **Purpose**: Prepare C++ build system and implement move storage (reduces memory 50×)
 **Dependencies**: Phase 0 complete
+**Status**: 1/3 tasks complete (T006 done)
 
 ### Tasks
 1. **Build Wiring** (T003)
