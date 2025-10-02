@@ -111,6 +111,8 @@ PYBIND11_MODULE(mcts_py, m) {
         .def(py::init<std::size_t>(), py::arg("max_nodes") = 50000000, NoGil())
         .def("allocate_node", &MCTSTree::allocate_node, NoGil())
         .def("allocate_nodes", &MCTSTree::allocate_nodes, NoGil())
+        .def("deallocate_node", &MCTSTree::deallocate_node, NoGil())
+        .def("deallocate_nodes", &MCTSTree::deallocate_nodes, NoGil())
         .def("get_node_count", &MCTSTree::get_node_count)
         .def("get_max_nodes", &MCTSTree::get_max_nodes)
         .def("add_root_node", &MCTSTree::add_root_node, NoGil())
@@ -141,7 +143,10 @@ PYBIND11_MODULE(mcts_py, m) {
         .def("get_bytes_per_node", &MCTSTree::get_bytes_per_node)
         .def("get_available_nodes", &MCTSTree::get_available_nodes)
         .def("has_space_for", &MCTSTree::has_space_for)
-        .def("validate_tree", &MCTSTree::validate_tree);
+        .def("validate_tree", &MCTSTree::validate_tree)
+        // Move storage methods
+        .def("get_move", &MCTSTree::get_move, NoGil())
+        .def("set_move", &MCTSTree::set_move, NoGil());
 
     // Virtual Loss Manager
     py::class_<VirtualLossManager, std::shared_ptr<VirtualLossManager>>(m, "VirtualLossManager")

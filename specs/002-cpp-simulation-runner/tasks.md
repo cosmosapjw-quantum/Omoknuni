@@ -88,17 +88,20 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
   - **Est**: 1h
   - **Completed**: 2025-10-02 by implement-next (077799e)
 
-- [ ] **T008** Tree move storage
+- [x] **T008** Tree move storage
   - **Files**: `cpp_extensions/mcts/tree.hpp`, `tree.cpp`, `python_bindings.cpp`
   - **Changes**:
     - Add `alignas(64) uint16_t* moves_` to `MCTSTree` class
     - Implement `uint16_t get_move(NodeIndex idx)` and `void set_move(NodeIndex idx, uint16_t move)`
     - Add allocation in constructor, deallocation in destructor
     - Update `clear()` to reset moves array
+    - Update `get_memory_usage()` to include moves array
     - Add pybind: `.def("get_move", ...)` `.def("set_move", ...)`
-  - **Test files**: `tests/unit/test_tree_move_storage.cpp` (gtest), `tests/contract/test_move_storage_api.py` (Python)
-  - **Acceptance**: gtests pass, Python bindings work, memory 20MB for 10M nodes (vs 1000MB)
+    - Expose `deallocate_node` and `deallocate_nodes` to Python
+  - **Test files**: `tests/unit/test_tree_move_storage.cpp` (C++ standalone), `tests/contract/test_move_storage_api.py` (Python)
+  - **Acceptance**: ✅ C++ tests pass (8/8), Python tests pass (10/10), memory 19.07MB for 10M nodes (vs 1000MB)
   - **Est**: 2h
+  - **Completed**: 2025-10-02 by implement-next
 
 ## Phase 2 — C++ Runner Core
 
@@ -250,8 +253,9 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
 
 ## Tracking
 - **Total Tasks**: 23 (Phase 0: 5, Phase 1: 3, Phase 2: 4, Phase 3: 4, Phase 4: 4, Phase 5: 3)
-- **Completed**: 7 / 23 (30.4%) (Phase 0: ✅ 5/5, Phase 1: 🔄 2/3)
-- **In Progress**: T008 (Move Storage) - Next up
+- **Completed**: 8 / 23 (34.8%) (Phase 0: ✅ 5/5, Phase 1: ✅ 3/3)
+- **Next Up**: T009 (Select Leaf) - Phase 2 begins
 - **Critical Path**: T001-T005 (Phase 0) → T006-T008 (Phase 1) → T009-T012 (Phase 2) → T013-T016 (Phase 3) → T017-T020 (Phase 4) → T021-T023 (Phase 5)
 - **Estimated Total**: 5 days (0.5 + 1 + 1.5 + 1 + 1 + 0.5 buffer)
+- **Phase 1 Complete**: Build wiring, contract tests, move storage - ready for Phase 2
 - Update this checklist after each task completion to stay aligned with Spec-Driven Development.

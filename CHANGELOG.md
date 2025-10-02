@@ -138,6 +138,38 @@ All 5 Phase 0 tasks (T001-T005) completed successfully:
 - **Note**: SimulationRunner methods are stubs in Phase 1 (TDD approach). Implementation in Phase 2.
 - **Status**: ✅ Complete (commit 077799e)
 
+#### T008: Tree Move Storage Implementation (2025-10-02)
+- **Added**: Move storage array to MCTSTree for 50× memory efficiency improvement
+- **Files**: `cpp_extensions/mcts/tree.hpp`, `tree.cpp`, `python_bindings.cpp`
+- **Changes**:
+  - **C++ Implementation**:
+    - Added `alignas(64) uint16_t* moves_` array to MCTSTree class (Structure-of-Arrays pattern)
+    - Implemented `get_move(NodeIndex)` and `set_move(NodeIndex, uint16_t)` accessors
+    - Updated constructor to allocate moves array with aligned memory
+    - Updated destructor to deallocate moves array
+    - Updated `initialize_arrays()` to zero-initialize moves
+    - Updated `clear()` to reset moves array
+    - Updated `get_memory_usage()` to include moves array in calculation
+  - **Python Bindings**:
+    - Exposed `get_move()` and `set_move()` methods with GIL release
+    - Exposed `deallocate_node()` and `deallocate_nodes()` for testing
+  - **Testing**:
+    - Created `tests/unit/test_tree_move_storage.cpp`: 8 C++ standalone tests
+    - Created `tests/contract/test_move_storage_api.py`: 10 Python contract tests
+- **Impact**: Memory efficiency dramatically improved for move storage
+  - **Before**: Python dict approach ~1000MB for 10M nodes (~100 bytes per entry)
+  - **After**: C++ array approach 19.07MB for 10M nodes (2 bytes per node)
+  - **Improvement**: 52× memory reduction
+- **Validation**:
+  - ✅ All 8 C++ tests pass (basic storage, children, range, clear, deallocation, memory, multiple trees, large tree)
+  - ✅ All 10 Python tests pass (API exists, basic, children, range, clear, multiple trees, node reuse, persistence, 10M nodes efficiency, vs Python dict)
+  - ✅ Memory usage: 276.57 MB total for 10M nodes (well under 400MB target)
+  - ✅ Move storage: 19.07 MB for 10M nodes (2 bytes per node as designed)
+  - ✅ Bytes per node: <64 bytes (target met)
+- **Status**: ✅ Complete (commit pending)
+
+**Next Task**: T009 (Select Leaf) - Phase 2 begins
+
 ### Spec 002: C++ MCTS Simulation Runner - Documentation Complete (2025-10-02)
 - **SPEC DOCUMENTATION**: Complete specification and implementation plan for C++ simulation runner
   - **Problem Identified**: Current implementation runs simulations in Python (246 sims/sec) instead of C++ runner (30k-40k sims/sec target)

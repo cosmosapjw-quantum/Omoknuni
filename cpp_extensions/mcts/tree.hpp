@@ -398,6 +398,32 @@ public:
     const float* get_virtual_losses_ptr() const { return virtual_losses_; }
     float* get_virtual_losses_ptr() { return virtual_losses_; }
 
+    /**
+     * @brief Get move index associated with a node
+     *
+     * This stores which move led to this node from its parent.
+     * For child nodes, this is the action index (0-361 for Gomoku, 0-4671 for Go).
+     * Root node has move index 0 (no parent move).
+     *
+     * @param index Node index
+     * @return Move index (uint16_t, max 65535 actions supported)
+     */
+    std::uint16_t get_move(NodeIndex index) const {
+        assert(is_valid_index(index));
+        return moves_[index];
+    }
+
+    /**
+     * @brief Set move index for a node
+     *
+     * @param index Node index
+     * @param move Move index to store
+     */
+    void set_move(NodeIndex index, std::uint16_t move) {
+        assert(is_valid_index(index));
+        moves_[index] = move;
+    }
+
 private:
     // Maximum number of nodes this tree can hold
     std::size_t max_nodes_;
@@ -423,6 +449,7 @@ private:
     alignas(64) NodeIndex* first_child_indices_; // First child index (-1 if no children)
     alignas(64) std::uint16_t* num_children_; // Number of child nodes
     alignas(64) NodeFlags* flags_;            // Packed boolean flags
+    alignas(64) std::uint16_t* moves_;        // Move index that led to this node (action space index)
 
     /**
      * @brief Allocate aligned memory for all arrays

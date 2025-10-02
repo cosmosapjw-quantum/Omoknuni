@@ -27,7 +27,8 @@ MCTSTree::MCTSTree(std::size_t max_nodes)
     , parent_indices_(nullptr)
     , first_child_indices_(nullptr)
     , num_children_(nullptr)
-    , flags_(nullptr) {
+    , flags_(nullptr)
+    , moves_(nullptr) {
 
     if (max_nodes == 0) {
         throw std::invalid_argument("max_nodes must be > 0");
@@ -55,6 +56,7 @@ void MCTSTree::allocate_arrays() {
         first_child_indices_ = allocate_aligned<NodeIndex>(max_nodes_);
         num_children_ = allocate_aligned<std::uint16_t>(max_nodes_);
         flags_ = allocate_aligned<NodeFlags>(max_nodes_);
+        moves_ = allocate_aligned<std::uint16_t>(max_nodes_);
     } catch (...) {
         // Clean up any partially allocated arrays
         deallocate_arrays();
@@ -71,6 +73,7 @@ void MCTSTree::deallocate_arrays() {
     deallocate_aligned(first_child_indices_);
     deallocate_aligned(num_children_);
     deallocate_aligned(flags_);
+    deallocate_aligned(moves_);
 
     visit_counts_ = nullptr;
     total_values_ = nullptr;
@@ -80,6 +83,7 @@ void MCTSTree::deallocate_arrays() {
     first_child_indices_ = nullptr;
     num_children_ = nullptr;
     flags_ = nullptr;
+    moves_ = nullptr;
 }
 
 void MCTSTree::initialize_arrays() {
@@ -93,9 +97,10 @@ void MCTSTree::initialize_arrays() {
     std::fill_n(parent_indices_, max_nodes_, NULL_NODE_INDEX);
     std::fill_n(first_child_indices_, max_nodes_, NULL_NODE_INDEX);
 
-    // Initialize counts and flags to zero
+    // Initialize counts, flags, and moves to zero
     std::memset(num_children_, 0, max_nodes_ * sizeof(std::uint16_t));
     std::memset(flags_, 0, max_nodes_ * sizeof(NodeFlags));
+    std::memset(moves_, 0, max_nodes_ * sizeof(std::uint16_t));
 }
 
 std::size_t MCTSTree::get_memory_usage() const {
@@ -114,6 +119,7 @@ std::size_t MCTSTree::get_memory_usage() const {
     total += aligned_size(max_nodes_ * sizeof(NodeIndex));     // first_child_indices_
     total += aligned_size(max_nodes_ * sizeof(std::uint16_t)); // num_children_
     total += aligned_size(max_nodes_ * sizeof(NodeFlags));     // flags_
+    total += aligned_size(max_nodes_ * sizeof(std::uint16_t)); // moves_
 
     return total;
 }
@@ -131,6 +137,7 @@ void MCTSTree::clear() {
         std::fill_n(first_child_indices_, used, NULL_NODE_INDEX);
         std::memset(num_children_, 0, used * sizeof(std::uint16_t));
         std::memset(flags_, 0, used * sizeof(NodeFlags));
+        std::memset(moves_, 0, used * sizeof(std::uint16_t));
     }
 
     node_count_ = 0;
