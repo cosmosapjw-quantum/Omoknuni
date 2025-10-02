@@ -118,16 +118,18 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
   - **Est**: 2h
   - **Completed**: 2025-10-02 by implement-next (79f96b5)
 
-- [ ] **T010** Expand node
+- [x] **T010** Expand node
   - **File**: `cpp_extensions/mcts/simulation_runner.cpp:expand_node()`
   - **Changes**:
-    - Call `inference_callback_->request_inference(state)` → `(policy, value)`
-    - Apply legal move masking, renormalize policy
-    - Allocate children via `tree_->allocate_nodes(num_moves)`
-    - Record moves using `tree_->set_move(child_idx, move_idx)`
-  - **Test file**: `tests/integration/test_expansion_with_callback.py` (Python with stub inference)
-  - **Acceptance**: Child priors + move indices correct, callback usage verified
+    - Implemented expand_node() with terminal detection and inference callback invocation
+    - Applied legal move masking and policy renormalization
+    - Allocated children via `tree_.allocate_nodes(num_moves)` with fallback for full tree
+    - Recorded moves using `tree_.set_move(child_idx, move_idx)`
+    - Implemented `get_terminal_value()` for perspective-based value conversion
+  - **Test file**: `tests/integration/test_expansion_with_callback.py` (6 tests: basic expansion, policy masking, terminal, callback, move indices, restricted moves)
+  - **Acceptance**: ✅ All 6 tests pass, child priors + move indices correct, callback usage verified
   - **Est**: 3h
+  - **Completed**: 2025-10-02 by implement-next
 
 - [ ] **T011** Backup value
   - **File**: `cpp_extensions/mcts/simulation_runner.cpp:backup_value() + get_terminal_value()`
@@ -256,10 +258,10 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
 
 ## Tracking
 - **Total Tasks**: 23 (Phase 0: 5, Phase 1: 3, Phase 2: 4, Phase 3: 4, Phase 4: 4, Phase 5: 3)
-- **Completed**: 9 / 23 (39.1%) (Phase 0: ✅ 5/5, Phase 1: ✅ 3/3, Phase 2: 🔄 1/4)
-- **Next Up**: T010 (Expand Node) - Continue Phase 2
+- **Completed**: 10 / 23 (43.5%) (Phase 0: ✅ 5/5, Phase 1: ✅ 3/3, Phase 2: 🔄 2/4)
+- **Next Up**: T011 (Backup Value) - Continue Phase 2
 - **Critical Path**: T001-T005 (Phase 0) → T006-T008 (Phase 1) → T009-T012 (Phase 2) → T013-T016 (Phase 3) → T017-T020 (Phase 4) → T021-T023 (Phase 5)
 - **Estimated Total**: 5 days (0.5 + 1 + 1.5 + 1 + 1 + 0.5 buffer)
 - **Phase 1 Complete**: Build wiring, contract tests, move storage
-- **Phase 2 In Progress**: Select leaf complete (T009), expand/backup/connect pending
+- **Phase 2 In Progress**: Select leaf (T009) and expansion (T010) complete, backup/connect pending
 - Update this checklist after each task completion to stay aligned with Spec-Driven Development.

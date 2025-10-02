@@ -209,7 +209,46 @@ All 3 Phase 1 tasks (T006-T008) completed successfully:
   - ✅ Terminal node detection working
 - **Status**: ✅ Complete (commit 79f96b5)
 
-**Next Task**: T010 (Expand Node) - Neural network inference and child allocation
+#### T010: Expand Node Implementation (2025-10-02)
+- **Implemented**: `SimulationRunner::expand_node()` and `get_terminal_value()` - Neural network inference and child allocation
+- **File**: `cpp_extensions/mcts/simulation_runner.cpp`
+- **Changes**:
+  - **Core Implementation**:
+    - Terminal state detection and value extraction before expansion
+    - Neural network inference via `inference_fn.request_inference(state)` → `(policy, value)`
+    - Legal move masking: extract priors for legal moves only from full policy vector
+    - Policy renormalization: ensure masked policy sums to 1.0
+    - Uniform fallback: if all masked priors are zero, use uniform distribution
+    - Child node allocation via `tree_.allocate_nodes(num_children)`
+    - Fallback handling: return value without expansion if tree is full (NULL_NODE_INDEX)
+  - **Child Node Initialization** (for each child):
+    - Set prior probability from masked and normalized policy
+    - Record move index via `tree_.set_move(child_idx, legal_moves[i])`
+    - Set parent index for tree navigation
+    - Initialize visit count and total value to 0.0
+    - Initialize virtual loss to 0.0
+    - Set current player flag from game state
+  - **Terminal Value Conversion** (`get_terminal_value()`):
+    - WIN_PLAYER1: +1.0 for player 1, -1.0 for player 2
+    - WIN_PLAYER2: +1.0 for player 2, -1.0 for player 1
+    - DRAW/NO_RESULT: 0.0 (draw value)
+    - Perspective-based value conversion from current player viewpoint
+  - **Testing**:
+    - Created `tests/integration/test_expansion_with_callback.py`: 6 Python integration tests
+    - StubInferenceCallback: Deterministic inference for testing
+    - Uses `alphazero_py.GomokuState` for realistic game states
+    - Tests: basic expansion, policy masking, terminal expansion, callback invocation, move index recording, restricted moves
+- **Validation**:
+  - ✅ All 6 integration tests pass
+  - ✅ Child priors correctly set from masked/normalized policy
+  - ✅ Move indices correctly recorded in tree
+  - ✅ Terminal nodes detected and handled (no children allocated)
+  - ✅ Callback properly invoked with game state
+  - ✅ Policy masking excludes illegal moves
+  - ✅ Uniform fallback for zero-prior policies
+- **Status**: ✅ Complete
+
+**Next Task**: T011 (Backup Value) - Value propagation with sign flipping
 
 ### Spec 002: C++ MCTS Simulation Runner - Documentation Complete (2025-10-02)
 - **SPEC DOCUMENTATION**: Complete specification and implementation plan for C++ simulation runner
