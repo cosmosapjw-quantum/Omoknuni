@@ -306,7 +306,47 @@ All 3 Phase 1 tasks (T006-T008) completed successfully:
 - **Status**: ✅ Complete - Phase 2 finished!
 
 **Phase 2 Complete**: All four C++ runner core tasks (T009-T012) implemented and tested
-**Next Phase**: Phase 3 - Python Integration (T013-T016)
+
+#### T013: PyInferenceCallback Bridge (2025-10-02)
+- **Implemented**: Python inference callback bridge for C++/Python integration
+- **Files**: `cpp_extensions/mcts/inference_callback.hpp` (NEW), `python_bindings.cpp`
+- **Changes**:
+  - **Core Implementation** (`inference_callback.hpp`):
+    - Created `PyInferenceCallback` class inheriting from `InferenceCallback`
+    - Wraps Python callable (function, lambda, method) for use in C++
+    - `request_inference()` calls Python with GIL automatically managed by pybind11
+    - Handles both Python list and numpy array policy formats
+    - Type validation: checks callable in constructor, validates return tuple structure
+    - Error handling: catches Python exceptions, type conversion errors, invalid returns
+  - **Python Bindings** (`python_bindings.cpp`):
+    - Exposed `InferenceCallback` abstract base class
+    - Exposed `PyInferenceCallback` with Python callable constructor
+    - Added `run_simulation()` method binding to `SimulationRunner`
+    - Comprehensive docstrings with usage examples
+  - **Type Conversions**:
+    - Python → C++: tuple[list|ndarray, float] → pair<vector<float>, float>
+    - Handles numpy arrays via `.tolist()` conversion
+    - Validates policy is list/array, value is float
+    - Clear error messages for invalid types
+  - **Testing**:
+    - Created `tests/contract/test_inference_callback.py` (16 comprehensive tests)
+    - API validation (7 tests): class existence, instantiation, callable validation, docstrings
+    - Invocation tests (4 tests): basic call, numpy arrays, lists, value range
+    - Error handling (3 tests): wrong return type, wrong tuple length, exceptions
+    - Integration tests (2 tests): single simulation, multiple simulations with callback
+- **Validation**:
+  - ✅ All 16 contract tests pass
+  - ✅ API surface correctly exposed (InferenceCallback, PyInferenceCallback)
+  - ✅ Callable validation works (rejects non-callables)
+  - ✅ Type conversions work (list and numpy array policies)
+  - ✅ Error handling catches invalid returns and Python exceptions
+  - ✅ Integration with SimulationRunner works (full simulation with callback)
+  - ✅ Multiple simulations execute correctly with inference calls
+  - ✅ Backward compatibility: All previous tests still pass (runner 12/12, pipeline 6/6)
+- **Status**: ✅ Complete
+
+**Phase 3 Started**: Python/C++ integration bridge complete, ready for MCTS refactor
+**Next Task**: T014 (AlphaZeroMCTS Refactor) - Wire C++ runner into Python MCTS class
 
 ### Spec 002: C++ MCTS Simulation Runner - Documentation Complete (2025-10-02)
 - **SPEC DOCUMENTATION**: Complete specification and implementation plan for C++ simulation runner
