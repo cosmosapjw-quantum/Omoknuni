@@ -111,6 +111,33 @@ All 5 Phase 0 tasks (T001-T005) completed successfully:
 
 **Next Tasks**: T007 (Contract tests), T008 (Move storage)
 
+#### T007: SimulationRunner Contract Tests (2025-10-02)
+- **Added**: Comprehensive contract tests for SimulationRunner Python API
+- **File**: `tests/contract/test_simulation_runner_api.py` (NEW)
+- **Changes**:
+  - **Python Bindings**: Added `#include "simulation_runner.hpp"` to `cpp_extensions/mcts/python_bindings.cpp`
+  - **pybind11 Binding**: Created Python binding for `SimulationRunner` class with constructor accepting (tree, selector, backup, virtual_loss)
+  - **Test Coverage**: 12 contract tests in 2 test classes:
+    - `TestSimulationRunnerAPI`: 8 tests validating API surface
+      - Class existence and type verification
+      - Instantiation with positional and keyword arguments
+      - Constructor type validation and required arguments
+      - Docstring presence validation
+      - Multiple instance creation and lifecycle
+    - `TestSimulationRunnerIntegration`: 4 tests validating component integration
+      - Shared tree reference verification
+      - Custom PUCT configuration support
+      - Custom virtual loss configuration support
+      - Component lifecycle and cleanup
+- **Impact**: SimulationRunner API now exposed to Python, ready for Phase 2 implementation
+- **Validation**:
+  - ✅ All 12 tests pass in 0.03s
+  - ✅ SimulationRunner accessible via `mcts_py.SimulationRunner`
+  - ✅ Constructor accepts all required MCTS components
+  - ✅ Works with both positional and keyword arguments
+- **Note**: SimulationRunner methods are stubs in Phase 1 (TDD approach). Implementation in Phase 2.
+- **Status**: ✅ Complete (commit pending)
+
 ### Spec 002: C++ MCTS Simulation Runner - Documentation Complete (2025-10-02)
 - **SPEC DOCUMENTATION**: Complete specification and implementation plan for C++ simulation runner
   - **Problem Identified**: Current implementation runs simulations in Python (246 sims/sec) instead of C++ runner (30k-40k sims/sec target)

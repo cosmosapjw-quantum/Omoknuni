@@ -17,6 +17,7 @@
 #include "virtual_loss.hpp"
 #include "selection.hpp"
 #include "backup.hpp"
+#include "simulation_runner.hpp"
 
 namespace py = pybind11;
 
@@ -261,6 +262,17 @@ PYBIND11_MODULE(mcts_py, m) {
     m.def("create_backup_manager", &create_backup_manager,
           py::arg("tree"), py::arg("config") = BackupConfig(),
           "Create a backup manager for the given tree");
+
+    // SimulationRunner - Phase 1 stub (methods not yet implemented)
+    // This binding exposes the API for contract testing (TDD approach)
+    // Actual implementation will be completed in Phase 2
+    py::class_<SimulationRunner>(m, "SimulationRunner",
+        "High-performance MCTS simulation runner (C++ implementation)")
+        .def(py::init<MCTSTree&, PUCTSelector&, BackupManager&, VirtualLossManager&>(),
+             py::arg("tree"), py::arg("selector"), py::arg("backup"), py::arg("virtual_loss"),
+             "Construct simulation runner with required MCTS components");
+        // Note: run_simulation method not bound yet - requires IGameState and InferenceCallback
+        // which will be added in Phase 2 when implementing the actual logic
 }
 
 } // namespace python
