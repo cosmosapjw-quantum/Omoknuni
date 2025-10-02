@@ -182,31 +182,7 @@ class SearchCoordinator:
 
         self.logger.info("Search coordinator started successfully")
 
-    def stop(self) -> None:
-        """Stop the search coordinator and shutdown threads."""
-        if not self.running:
-            return
-
-        self.logger.info("Stopping search coordinator")
-        self.running = False
-        self.shutdown_event.set()
-
-        # Cancel all pending searches
-        with self.search_lock:
-            for request_id, future in list(self.active_searches.items()):
-                future.cancel()
-            self.active_searches.clear()
-
-        # Shutdown thread pool
-        self.thread_pool.shutdown(wait=True)
-
-        # Wait for background threads to finish
-        if self.inference_coordinator_thread and self.inference_coordinator_thread.is_alive():
-            self.inference_coordinator_thread.join(timeout=5.0)
-        if self.metrics_monitor_thread and self.metrics_monitor_thread.is_alive():
-            self.metrics_monitor_thread.join(timeout=5.0)
-
-        self.logger.info("Search coordinator stopped")
+    # Note: stop() method moved to end of class with consolidated shutdown logic
 
     def submit_search(self, request: SearchRequest) -> Future[SearchResult]:
         """Submit a search request for asynchronous execution.
@@ -548,14 +524,33 @@ class SearchCoordinator:
 
     @with_error_handling(reraise=False)
     def stop(self) -> None:
-        """Stop the search coordinator and all background threads."""
+        """Stop the search coordinator and all background threads.
+
+        Consolidated shutdown logic:
+        1. Signal shutdown and mark as not running
+        2. Cancel all pending searches
+        3. Shutdown thread pool
+        4. Stop inference worker
+        5. Join background threads
+        6. Report final metrics
+        """
+        if not self.running:
+            return
+
         self.logger.info("Stopping search coordinator...")
 
         # Signal shutdown
         self.shutdown_event.set()
         self.running = False
 
-        # Stop thread pool
+        # Cancel all pending searches
+        with self.search_lock:
+            for request_id, future in list(self.active_searches.items()):
+                if not future.done():
+                    future.cancel()
+            self.active_searches.clear()
+
+        # Shutdown thread pool
         if hasattr(self, 'thread_pool'):
             try:
                 self.thread_pool.shutdown(wait=True)

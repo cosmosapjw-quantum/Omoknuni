@@ -379,8 +379,43 @@ All 3 Phase 1 tasks (T006-T008) completed successfully:
   - Native C++ move storage: `tree.get_move()` replaces Python dict lookup
 - **Status**: ✅ Complete
 
-**Phase 3 Progress**: PyInferenceCallback bridge + AlphaZeroMCTS refactor complete (2/4 tasks)
-**Next Task**: T015 (SearchCoordinator fix) - Cleanup shutdown logic and GPU worker integration
+#### T015: SearchCoordinator Shutdown Fix (2025-10-03)
+- **Consolidated**: Duplicate `stop()` methods into single comprehensive shutdown implementation
+- **Files**: `src/core/search_coordinator.py`, `tests/integration/test_coordinator_shutdown.py` (NEW)
+- **Changes**:
+  - **Removed duplicate `stop()` method** at line 185
+  - **Consolidated shutdown logic** into single `stop()` method (lines 526-591) with:
+    - Early return if not running (prevents double-stop issues)
+    - Cancel all active searches with `future.done()` check before cancel
+    - Shutdown thread pool with exception handling
+    - Stop inference worker with hasattr safety checks
+    - Join background threads (inference coordinator + metrics monitor) with 5s timeouts
+    - Log warnings if threads don't shutdown gracefully
+    - Report final error summary before exit
+  - **Note**: Inference worker integration already complete - no dummy code found (task description outdated)
+- **Testing** (`test_coordinator_shutdown.py`):
+  - Created 9 comprehensive shutdown tests:
+    1. `test_clean_shutdown` - Verifies no thread leaks
+    2. `test_stop_cancels_active_searches` - Confirms active searches cancelled
+    3. `test_stop_inference_worker` - Validates inference worker stopped
+    4. `test_thread_pool_shutdown` - Ensures thread pool shutdown
+    5. `test_background_threads_join` - Verifies threads joined
+    6. `test_repeated_start_stop` - Tests multiple start/stop cycles
+    7. `test_stop_when_not_running` - Safe when not running
+    8. `test_double_stop` - Idempotent stop() calls
+    9. `test_shutdown_with_pending_inference` - Clean shutdown with pending work
+- **Validation Evidence**:
+  - ✅ All 9 shutdown tests pass
+  - ✅ No thread leaks detected (initial_count >= final_count)
+  - ✅ Active searches properly cancelled
+  - ✅ Inference worker stopped
+  - ✅ Thread pool shutdown verified
+  - ✅ Background threads join within timeout
+  - ✅ Repeated start/stop cycles work without thread accumulation
+- **Status**: ✅ Complete
+
+**Phase 3 Progress**: PyInferenceCallback bridge + AlphaZeroMCTS refactor + SearchCoordinator shutdown fixed (3/4 tasks complete)
+**Next Task**: T016 (Inference bridge) - CppInferenceBridge wrapper for GPUInferenceWorker
 
 ### Spec 002: C++ MCTS Simulation Runner - Documentation Complete (2025-10-02)
 - **SPEC DOCUMENTATION**: Complete specification and implementation plan for C++ simulation runner
