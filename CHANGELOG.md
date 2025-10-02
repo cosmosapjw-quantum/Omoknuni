@@ -4,6 +4,38 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Spec 002: C++ MCTS Simulation Runner - Documentation Complete (2025-10-02)
+- **SPEC DOCUMENTATION**: Complete specification and implementation plan for C++ simulation runner
+  - **Problem Identified**: Current implementation runs simulations in Python (246 sims/sec) instead of C++ runner (30k-40k sims/sec target)
+  - **Performance Gap**: 122-163× slower than target due to:
+    - GIL contention: 80% wall time (target <10%)
+    - Thread inefficiency: 3% scaling 1→8 threads (target 75%)
+    - GPU underutilization: <5% (target 80-92%)
+    - Memory overhead: 1000MB vs 20MB for move storage
+    - Thread oversubscription: 32-256 threads for 12 cores
+  - **Root Cause Analysis**: Documented 18 critical/major issues across 11 files in PYTHON_FIXES_REQUIRED.md
+  - **Specification Documents**:
+    - `spec.md`: User stories, success metrics table, mandatory C++ runner requirements
+    - `plan.md`: 5-phase implementation plan with dependencies and risk mitigation
+    - `tasks.md`: 23 detailed tasks (T001-T023) with file paths and exact changes
+    - `quickstart.md`: Build/test procedures with comprehensive troubleshooting
+    - `MIGRATION.md`: Python→C++ migration guide with rollback procedures
+    - `contracts/__init__.py`: API contract package initialization
+  - **Implementation Phases**:
+    - Phase 0 (0.5 day): Python training fixes (policy loss, config fields, signal handlers)
+    - Phase 1 (1 day): Build wiring & move storage (C++ tree array replaces Python dict)
+    - Phase 2 (1.5 days): C++ runner core (select_leaf, expand_node, backup_value)
+    - Phase 3 (1 day): Python integration (PyInferenceCallback, MCTS refactor, coordinator fixes)
+    - Phase 4 (1 day): Testing & validation (≥30k sims/sec enforcement in CI)
+    - Phase 5 (0.5 day): Documentation & evidence (profiling charts, migration guide)
+  - **Success Metrics Defined**:
+    - Throughput: 246 → 30,000-40,000 sims/sec (validated by performance tests)
+    - GIL hold: 80% → <10% wall time (profiling evidence required)
+    - Thread efficiency: 3% → 75% scaling (1→8 threads)
+    - GPU utilization: <5% → 80-92% (nvidia-smi monitoring)
+    - Move memory: 1000MB → 20MB for 10M nodes (memory tests)
+  - **Status**: READY FOR IMPLEMENTATION - All documentation complete, tasks defined, validation criteria established
+
 ### Production Validation (2025-10-01)
 - **VALIDATION**: All 53 implementation tasks (T001-T053) completed and validated for production readiness
   - ✅ Contract Tests: 99/99 passing - All API contracts validated (MCTS, Inference, Training APIs)

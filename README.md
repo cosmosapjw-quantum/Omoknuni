@@ -4,12 +4,27 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 
 ## Project Status
 
-✅ **Alpha Release (v1.0.0-alpha)** - All 53 implementation tasks completed, production-ready for testing
+🔧 **In Development: C++ Simulation Runner** - Closing 122-163× performance gap (Spec 002)
 
-### Release Information
-- **Version**: 1.0.0-alpha
-- **Release Date**: 2025-10-01
-- **Status**: Ready for alpha/beta testing before production deployment
+### Current Status
+- **Version**: 1.0.0-alpha + Spec 002 (C++ Runner Implementation)
+- **Alpha Release Date**: 2025-10-01
+- **Spec 002 Status**: READY FOR IMPLEMENTATION (2025-10-02)
+- **Target**: Increase throughput from 246 → 30,000-40,000 sims/sec
+
+### Active Work: C++ MCTS Simulation Runner
+**Problem**: Current implementation executes Monte Carlo simulations in Python (246 sims/sec) instead of the designed C++ runner (30k-40k sims/sec).
+
+**Impact**:
+- **Throughput**: 122-163× slower than target
+- **GIL contention**: 80% wall time vs target <10%
+- **Thread efficiency**: 3% vs target 75% (1→8 threads)
+- **GPU utilization**: <5% vs target 80-92%
+- **Memory overhead**: 1000MB vs 20MB for move storage
+
+**Solution**: Complete C++ `SimulationRunner` implementation per [Spec 002](specs/002-cpp-simulation-runner/)
+
+See [PYTHON_FIXES_REQUIRED.md](specs/002-cpp-simulation-runner/PYTHON_FIXES_REQUIRED.md) for comprehensive analysis and [MIGRATION.md](specs/002-cpp-simulation-runner/MIGRATION.md) for deployment guide.
 
 ### Completed
 - [x] **T001**: Project structure and build system setup
@@ -696,10 +711,33 @@ python scripts/tune_timeout.py --game gomoku --min-timeout 1 --max-timeout 10 --
 
 ## Specification
 
-This project follows [Spec-Driven Development](specs/001-goal-create-spec/). See:
+This project follows [Spec-Driven Development](specs/001-goal-create-spec/).
+
+### Spec 001: AlphaZero Engine Foundation (✅ Completed)
 - [Feature Specification](specs/001-goal-create-spec/spec.md) - Requirements and objectives
 - [Implementation Plan](specs/001-goal-create-spec/plan.md) - Technical architecture
-- [Task Breakdown](specs/001-goal-create-spec/tasks.md) - Detailed implementation tasks
+- [Task Breakdown](specs/001-goal-create-spec/tasks.md) - Detailed implementation tasks (53/53 complete)
+
+### Spec 002: C++ MCTS Simulation Runner (🔧 In Progress)
+**Goal**: Close 122-163× performance gap by completing C++ simulation runner
+
+**Documentation**:
+- [Specification](specs/002-cpp-simulation-runner/spec.md) - User stories, success metrics, requirements
+- [Implementation Plan](specs/002-cpp-simulation-runner/plan.md) - 5-phase timeline with dependencies
+- [Task Breakdown](specs/002-cpp-simulation-runner/tasks.md) - 23 detailed tasks (T001-T023)
+- [Quickstart Guide](specs/002-cpp-simulation-runner/quickstart.md) - Build, test, troubleshooting
+- [Migration Guide](specs/002-cpp-simulation-runner/MIGRATION.md) - Python → C++ migration with rollback
+- [Python Fixes Required](specs/002-cpp-simulation-runner/PYTHON_FIXES_REQUIRED.md) - Comprehensive issue analysis
+
+**Timeline**: 5 days (4 implementation + 1 buffer)
+
+**Phases**:
+1. **Phase 0** (0.5 day): Python training fixes - unblock execution
+2. **Phase 1** (1 day): Build wiring & move storage implementation
+3. **Phase 2** (1.5 days): C++ runner core (select → expand → backup)
+4. **Phase 3** (1 day): Python integration & inference bridge
+5. **Phase 4** (1 day): Testing & performance validation (≥30k sims/sec)
+6. **Phase 5** (0.5 day): Documentation & evidence collection
 
 ## Performance Targets
 
