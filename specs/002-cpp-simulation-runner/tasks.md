@@ -86,7 +86,7 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
     - Implemented 12 contract tests: class existence, instantiation, kwargs, type validation, docstring, multiple instances, different components, shared tree, custom configs, lifecycle
   - **Acceptance**: ✅ All 12 tests pass, SimulationRunner API exposed to Python correctly
   - **Est**: 1h
-  - **Completed**: 2025-10-02 by implement-next
+  - **Completed**: 2025-10-02 by implement-next (077799e)
 
 - [ ] **T008** Tree move storage
   - **Files**: `cpp_extensions/mcts/tree.hpp`, `tree.cpp`, `python_bindings.cpp`

@@ -136,7 +136,7 @@ All 5 Phase 0 tasks (T001-T005) completed successfully:
   - ✅ Constructor accepts all required MCTS components
   - ✅ Works with both positional and keyword arguments
 - **Note**: SimulationRunner methods are stubs in Phase 1 (TDD approach). Implementation in Phase 2.
-- **Status**: ✅ Complete (commit pending)
+- **Status**: ✅ Complete (commit 077799e)
 
 ### Spec 002: C++ MCTS Simulation Runner - Documentation Complete (2025-10-02)
 - **SPEC DOCUMENTATION**: Complete specification and implementation plan for C++ simulation runner
