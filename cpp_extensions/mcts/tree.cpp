@@ -119,10 +119,23 @@ std::size_t MCTSTree::get_memory_usage() const {
 }
 
 void MCTSTree::clear() {
+    if (next_free_index_ > 0) {
+        const std::size_t used = next_free_index_;
+
+        std::memset(visit_counts_, 0, used * sizeof(float));
+        std::memset(total_values_, 0, used * sizeof(float));
+        std::memset(prior_probs_, 0, used * sizeof(float));
+        std::memset(virtual_losses_, 0, used * sizeof(float));
+
+        std::fill_n(parent_indices_, used, NULL_NODE_INDEX);
+        std::fill_n(first_child_indices_, used, NULL_NODE_INDEX);
+        std::memset(num_children_, 0, used * sizeof(std::uint16_t));
+        std::memset(flags_, 0, used * sizeof(NodeFlags));
+    }
+
     node_count_ = 0;
     next_free_index_ = 0;
     free_nodes_.clear();
-    initialize_arrays();
 }
 
 NodeIndex MCTSTree::add_root_node(float prior_prob, std::uint8_t current_player) {
@@ -298,6 +311,7 @@ NodeIndex MCTSTree::allocate_node() {
     if (!free_nodes_.empty()) {
         NodeIndex index = free_nodes_.back();
         free_nodes_.pop_back();
+        initialize_node(index);
         ++node_count_;  // Increment active node count
         return index;
     }
@@ -310,6 +324,8 @@ NodeIndex MCTSTree::allocate_node() {
     NodeIndex index = static_cast<NodeIndex>(next_free_index_);
     ++next_free_index_;
     ++node_count_;
+
+    initialize_node(index);
 
     return index;
 }
@@ -332,6 +348,8 @@ NodeIndex MCTSTree::allocate_nodes(std::uint16_t count) {
     NodeIndex first_index = static_cast<NodeIndex>(next_free_index_);
     next_free_index_ += count;
     node_count_ += count;
+
+    initialize_node_range(first_index, count);
 
     return first_index;
 }
@@ -367,6 +385,35 @@ void MCTSTree::deallocate_nodes(NodeIndex first_index, std::uint16_t count) {
     }
 
     node_count_ -= deallocated;  // Decrement active node count
+}
+
+void MCTSTree::initialize_node(NodeIndex index) {
+    if (index == NULL_NODE_INDEX) {
+        return;
+    }
+
+    visit_counts_[index] = 0.0f;
+    total_values_[index] = 0.0f;
+    prior_probs_[index] = 0.0f;
+    virtual_losses_[index] = 0.0f;
+    parent_indices_[index] = NULL_NODE_INDEX;
+    first_child_indices_[index] = NULL_NODE_INDEX;
+    num_children_[index] = 0;
+    flags_[index] = NodeFlags();
+}
+
+void MCTSTree::initialize_node_range(NodeIndex first_index, std::uint16_t count) {
+    if (count == 0 || first_index == NULL_NODE_INDEX) {
+        return;
+    }
+
+    for (std::uint16_t i = 0; i < count; ++i) {
+        NodeIndex index = first_index + i;
+        if (static_cast<std::size_t>(index) >= max_nodes_) {
+            break;
+        }
+        initialize_node(index);
+    }
 }
 
 } // namespace mcts

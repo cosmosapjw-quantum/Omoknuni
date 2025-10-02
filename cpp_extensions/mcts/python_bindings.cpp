@@ -23,6 +23,8 @@ namespace py = pybind11;
 namespace mcts {
 namespace python {
 
+using NoGil = py::call_guard<py::gil_scoped_release>;
+
 /**
  * @brief Create a simple MCTS tree for testing purposes
  *
@@ -105,34 +107,34 @@ PYBIND11_MODULE(mcts_py, m) {
 
     // MCTS Tree (complete interface for production use)
     py::class_<MCTSTree, std::shared_ptr<MCTSTree>>(m, "MCTSTree")
-        .def(py::init<std::size_t>(), py::arg("max_nodes") = 50000000)
-        .def("allocate_node", &MCTSTree::allocate_node)
-        .def("allocate_nodes", &MCTSTree::allocate_nodes)
+        .def(py::init<std::size_t>(), py::arg("max_nodes") = 50000000, NoGil())
+        .def("allocate_node", &MCTSTree::allocate_node, NoGil())
+        .def("allocate_nodes", &MCTSTree::allocate_nodes, NoGil())
         .def("get_node_count", &MCTSTree::get_node_count)
         .def("get_max_nodes", &MCTSTree::get_max_nodes)
-        .def("add_root_node", &MCTSTree::add_root_node)
+        .def("add_root_node", &MCTSTree::add_root_node, NoGil())
         .def("get_root_index", &MCTSTree::get_root_index)
         .def("is_valid_index", &MCTSTree::is_valid_index)
-        .def("clear", &MCTSTree::clear)
-        // Node data access
-        .def("get_visit_count", &MCTSTree::get_visit_count)
-        .def("get_total_value", &MCTSTree::get_total_value)
-        .def("get_prior_prob", &MCTSTree::get_prior_prob)
-        .def("get_virtual_loss", &MCTSTree::get_virtual_loss)
-        .def("get_parent_index", &MCTSTree::get_parent_index)
-        .def("get_first_child_index", &MCTSTree::get_first_child_index)
-        .def("get_num_children", &MCTSTree::get_num_children)
-        .def("get_flags", &MCTSTree::get_flags)
-        .def("get_node_info", &MCTSTree::get_node_info)
-        // Node data modification
-        .def("set_visit_count", &MCTSTree::set_visit_count)
-        .def("set_total_value", &MCTSTree::set_total_value)
-        .def("set_prior_prob", &MCTSTree::set_prior_prob)
-        .def("set_virtual_loss", &MCTSTree::set_virtual_loss)
-        .def("set_parent_index", &MCTSTree::set_parent_index)
-        .def("set_first_child_index", &MCTSTree::set_first_child_index)
-        .def("set_num_children", &MCTSTree::set_num_children)
-        .def("set_flags", &MCTSTree::set_flags)
+        .def("clear", &MCTSTree::clear, NoGil())
+        // Node data access (with GIL release for hot path performance)
+        .def("get_visit_count", &MCTSTree::get_visit_count, NoGil())
+        .def("get_total_value", &MCTSTree::get_total_value, NoGil())
+        .def("get_prior_prob", &MCTSTree::get_prior_prob, NoGil())
+        .def("get_virtual_loss", &MCTSTree::get_virtual_loss, NoGil())
+        .def("get_parent_index", &MCTSTree::get_parent_index, NoGil())
+        .def("get_first_child_index", &MCTSTree::get_first_child_index, NoGil())
+        .def("get_num_children", &MCTSTree::get_num_children, NoGil())
+        .def("get_flags", &MCTSTree::get_flags, NoGil())
+        .def("get_node_info", &MCTSTree::get_node_info, NoGil())
+        // Node data modification (with GIL release)
+        .def("set_visit_count", &MCTSTree::set_visit_count, NoGil())
+        .def("set_total_value", &MCTSTree::set_total_value, NoGil())
+        .def("set_prior_prob", &MCTSTree::set_prior_prob, NoGil())
+        .def("set_virtual_loss", &MCTSTree::set_virtual_loss, NoGil())
+        .def("set_parent_index", &MCTSTree::set_parent_index, NoGil())
+        .def("set_first_child_index", &MCTSTree::set_first_child_index, NoGil())
+        .def("set_num_children", &MCTSTree::set_num_children, NoGil())
+        .def("set_flags", &MCTSTree::set_flags, NoGil())
         // Memory and performance
         .def("get_memory_usage", &MCTSTree::get_memory_usage)
         .def("get_bytes_per_node", &MCTSTree::get_bytes_per_node)
@@ -142,17 +144,18 @@ PYBIND11_MODULE(mcts_py, m) {
 
     // Virtual Loss Manager
     py::class_<VirtualLossManager, std::shared_ptr<VirtualLossManager>>(m, "VirtualLossManager")
-        .def("get_config", &VirtualLossManager::get_config, py::return_value_policy::reference_internal)
-        .def("set_config", &VirtualLossManager::set_config)
-        .def("get_virtual_loss", &VirtualLossManager::get_virtual_loss)
-        .def("reset_all_virtual_loss", &VirtualLossManager::reset_all_virtual_loss)
+        .def("get_config", &VirtualLossManager::get_config,
+             py::return_value_policy::reference_internal, NoGil())
+        .def("set_config", &VirtualLossManager::set_config, NoGil())
+        .def("get_virtual_loss", &VirtualLossManager::get_virtual_loss, NoGil())
+        .def("reset_all_virtual_loss", &VirtualLossManager::reset_all_virtual_loss, NoGil())
         .def("apply_virtual_loss", &VirtualLossManager::apply_virtual_loss,
-             py::arg("node_index"), py::arg("magnitude") = -1.0f)
+             py::arg("node_index"), py::arg("magnitude") = -1.0f, NoGil())
         .def("remove_virtual_loss", &VirtualLossManager::remove_virtual_loss,
-             py::arg("node_index"), py::arg("magnitude") = -1.0f)
-        .def("apply_virtual_loss_to_path", &VirtualLossManager::apply_virtual_loss_to_path)
-        .def("remove_virtual_loss_from_path", &VirtualLossManager::remove_virtual_loss_from_path)
-        .def("get_statistics", &VirtualLossManager::get_statistics);
+             py::arg("node_index"), py::arg("magnitude") = -1.0f, NoGil())
+        .def("apply_virtual_loss_to_path", &VirtualLossManager::apply_virtual_loss_to_path, NoGil())
+        .def("remove_virtual_loss_from_path", &VirtualLossManager::remove_virtual_loss_from_path, NoGil())
+        .def("get_statistics", &VirtualLossManager::get_statistics, NoGil());
 
     // Virtual Loss Statistics
     py::class_<VirtualLossManager::VirtualLossStats>(m, "VirtualLossStats")
@@ -164,9 +167,9 @@ PYBIND11_MODULE(mcts_py, m) {
 
     // Virtual Loss Guard (RAII wrapper)
     py::class_<VirtualLossGuard>(m, "VirtualLossGuard")
-        .def(py::init<VirtualLossManager&, const std::vector<NodeIndex>&>())
-        .def("is_valid", &VirtualLossGuard::is_valid)
-        .def("release", &VirtualLossGuard::release);
+        .def(py::init<VirtualLossManager&, const std::vector<NodeIndex>&>(), NoGil())
+        .def("is_valid", &VirtualLossGuard::is_valid, NoGil())
+        .def("release", &VirtualLossGuard::release, NoGil());
 
     // PUCT Configuration
     py::class_<PUCTConfig>(m, "PUCTConfig")
@@ -186,9 +189,10 @@ PYBIND11_MODULE(mcts_py, m) {
 
     // PUCT Selector
     py::class_<PUCTSelector, std::shared_ptr<PUCTSelector>>(m, "PUCTSelector")
-        .def("select_child", &PUCTSelector::select_child)
-        .def("set_config", &PUCTSelector::set_config)
-        .def("get_config", &PUCTSelector::get_config, py::return_value_policy::reference_internal)
+        .def("select_child", &PUCTSelector::select_child, NoGil())
+        .def("set_config", &PUCTSelector::set_config, NoGil())
+        .def("get_config", &PUCTSelector::get_config,
+             py::return_value_policy::reference_internal, NoGil())
         .def_static("is_avx2_supported", &PUCTSelector::is_avx2_supported);
 
     // Backup Configuration
@@ -213,17 +217,18 @@ PYBIND11_MODULE(mcts_py, m) {
     // Backup Manager
     py::class_<BackupManager, std::shared_ptr<BackupManager>>(m, "BackupManager")
         .def("backup_value_along_path", &BackupManager::backup_value_along_path,
-             py::arg("path"), py::arg("leaf_value"), py::arg("virtual_loss_manager") = nullptr)
+             py::arg("path"), py::arg("leaf_value"), py::arg("virtual_loss_manager") = nullptr, NoGil())
         .def("backup_terminal_value", &BackupManager::backup_terminal_value,
-             py::arg("path"), py::arg("terminal_value"), py::arg("virtual_loss_manager") = nullptr)
+             py::arg("path"), py::arg("terminal_value"), py::arg("virtual_loss_manager") = nullptr, NoGil())
         .def("update_node_atomic", &BackupManager::update_node_atomic,
-             py::arg("node_index"), py::arg("value_increment"), py::arg("visit_increment") = 1.0f)
-        .def("get_q_value", &BackupManager::get_q_value)
-        .def("validate_backup_path", &BackupManager::validate_backup_path)
-        .def("get_config", &BackupManager::get_config, py::return_value_policy::reference_internal)
-        .def("set_config", &BackupManager::set_config)
-        .def("get_statistics", &BackupManager::get_statistics)
-        .def("reset_statistics", &BackupManager::reset_statistics);
+             py::arg("node_index"), py::arg("value_increment"), py::arg("visit_increment") = 1.0f, NoGil())
+        .def("get_q_value", &BackupManager::get_q_value, NoGil())
+        .def("validate_backup_path", &BackupManager::validate_backup_path, NoGil())
+        .def("get_config", &BackupManager::get_config,
+             py::return_value_policy::reference_internal, NoGil())
+        .def("set_config", &BackupManager::set_config, NoGil())
+        .def("get_statistics", &BackupManager::get_statistics, NoGil())
+        .def("reset_statistics", &BackupManager::reset_statistics, NoGil());
 
     // Backup Statistics
     py::class_<BackupManager::BackupStats>(m, "BackupStats")

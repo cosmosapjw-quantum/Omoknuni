@@ -37,6 +37,27 @@ The codebase follows a hybrid approach with Python orchestration and C++/pybind1
 - Index-based references with 64-byte alignment for SIMD operations on Ryzen CCDs
 - Memory efficiency: 10M nodes = 270MB total (well under 1GB target)
 
+### Game-Specific Tensor Representations
+
+**Enhanced Feature Extraction** (see `specs/001-goal-create-spec/data-model.md` for complete specifications):
+
+- **Gomoku (15×15)**: 36 planes with tactical analysis
+  - Stone positions, 8-pair move history, player indicator, rule variations
+  - Enhanced: threat detection (immediate five, four, open three)
+  - Enhanced: run-length analysis in 4 directions
+
+- **Chess (8×8)**: 30 planes with complete game state
+  - 12 piece types (6 × 2 colors), castling rights, en passant
+  - 8-pair move history per player (destination squares)
+  - Chess960 support with proper castling encoding
+
+- **Go (19×19)**: 25 planes with proper history separation
+  - Stone positions, ko position, 8-pair move history per player
+  - Enhanced: capture patterns (group liberties 1/2/3/4+)
+  - Legal move indicator, player turn
+
+**Note**: These enhanced representations (36/30/25 planes) provide superior positional understanding compared to basic AlphaZero features (7/12/17 planes).
+
 ## Development Commands
 
 ### Build System

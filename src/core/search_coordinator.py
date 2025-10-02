@@ -304,10 +304,8 @@ class SearchCoordinator:
         self.logger.debug(f"Executing search {request.request_id} on thread {thread_id}")
 
         try:
-            # Import MCTS engine locally to avoid circular imports
             from .mcts import AlphaZeroMCTS
 
-            # Create MCTS engine with inference function
             def inference_fn(game_state):
                 return self.request_inference(game_state, thread_id)
 
@@ -436,23 +434,38 @@ class SearchCoordinator:
     def _process_inference_request(self, request: InferenceRequest) -> None:
         """Process a single inference request."""
         try:
-            # Extract features from game state
-            # In real implementation, this would call game_state.get_tensor_representation()
-            # For simulation, create mock features
-            features = np.random.rand(36, 15, 15)  # Mock Gomoku features
+            # Extract features from the game state
+            if hasattr(request.game_state, 'get_tensor_representation'):
+                raw_features = request.game_state.get_tensor_representation()
+            else:
+                raw_features = request.game_state.extract_features()
 
-            # Submit to GPU inference worker
-            # Note: This is a simplified interface - actual implementation would
-            # need to batch requests and handle the GPU worker's specific API
+            # Ensure we own the memory and dtype is float32
+            features = np.array(raw_features, dtype=np.float32, copy=True)
 
-            # For now, simulate inference result
-            time.sleep(0.001)  # Simulate GPU inference time
+            if features.ndim != 3:
+                raise ValueError(f"Expected 3D feature tensor, got shape {features.shape}")
 
-            # Mock inference result
-            policy = np.random.dirichlet([1.0] * 225)
-            value = np.random.uniform(-1.0, 1.0)
+            # Warmup inference worker if supported and not yet warmed up
+            if hasattr(self.inference_worker, 'warmup'):
+                warmup_flag = getattr(self.inference_worker, '_warmup_completed', True)
+                if not warmup_flag:
+                    try:
+                        self.inference_worker.warmup(features.shape)
+                    except Exception as warmup_error:
+                        self.logger.warning(f"Inference warmup failed: {warmup_error}")
 
-            # Set result in future
+            # Run inference (supports CPU/GPU workers)
+            try:
+                policy_batch, value_batch = self.inference_worker.batch_inference([features])
+                policy = policy_batch[0]
+                value = value_batch[0] if value_batch.ndim > 0 else float(value_batch)
+            except Exception as inference_error:
+                # Propagate error to caller to trigger fallback handling
+                if request.result_future and not request.result_future.done():
+                    request.result_future.set_exception(inference_error)
+                return
+
             if request.result_future and not request.result_future.done():
                 request.result_future.set_result((policy, value))
 
@@ -460,7 +473,6 @@ class SearchCoordinator:
             if request.result_future and not request.result_future.done():
                 request.result_future.set_exception(e)
         finally:
-            # Clean up
             with self.inference_lock:
                 self.pending_inference_requests.pop(request.request_id, None)
 

@@ -101,23 +101,24 @@ PYBIND11_MODULE(alphazero_py, m) {
             auto legal_moves_list = state.getLegalMoves();
             int action_space_size = state.getActionSpaceSize();
 
-            // Create boolean numpy array
-            auto result = py::array_t<bool>(action_space_size);
-            auto buf = result.mutable_unchecked<1>();
+            // Return list of move indices (NOT boolean mask)
+            std::vector<int> move_indices;
+            move_indices.reserve(legal_moves_list.size());
 
-            // Initialize all to false
-            for (int i = 0; i < action_space_size; i++) {
-                buf(i) = false;
-            }
-
-            // Set legal moves to true
             for (int move : legal_moves_list) {
                 if (move >= 0 && move < action_space_size) {
-                    buf(move) = true;
+                    move_indices.push_back(move);
                 } else if (move == -1 && action_space_size > 0) {
                     // Handle Go pass move: map -1 to last index (board_size² for Go)
-                    buf(action_space_size - 1) = true;
+                    move_indices.push_back(action_space_size - 1);
                 }
+            }
+
+            // Convert to numpy array of int32
+            auto result = py::array_t<int>(move_indices.size());
+            auto buf = result.mutable_unchecked<1>();
+            for (size_t i = 0; i < move_indices.size(); i++) {
+                buf(i) = move_indices[i];
             }
 
             return result;
@@ -175,10 +176,10 @@ PYBIND11_MODULE(alphazero_py, m) {
         .def("string_to_action", &core::IGameState::stringToAction)
         .def("to_string", &core::IGameState::toString)
         .def("get_move_history", &core::IGameState::getMoveHistory)
-        .def("clone", &core::IGameState::clone)
-        .def("copy", &core::IGameState::clone)  // Alias for contract compatibility
-        .def("batch_clone", &core::IGameState::batchClone)
-        .def("copy_from", &core::IGameState::copyFrom);
+        .def("clone", &core::IGameState::clone, py::call_guard<py::gil_scoped_release>())
+        .def("copy", &core::IGameState::clone, py::call_guard<py::gil_scoped_release>())  // Alias for contract compatibility
+        .def("batch_clone", &core::IGameState::batchClone, py::call_guard<py::gil_scoped_release>())
+        .def("copy_from", &core::IGameState::copyFrom, py::call_guard<py::gil_scoped_release>());
     
     // Game factory
     m.def("create_game", [](core::GameType type) {

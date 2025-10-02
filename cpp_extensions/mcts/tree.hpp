@@ -438,6 +438,16 @@ private:
      * @brief Initialize all arrays to zero/default values
      */
     void initialize_arrays();
+
+    /**
+     * @brief Reset a single node to default state.
+     */
+    void initialize_node(NodeIndex index);
+
+    /**
+     * @brief Reset a contiguous set of nodes to default state.
+     */
+    void initialize_node_range(NodeIndex first_index, std::uint16_t count);
 };
 
 /**

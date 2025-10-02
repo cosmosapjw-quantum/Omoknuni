@@ -74,7 +74,7 @@ Key architectural principles:
 - **FR-014**: System MUST support mixed precision (fp16) inference with CPU fallback capability
 - **FR-015**: System MUST batch inference requests dynamically (minimum 32 positions OR 3ms timeout)
 - **FR-016**: System MUST use pinned memory buffers to optimize GPU data transfer
-- **FR-017**: System MUST extract game-specific feature planes for neural network input
+- **FR-017**: System MUST extract game-specific feature planes for neural network input (see `data-model.md` for detailed tensor specifications: Gomoku 36 planes, Chess 30 planes, Go 25 planes)
 
 ### Performance Requirements
 - **FR-018**: System MUST achieve 30-40k simulations per second including neural network inference
@@ -166,22 +166,39 @@ Key architectural principles:
 **Risk**: Neural network selects invalid moves causing game state corruption
 **Mitigation**: Strict pre-normalization masking, comprehensive unit tests for all game rule implementations, assertion checks in debug builds
 
-## Open Questions
+## Resolved Design Decisions
 
-### Game-Specific Configuration
-- Exact number of feature planes required for each game (Chess history depth, Go capture patterns)
-- Optimal CPUCT exploration schedules per game type
-- Dirichlet noise alpha values for different board game characteristics
+**Note**: These questions have been resolved during implementation (see `tasks.md` lines 268-275 for resolution status).
 
-### Performance Tuning Parameters
-- Transposition table sizing relative to available memory
-- Virtual loss magnitude for optimal thread coordination
-- Batch timeout values balancing latency versus GPU utilization
+### Game-Specific Configuration (RESOLVED)
+- ✅ Feature planes: Gomoku 36 planes (enhanced with tactical analysis), Chess 30 planes (with move history), Go 25 planes (with proper history separation) - See `data-model.md`
+- ✅ CPUCT exploration: Configurable via config system, game-specific defaults in training guide
+- ✅ Dirichlet noise alpha: Game-specific values documented in `docs/training_guide.md`
 
-### Training Hyperparameters
-- Learning rate schedules for different games and model sizes
-- Experience replay buffer retention policies and sampling strategies
-- Model capacity requirements for achieving target performance levels
+### Performance Tuning Parameters (RESOLVED)
+- ✅ Transposition table: Memory-mapped buffer design with LRU cache (T029)
+- ✅ Virtual loss magnitude: Default 1.0, tuning script implemented (`scripts/tune_virtual_loss.py`)
+- ✅ Batch timeout: Default ≤3ms, tuning script implemented (`scripts/tune_timeout.py`)
+
+### Training Hyperparameters (RESOLVED)
+- ✅ Learning rate schedules: Documented in training guide with game-specific recommendations
+- ✅ Experience buffer: 1M capacity with rotation policy, balanced sampling across game types
+- ✅ Model capacity: ResNet-256 (20 blocks) sufficient for target performance
+
+## Related Specifications
+
+### specs/002-cpp-simulation-runner
+
+**Status**: Ready for implementation
+**Purpose**: Address performance bottleneck (246 sims/sec → 35,000 sims/sec)
+
+The C++ MCTS Simulation Runner specification resolves critical GIL contention in the Python orchestration layer. This enhancement is required to achieve the FR-018 performance target (30-40k simulations/second).
+
+**Key Documents**:
+- `specs/002-cpp-simulation-runner/spec.md` - Complete specification
+- `specs/002-cpp-simulation-runner/plan.md` - Implementation roadmap
+- `specs/002-cpp-simulation-runner/tasks.md` - Detailed task breakdown
+- `specs/002-cpp-simulation-runner/research.md` - Investigation findings supporting the design
 
 ## Review & Acceptance Checklist
 

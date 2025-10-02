@@ -307,7 +307,7 @@ class AlphaZeroMCTS(MCTSEngine):
             # No search performed - use neural network evaluation
             future = self.inference_fn(root_state)
             try:
-                _, value = future.result(timeout=5.0)
+                _, value = future.result(timeout=1.0)  # 1s timeout
                 return float(value)
             except Exception as e:
                 self.logger.warning(f"Neural network evaluation failed: {e}")
@@ -366,7 +366,6 @@ class AlphaZeroMCTS(MCTSEngine):
             True if simulation completed successfully
         """
         try:
-            self.logger.debug("Starting simulation")
             # Selection phase: traverse to leaf using C++ PUCT selection
             path = []
             current_index = self.root_index
@@ -374,20 +373,17 @@ class AlphaZeroMCTS(MCTSEngine):
 
             while True:
                 path.append(current_index)
-                self.logger.debug(f"Visiting node {current_index}, path length: {len(path)}")
 
                 # Check if node is terminal
                 flags = self.tree.get_flags(current_index)
                 if flags.is_terminal():
                     # Terminal node - get game result
-                    self.logger.debug(f"Node {current_index} is terminal")
                     value = self._get_terminal_value(current_state)
                     break
 
                 # Check if node is expanded
                 if not flags.is_expanded():
                     # Leaf node - expand and evaluate
-                    self.logger.debug(f"Expanding leaf node {current_index}")
                     value = self._expand_node(current_index, current_state)
                     break
 
@@ -428,17 +424,13 @@ class AlphaZeroMCTS(MCTSEngine):
             reversed_path = list(reversed(path))
 
             # Apply virtual loss along path for thread coordination
-            self.logger.debug(f"Applying virtual loss to path of length {len(reversed_path)} (leaf-to-root order)")
             vl_guard = mcts_py.VirtualLossGuard(self.virtual_loss_manager, reversed_path)
             if not vl_guard.is_valid():
-                self.logger.debug("Virtual loss guard invalid")
                 return False
 
             # Backup phase: propagate value up tree with C++ backend
-            self.logger.debug(f"Backing up value {value} along path (leaf-to-root order)")
             result = self.backup_manager.backup_value_along_path(reversed_path, value, self.virtual_loss_manager)
 
-            self.logger.debug(f"Backup result: success={result.success}, nodes_updated={result.nodes_updated}")
             return result.success
 
         except Exception as e:
@@ -466,7 +458,7 @@ class AlphaZeroMCTS(MCTSEngine):
         # Get neural network evaluation
         try:
             future = self.inference_fn(game_state)
-            policy, value = future.result(timeout=5.0)
+            policy, value = future.result(timeout=1.0)  # 1s timeout for batched inference
 
             # Extract policy for single game state from batch
             if policy.ndim > 1:
@@ -475,14 +467,7 @@ class AlphaZeroMCTS(MCTSEngine):
             self.logger.error(f"Neural network inference failed: {e}")
             # Fallback to uniform policy and neutral value
             legal_moves = game_state.get_legal_moves()
-
-            # Debug: Check legal moves in fallback case
-            if len(legal_moves) > 0:
-                self.logger.debug(f"Fallback - Legal moves type: {type(legal_moves)}, first move type: {type(legal_moves[0])}, content: {legal_moves[:5]}")
-            else:
-                self.logger.debug("Fallback - No legal moves available")
-
-            policy = np.zeros(game_state.get_action_space_size())
+            policy = np.zeros(game_state.action_space_size)
             if len(legal_moves) > 0:
                 for move in legal_moves:
                     policy[move] = 1.0 / len(legal_moves)
@@ -490,13 +475,6 @@ class AlphaZeroMCTS(MCTSEngine):
 
         # Mask illegal moves and normalize
         legal_moves = game_state.get_legal_moves()
-
-        # Debug: Check legal moves type and content
-        if len(legal_moves) > 0:
-            self.logger.debug(f"Legal moves type: {type(legal_moves)}, first move type: {type(legal_moves[0])}, content: {legal_moves[:5]}")
-        else:
-            self.logger.debug("No legal moves available")
-
         legal_moves_set = set(legal_moves)
 
         for move in range(len(policy)):
