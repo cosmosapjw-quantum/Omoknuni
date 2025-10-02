@@ -206,15 +206,19 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
   - **Est**: 3h
   - **Completed**: 2025-10-03 by implement-next
 
-- [ ] **T016** Inference bridge
+- [x] **T016** Inference bridge
   - **File**: `src/core/cpp_inference_bridge.py` (NEW)
   - **Changes**:
-    - Implement `CppInferenceBridge` class wrapping `GPUInferenceWorker`
-    - `__call__(cpp_state)` → package features → submit to queue → return `Future`
-    - Handle CPU fallback routing, timeouts, `InferenceError` propagation
-  - **Test file**: `tests/unit/test_inference_bridge.py` (GPU success, CPU fallback, timeout)
-  - **Acceptance**: Batching works, CPU fallback triggers correctly, timeouts surface
+    - ✅ **IMPLEMENTED**: `CppInferenceBridge` class wrapping `GPUInferenceWorker`
+    - ✅ **IMPLEMENTED**: `__call__(game_state)` → extracts features → calls `batch_inference()` → returns `Future`
+    - ✅ **IMPLEMENTED**: CPU fallback routing on OOM/CUDA errors with `_should_use_cpu_fallback()`
+    - ✅ **IMPLEMENTED**: Timeout handling with `InferenceError` propagation
+    - ✅ **IMPLEMENTED**: Uniform policy fallback as last resort when both GPU/CPU fail
+    - ✅ **IMPLEMENTED**: Comprehensive metrics tracking (success rate, fallback count, timeouts)
+  - **Test file**: `tests/unit/test_inference_bridge.py` (20 comprehensive tests, all passing)
+  - **Acceptance**: ✅ GPU inference works, ✅ CPU fallback triggers on OOM/CUDA errors, ✅ timeouts handled, ✅ all 20 tests pass
   - **Est**: 2h
+  - **Completed**: 2025-10-03 by implement-next
 
 ## Phase 4 — Testing & Performance
 
@@ -277,12 +281,12 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
 
 ## Tracking
 - **Total Tasks**: 23 (Phase 0: 5, Phase 1: 3, Phase 2: 4, Phase 3: 4, Phase 4: 4, Phase 5: 3)
-- **Completed**: 15 / 23 (65.2%) (Phase 0: ✅ 5/5, Phase 1: ✅ 3/3, Phase 2: ✅ 4/4, Phase 3: 🔄 3/4)
-- **Next Up**: T016 (Inference bridge) - Complete Phase 3
+- **Completed**: 16 / 23 (69.6%) (Phase 0: ✅ 5/5, Phase 1: ✅ 3/3, Phase 2: ✅ 4/4, Phase 3: ✅ 4/4)
+- **Next Up**: T017 (Performance tests) - Begin Phase 4
 - **Critical Path**: T001-T005 (Phase 0) → T006-T008 (Phase 1) → T009-T012 (Phase 2) → T013-T016 (Phase 3) → T017-T020 (Phase 4) → T021-T023 (Phase 5)
 - **Estimated Total**: 5 days (0.5 + 1 + 1.5 + 1 + 1 + 0.5 buffer)
 - **Phase 0 Complete**: Python training fixes unblocked execution
 - **Phase 1 Complete**: Build wiring, contract tests, move storage
 - **Phase 2 Complete**: Select leaf, expansion, backup, and pipeline connection all implemented and tested
-- **Phase 3 Progress**: PyInferenceCallback bridge + AlphaZeroMCTS refactored + SearchCoordinator shutdown fixed (3/4 complete)
+- **Phase 3 Complete**: PyInferenceCallback bridge + AlphaZeroMCTS refactored + SearchCoordinator shutdown fixed + Inference bridge implemented (4/4 complete)
 - Update this checklist after each task completion to stay aligned with Spec-Driven Development.

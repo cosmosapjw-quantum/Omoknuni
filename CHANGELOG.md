@@ -414,8 +414,63 @@ All 3 Phase 1 tasks (T006-T008) completed successfully:
   - ✅ Repeated start/stop cycles work without thread accumulation
 - **Status**: ✅ Complete
 
-**Phase 3 Progress**: PyInferenceCallback bridge + AlphaZeroMCTS refactor + SearchCoordinator shutdown fixed (3/4 tasks complete)
-**Next Task**: T016 (Inference bridge) - CppInferenceBridge wrapper for GPUInferenceWorker
+#### T016: CppInferenceBridge Implementation (2025-10-03)
+- **Implemented**: Bridge between C++ MCTS simulation runner and Python GPU inference worker
+- **Files**: `src/core/cpp_inference_bridge.py` (NEW), `tests/unit/test_inference_bridge.py` (NEW)
+- **Purpose**: Provide callable interface for C++ code to request neural network inference asynchronously
+- **Implementation** (`CppInferenceBridge` class):
+  - **Feature Extraction**: Extracts features from `IGameState` via `get_tensor_representation()` or `extract_features()`
+  - **Inference Submission**: Calls `GPUInferenceWorker.batch_inference([features])` synchronously and wraps in Future
+  - **Error Handling**: Comprehensive error propagation with `InferenceError` wrapper
+  - **CPU Fallback**: Automatic routing to CPU worker on OOM/CUDA errors via `_should_use_cpu_fallback()`
+  - **Uniform Fallback**: Last-resort uniform policy generation when both GPU/CPU fail
+  - **Metrics Tracking**: Success rate, failure count, timeout count, CPU fallback count
+- **Key Methods**:
+  - `__call__(game_state)` - Main entry point, returns `Future[Tuple[np.ndarray, float]]`
+  - `_extract_features(game_state)` - Extract 3D feature tensor with validation
+  - `_submit_inference_request()` - Submit to worker and populate future
+  - `_should_use_cpu_fallback(error)` - Detect OOM/CUDA errors requiring fallback
+  - `_cpu_fallback_inference()` - Route to CPU worker or uniform policy
+  - `get_metrics()` - Return comprehensive metrics dictionary
+- **Testing** (`test_inference_bridge.py` - 20 comprehensive tests):
+  1. `test_initialization` - Bridge setup with parameters
+  2. `test_successful_inference` - GPU inference success path
+  3. `test_feature_extraction` - Feature tensor extraction and validation
+  4. `test_invalid_game_state_no_method` - Error on missing extraction method
+  5. `test_invalid_feature_shape` - Error on invalid tensor shape
+  6. `test_timeout_handling` - Timeout error propagation
+  7. `test_gpu_failure_without_fallback` - GPU error without CPU fallback
+  8. `test_cpu_fallback_on_oom` - CPU fallback on CUDA OOM
+  9. `test_cpu_fallback_on_cuda_error` - CPU fallback on CUDA errors
+  10. `test_uniform_policy_fallback` - Uniform policy when no CPU worker
+  11. `test_fallback_detection_oom` - OOM error detection
+  12. `test_fallback_detection_cuda` - CUDA error detection
+  13. `test_fallback_detection_worker_flag` - Worker flag detection
+  14. `test_fallback_detection_negative` - Non-fallback errors
+  15. `test_multiple_requests` - Sequential request handling
+  16. `test_metrics_tracking` - Metrics across different outcomes
+  17. `test_metrics_reset` - Metrics reset functionality
+  18. `test_extract_features_method` - Fallback extraction method
+  19. `test_concurrent_requests` - Thread-safe concurrent requests
+  20. `test_cpu_fallback_failure` - Both GPU and CPU failure handling
+- **Validation Evidence**:
+  - ✅ All 20 unit tests pass (0.06s)
+  - ✅ GPU inference works correctly
+  - ✅ CPU fallback triggers on OOM/CUDA errors
+  - ✅ Timeout handling works
+  - ✅ Uniform policy fallback as last resort
+  - ✅ Thread-safe concurrent access
+  - ✅ Comprehensive metrics tracking
+- **Integration**: Ready for use in `SearchCoordinator` and `AlphaZeroMCTS`
+- **Status**: ✅ Complete
+
+**Phase 3 Complete**: All 4 tasks (T013-T016) successfully implemented:
+- ✅ T013: PyInferenceCallback bridge for C++ inference callbacks
+- ✅ T014: AlphaZeroMCTS refactored to use C++ SimulationRunner
+- ✅ T015: SearchCoordinator shutdown consolidated and fixed
+- ✅ T016: CppInferenceBridge wrapper for GPU inference worker
+
+**Next Phase**: Phase 4 - Testing & Performance (T017-T020)
 
 ### Spec 002: C++ MCTS Simulation Runner - Documentation Complete (2025-10-02)
 - **SPEC DOCUMENTATION**: Complete specification and implementation plan for C++ simulation runner
