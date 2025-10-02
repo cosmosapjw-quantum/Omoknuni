@@ -4,8 +4,7 @@
  */
 
 #include "simulation_runner.hpp"
-// Note: Game interface headers will be included in Phase 2 when implementing actual logic
-// #include "../games/interface.h"  // TODO: Phase 2 - Re-enable when implementing expansion
+#include "../utils/igamestate.h"
 #include <stdexcept>
 #include <algorithm>
 #include <cmath>
@@ -36,9 +35,48 @@ bool SimulationRunner::run_simulation(IGameState& root_state,
 NodeIndex SimulationRunner::select_leaf(NodeIndex root,
                                         IGameState& current_state,
                                         std::vector<NodeIndex>& path) {
-    // TODO: Phase 2 - Implement selection phase
-    // Traverse tree using PUCT until reaching unexpanded or terminal node
-    throw std::runtime_error("SimulationRunner::select_leaf not implemented yet - Phase 1 stub");
+    // Clear path and start from root
+    path.clear();
+    path.push_back(root);
+
+    NodeIndex current = root;
+
+    // Traverse tree using PUCT until reaching a leaf (unexpanded or terminal)
+    while (true) {
+        // Check if current node is terminal
+        if (current_state.isTerminal()) {
+            break;  // Reached terminal node
+        }
+
+        // Check if current node is expanded
+        NodeFlags flags = tree_.get_flags(current);
+        if (!flags.is_expanded()) {
+            break;  // Reached unexpanded leaf
+        }
+
+        // Node is expanded - select best child using PUCT
+        SelectionResult result = selector_.select_child(tree_, current);
+
+        if (!result.valid || result.selected_child == NULL_NODE_INDEX) {
+            // No valid child found (shouldn't happen if expanded)
+            break;
+        }
+
+        // Get the move that led to this child
+        uint16_t move_index = tree_.get_move(result.selected_child);
+
+        // Apply virtual loss to the selected child
+        virtual_loss_.apply_virtual_loss(result.selected_child);
+
+        // Apply the move to the game state
+        current_state.makeMove(static_cast<int>(move_index));
+
+        // Move to the selected child
+        current = result.selected_child;
+        path.push_back(current);
+    }
+
+    return current;
 }
 
 float SimulationRunner::expand_node(NodeIndex leaf,

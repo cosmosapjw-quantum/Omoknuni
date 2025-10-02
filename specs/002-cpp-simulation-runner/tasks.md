@@ -105,15 +105,18 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
 
 ## Phase 2 — C++ Runner Core
 
-- [ ] **T009** Select leaf
+- [x] **T009** Select leaf
   - **File**: `cpp_extensions/mcts/simulation_runner.cpp:select_leaf()`
   - **Changes**:
     - Use `PUCTSelector::select_child` with reusable `std::vector<NodeIndex> path_`
     - Lookup legal moves via `tree_->get_move(child_idx)`
     - Apply virtual loss during traversal
-  - **Test file**: `tests/unit/test_simulation_select_leaf.cpp` (gtest with deterministic fixture)
-  - **Acceptance**: Path buffer populated, legal move selection verified
+    - Include game state interface (`igamestate.h`)
+    - Add public test wrapper `select_leaf_public()` in header
+  - **Test file**: `tests/unit/test_simulation_select_leaf.cpp` (C++ standalone with deterministic TestGameState fixture)
+  - **Acceptance**: ✅ Path buffer populated, legal move selection verified, virtual loss applied, 4/4 tests passing
   - **Est**: 2h
+  - **Completed**: 2025-10-02 by implement-next
 
 - [ ] **T010** Expand node
   - **File**: `cpp_extensions/mcts/simulation_runner.cpp:expand_node()`
@@ -253,9 +256,10 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
 
 ## Tracking
 - **Total Tasks**: 23 (Phase 0: 5, Phase 1: 3, Phase 2: 4, Phase 3: 4, Phase 4: 4, Phase 5: 3)
-- **Completed**: 8 / 23 (34.8%) (Phase 0: ✅ 5/5, Phase 1: ✅ 3/3)
-- **Next Up**: T009 (Select Leaf) - Phase 2 begins
+- **Completed**: 9 / 23 (39.1%) (Phase 0: ✅ 5/5, Phase 1: ✅ 3/3, Phase 2: 🔄 1/4)
+- **Next Up**: T010 (Expand Node) - Continue Phase 2
 - **Critical Path**: T001-T005 (Phase 0) → T006-T008 (Phase 1) → T009-T012 (Phase 2) → T013-T016 (Phase 3) → T017-T020 (Phase 4) → T021-T023 (Phase 5)
 - **Estimated Total**: 5 days (0.5 + 1 + 1.5 + 1 + 1 + 0.5 buffer)
-- **Phase 1 Complete**: Build wiring, contract tests, move storage - ready for Phase 2
+- **Phase 1 Complete**: Build wiring, contract tests, move storage
+- **Phase 2 In Progress**: Select leaf complete (T009), expand/backup/connect pending
 - Update this checklist after each task completion to stay aligned with Spec-Driven Development.

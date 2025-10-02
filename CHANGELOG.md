@@ -179,6 +179,38 @@ All 3 Phase 1 tasks (T006-T008) completed successfully:
 
 **Next Phase**: Phase 2 - C++ Runner Core (T009-T012)
 
+#### T009: Select Leaf Implementation (2025-10-02)
+- **Implemented**: `SimulationRunner::select_leaf()` - MCTS tree traversal using PUCT
+- **File**: `cpp_extensions/mcts/simulation_runner.cpp`
+- **Changes**:
+  - **Core Implementation**:
+    - Traverse tree from root to leaf using `PUCTSelector::select_child()`
+    - Build path vector with nodes from root to leaf
+    - Apply virtual loss during traversal to prevent thread collisions
+    - Lookup move indices via `tree_.get_move()` for game state updates
+    - Apply moves to game state in-place using `makeMove()`
+    - Detect terminal nodes and unexpanded leaves
+  - **Game Interface Integration**:
+    - Included `igamestate.h` for game state operations
+    - Removed Phase 1 stub that threw `NotImplementedError`
+  - **Test Support**:
+    - Added `select_leaf_public()` test wrapper in `simulation_runner.hpp`
+    - TODO comment for future friend class or proper test design
+  - **Testing**:
+    - Created `tests/unit/test_simulation_select_leaf.cpp`: 4 C++ standalone tests
+    - TestGameState: Deterministic fixture with 3 legal moves per position, max depth 5
+    - Tests: unexpanded root, expanded tree, deep tree (3 levels), terminal detection
+- **Validation**:
+  - ✅ All 4 C++ tests pass
+  - ✅ Path buffer correctly populated (root → children → grandchildren)
+  - ✅ Virtual loss applied to selected nodes
+  - ✅ Legal move selection via PUCT
+  - ✅ Game state properly updated during traversal
+  - ✅ Terminal node detection working
+- **Status**: ✅ Complete (commit pending)
+
+**Next Task**: T010 (Expand Node) - Neural network inference and child allocation
+
 ### Spec 002: C++ MCTS Simulation Runner - Documentation Complete (2025-10-02)
 - **SPEC DOCUMENTATION**: Complete specification and implementation plan for C++ simulation runner
   - **Problem Identified**: Current implementation runs simulations in Python (246 sims/sec) instead of C++ runner (30k-40k sims/sec target)

@@ -127,6 +127,14 @@ public:
                         NodeIndex root_index,
                         InferenceCallback& inference_fn);
 
+    // Public for unit testing - Phase 2 implementation
+    // TODO: Consider friend class or test-only wrapper
+    NodeIndex select_leaf_public(NodeIndex root,
+                                  IGameState& current_state,
+                                  std::vector<NodeIndex>& path) {
+        return select_leaf(root, current_state, path);
+    }
+
 private:
     // References to shared MCTS components
     MCTSTree& tree_;
