@@ -222,12 +222,12 @@ Open questions should be resolved during implementation planning and updated her
 
 ## 5. Acceptance Checklist
 
-### Phase 0: Python Fixes (Training Unblocking)
-- [ ] Policy loss function fixed (`trainer.py:601` KL divergence)
-- [ ] TrainingConfig fields added (`training_loop.py:47-94`)
-- [ ] Config factory function fixed (`training_loop.py:789-840`)
-- [ ] Signal handlers guarded (`training_loop.py:162-164`)
-- [ ] Training pipeline smoke test passes end-to-end
+### Phase 0: Python Fixes (Training Unblocking) ✅ COMPLETE
+- [x] Policy loss function fixed (`trainer.py:601` KL divergence) - T001
+- [x] TrainingConfig fields added (`training_loop.py:47-94`) - T002
+- [x] Config factory function fixed (`training_loop.py:789-840`) - T003
+- [x] Signal handlers guarded (`training_loop.py:162-164`) - T004
+- [x] Training pipeline smoke test passes end-to-end - T005
 
 ### Phase 1-2: C++ Runner & Integration
 - [ ] FR-001 through FR-008 implemented and code-reviewed

@@ -7,9 +7,10 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 🔧 **In Development: C++ Simulation Runner** - Closing 122-163× performance gap (Spec 002)
 
 ### Current Status
-- **Version**: 1.0.0-alpha + Spec 002 (C++ Runner Implementation)
+- **Version**: 1.0.0-alpha + Spec 002 (Phase 0 Complete, Phase 1 In Progress)
 - **Alpha Release Date**: 2025-10-01
-- **Spec 002 Status**: READY FOR IMPLEMENTATION (2025-10-02)
+- **Spec 002 Phase 0**: ✅ COMPLETE (2025-10-02) - Training pipeline unblocked
+- **Spec 002 Phase 1**: 🔄 IN PROGRESS - Build & move storage
 - **Target**: Increase throughput from 246 → 30,000-40,000 sims/sec
 
 ### Active Work: C++ MCTS Simulation Runner
@@ -23,6 +24,15 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - **Memory overhead**: 1000MB vs 20MB for move storage
 
 **Solution**: Complete C++ `SimulationRunner` implementation per [Spec 002](specs/002-cpp-simulation-runner/)
+
+**Phase 0 Complete** (2025-10-02):
+- ✅ T001: Policy loss function fixed (KL divergence for continuous distributions)
+- ✅ T002: TrainingConfig fields added (MCTS configuration parameters)
+- ✅ T003: Config factory filtering (handles YAML extra fields)
+- ✅ T004: Signal handler guard (worker thread compatibility)
+- ✅ T005: Training pipeline smoke test (validates all fixes)
+
+**Next**: Phase 1 - Build wiring and native move storage (1000MB→20MB reduction)
 
 See [PYTHON_FIXES_REQUIRED.md](specs/002-cpp-simulation-runner/PYTHON_FIXES_REQUIRED.md) for comprehensive analysis and [MIGRATION.md](specs/002-cpp-simulation-runner/MIGRATION.md) for deployment guide.
 

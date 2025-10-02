@@ -597,8 +597,9 @@ class AlphaZeroTrainer(ModelTrainer):
         Returns:
             tuple: (total_loss, metrics_dict)
         """
-        # Policy loss: cross-entropy with target distribution
-        policy_loss = F.cross_entropy(policy_pred, policy_target, reduction='mean')
+        # Policy loss: KL divergence between predicted and target distributions
+        # Use log_softmax on predictions and batchmean reduction for proper KL divergence
+        policy_loss = F.kl_div(F.log_softmax(policy_pred, dim=1), policy_target, reduction='batchmean')
 
         # Value loss: mean squared error
         value_loss = F.mse_loss(value_pred.squeeze(), value_target, reduction='mean')

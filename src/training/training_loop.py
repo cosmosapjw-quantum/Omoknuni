@@ -56,6 +56,10 @@ class TrainingConfig:
     self_play_games_per_iteration: int = 50
     parallel_self_play_games: int = 4
     mcts_simulations: int = 800
+    mcts_threads: int = 8
+    batch_size_min: int = 32
+    batch_size_max: int = 64
+    inference_timeout_ms: float = 3.0
 
     # Training settings
     training_steps_per_iteration: int = 1000
@@ -159,9 +163,10 @@ class TrainingLoop:
         # Threading
         self.executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="training_loop")
 
-        # Setup signal handlers for graceful shutdown
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
+        # Setup signal handlers for graceful shutdown (only in main thread)
+        if threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGINT, self._signal_handler)
+            signal.signal(signal.SIGTERM, self._signal_handler)
 
         self.logger.info(f"Training loop initialized for {config.game_type}")
 
@@ -837,7 +842,13 @@ def create_training_loop(config_dict: Dict[str, Any]) -> TrainingLoop:
         }
         config_dict = flat_config
 
-    config = TrainingConfig(**config_dict)
+    # Filter config_dict to only include valid TrainingConfig fields
+    # This prevents TypeError from unknown kwargs when loading from YAML
+    from dataclasses import fields
+    valid_fields = {f.name for f in fields(TrainingConfig)}
+    filtered_config = {k: v for k, v in config_dict.items() if k in valid_fields}
+
+    config = TrainingConfig(**filtered_config)
     return TrainingLoop(config)
 
 

@@ -599,6 +599,42 @@ class TestIntegrationScenarios:
 
         assert loop.shutdown_requested
 
+    def test_signal_handler_from_worker_thread(self, temp_dir):
+        """Test that TrainingLoop can be instantiated from worker thread without ValueError.
+
+        Signal handlers can only be registered in the main thread. When TrainingLoop
+        is created from a worker thread (e.g., in tests), signal registration should
+        be skipped to avoid ValueError.
+        """
+        import threading
+
+        error_occurred = []
+        success = []
+
+        def create_loop_in_thread():
+            try:
+                config = TrainingConfig(
+                    checkpoint_dir=str(temp_dir / 'checkpoints'),
+                    log_dir=str(temp_dir / 'logs'),
+                    evaluation_dir=str(temp_dir / 'eval')
+                )
+                loop = TrainingLoop(config)
+                success.append(True)
+                loop.stop()
+            except ValueError as e:
+                if 'signal only works in main thread' in str(e):
+                    error_occurred.append(e)
+                else:
+                    raise
+
+        thread = threading.Thread(target=create_loop_in_thread)
+        thread.start()
+        thread.join()
+
+        # Should succeed without ValueError
+        assert not error_occurred, f"Signal handler guard failed: {error_occurred[0] if error_occurred else None}"
+        assert success, "TrainingLoop should be created successfully in worker thread"
+
     @patch('src.training.training_loop.SelfPlayGameGenerator')
     @patch('src.training.training_loop.MemoryMappedExperienceBuffer')
     @patch('src.training.training_loop.AlphaZeroTrainer')

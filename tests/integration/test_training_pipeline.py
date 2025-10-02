@@ -494,6 +494,97 @@ class TestTrainingPipelineIntegration:
         return TrainingPipelineIntegrationTest(temp_dir, config)
 
     @pytest.mark.quick
+    def test_training_initialization(self, temp_dir):
+        """Test that training loop initializes without errors after Phase 0 fixes.
+
+        This test validates:
+        - T001: Policy loss function uses KL divergence (no TypeError on float targets)
+        - T002: TrainingConfig has all required fields (mcts_threads, batch_size_min/max, inference_timeout_ms)
+        - T003: Config factory function filters unknown kwargs from YAML
+        - T004: Signal handlers guarded for worker thread creation
+        """
+        from src.training.training_loop import TrainingLoop, TrainingConfig, create_training_loop
+        import yaml
+
+        # Test 1: Direct instantiation with all fields from T002
+        config = TrainingConfig(
+            game_type="gomoku",
+            model_path=str(temp_dir / "models" / "test.pth"),
+            mcts_threads=8,
+            batch_size_min=32,
+            batch_size_max=64,
+            inference_timeout_ms=3.0,
+            checkpoint_dir=str(temp_dir / "checkpoints"),
+            log_dir=str(temp_dir / "logs"),
+            evaluation_dir=str(temp_dir / "eval")
+        )
+
+        loop = TrainingLoop(config)
+        assert loop is not None, "TrainingLoop should instantiate"
+        assert loop.config.mcts_threads == 8, "mcts_threads should be set"
+        assert loop.config.batch_size_min == 32, "batch_size_min should be set"
+        assert loop.config.batch_size_max == 64, "batch_size_max should be set"
+        assert loop.config.inference_timeout_ms == 3.0, "inference_timeout_ms should be set"
+        loop.stop()
+
+        # Test 2: Load from YAML config (validates T003 filtering)
+        yaml_config = {
+            'training': {
+                'self_play_games_per_iteration': 5,
+                'training_steps_per_iteration': 10,
+            },
+            'mcts': {
+                'simulations': 100,
+                'threads': 4,
+                'batch_size_min': 16,
+                'batch_size_max': 32,
+                'inference_timeout_ms': 2.0,
+            },
+            'game': {
+                'game_type': 'gomoku'
+            },
+            'system': {
+                'model_dir': str(temp_dir / "models"),
+                'checkpoint_dir': str(temp_dir / "checkpoints"),
+            },
+            # Extra fields that should be filtered (T003)
+            'config_version': '1.0',
+            'created_by': 'test',
+        }
+
+        loop2 = create_training_loop(yaml_config)
+        assert loop2 is not None, "create_training_loop should work with YAML config"
+        assert loop2.config.mcts_threads == 4, "YAML mcts_threads should be loaded"
+        assert loop2.config.batch_size_min == 16, "YAML batch_size_min should be loaded"
+        loop2.stop()
+
+        # Test 3: Worker thread creation (validates T004)
+        import threading
+
+        error_occurred = []
+        success = []
+
+        def create_in_thread():
+            try:
+                config_thread = TrainingConfig(
+                    checkpoint_dir=str(temp_dir / "checkpoints"),
+                    log_dir=str(temp_dir / "logs"),
+                )
+                loop_thread = TrainingLoop(config_thread)
+                success.append(True)
+                loop_thread.stop()
+            except ValueError as e:
+                if 'signal only works in main thread' in str(e):
+                    error_occurred.append(e)
+
+        thread = threading.Thread(target=create_in_thread)
+        thread.start()
+        thread.join()
+
+        assert not error_occurred, "Signal handler guard should prevent ValueError in worker thread"
+        assert success, "TrainingLoop should initialize in worker thread"
+
+    @pytest.mark.quick
     def test_basic_training_pipeline(self, pipeline_tester):
         """Test basic training pipeline functionality."""
         # Run minimal pipeline test

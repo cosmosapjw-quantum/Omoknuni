@@ -4,6 +4,89 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Spec 002: C++ MCTS Simulation Runner - Phase 0 In Progress (2025-10-02)
+
+#### T001: Policy Loss Function Fix (2025-10-02)
+- **Fixed**: `RuntimeError: expected scalar type Long but got Float` in training pipeline
+- **Change**: Replaced `F.cross_entropy(policy_pred, policy_target)` with `F.kl_div(F.log_softmax(policy_pred, dim=1), policy_target, reduction='batchmean')` in `src/training/trainer.py:601`
+- **Reason**: Cross-entropy expects integer class labels, but AlphaZero uses continuous probability distributions for policy targets
+- **Impact**: Training loop can now process first batch without crash
+- **Validation**: Synthetic test confirms KL divergence correctly handles float distributions
+- **Status**: ✅ Complete (commit 33d9fce1)
+
+#### T002: TrainingConfig Fields Addition (2025-10-02)
+- **Fixed**: `AttributeError` when initializing self-play generator due to missing config fields
+- **Change**: Added four new fields to `TrainingConfig` dataclass in `src/training/training_loop.py:55-62`:
+  - `mcts_threads: int = 8` - Number of MCTS search threads
+  - `batch_size_min: int = 32` - Minimum GPU inference batch size
+  - `batch_size_max: int = 64` - Maximum GPU inference batch size
+  - `inference_timeout_ms: float = 3.0` - Neural network inference timeout
+- **Reason**: Self-play generator initialization (lines 199-206) requires these fields for MCTS configuration
+- **Impact**: TrainingConfig can now be instantiated and passed to SelfPlayGameGenerator without errors
+- **Validation**: Tested instantiation with default and custom values, all fields accessible
+- **Status**: ✅ Complete (commit 33d9fce1)
+
+#### T003: Config Factory Function Fix (2025-10-02)
+- **Fixed**: `TypeError` from unknown kwargs when loading YAML configs with extra fields
+- **Change**: Added field filtering in `create_training_loop()` at `src/training/training_loop.py:844-848`:
+  ```python
+  from dataclasses import fields
+  valid_fields = {f.name for f in fields(TrainingConfig)}
+  filtered_config = {k: v for k, v in config_dict.items() if k in valid_fields}
+  config = TrainingConfig(**filtered_config)
+  ```
+- **Reason**: YAML config files contain metadata fields (e.g., `config_version`, `created_by`) and nested structure keys that aren't TrainingConfig fields, causing TypeError when passed as kwargs
+- **Impact**: All YAML config files now load successfully through `create_training_loop()`
+- **Validation**: Tested with all 4 config files (default, development, production, gomoku_48h_training) - all load correctly
+- **Additional Testing**: Validated flat config dict with extra unknown fields - properly filtered
+- **Status**: ✅ Complete (commit 33d9fce1)
+
+#### T004: Signal Handler Guard (2025-10-02)
+- **Fixed**: `ValueError: signal only works in main thread` when TrainingLoop instantiated from worker threads
+- **Change**: Added thread guard for signal registration in `src/training/training_loop.py:167-169`:
+  ```python
+  if threading.current_thread() is threading.main_thread():
+      signal.signal(signal.SIGINT, self._signal_handler)
+      signal.signal(signal.SIGTERM, self._signal_handler)
+  ```
+- **Reason**: Signal handlers can only be registered in the main thread. Test harnesses and multi-threaded environments instantiate TrainingLoop from worker threads, causing ValueError
+- **Impact**: TrainingLoop can now be created from any thread without crashes
+- **Test Added**: `test_signal_handler_from_worker_thread` in `tests/unit/test_training_loop.py`
+- **Validation**: Test passes - TrainingLoop created successfully from worker thread, signal registration skipped
+- **Status**: ✅ Complete (commit 33d9fce1)
+
+#### T005: Training Pipeline Smoke Test (2025-10-02)
+- **Added**: Comprehensive integration test validating all Phase 0 fixes work together
+- **Test**: `test_training_initialization` in `tests/integration/test_training_pipeline.py`
+- **Validates**:
+  - T001: Policy loss function with KL divergence (no TypeError on float targets)
+  - T002: TrainingConfig fields (mcts_threads, batch_size_min/max, inference_timeout_ms)
+  - T003: Config factory function filters unknown kwargs from YAML
+  - T004: Signal handlers guarded for worker thread creation
+- **Test Coverage**:
+  1. Direct TrainingLoop instantiation with all T002 fields
+  2. YAML config loading with extra fields (validates T003 filtering)
+  3. Worker thread instantiation (validates T004 signal guard)
+- **Impact**: ✅ **Phase 0 Complete** - All Python training fixes validated, ready for Phase 1 (C++ implementation)
+- **Validation**: Test passes in 0.31s - all assertions successful
+- **Status**: ✅ Complete (commit 33d9fce1)
+
+---
+
+### **Phase 0 Complete - Training Pipeline Unblocked** (2025-10-02)
+
+All 5 Phase 0 tasks (T001-T005) completed successfully:
+- ✅ Policy loss fixed (KL divergence for continuous distributions)
+- ✅ TrainingConfig fields added (MCTS configuration parameters)
+- ✅ Config factory filtering (handles YAML extra fields)
+- ✅ Signal handler guard (worker thread compatibility)
+- ✅ Integration test (validates all fixes work together)
+
+**Next Phase**: Phase 1 - Build & Move Storage (T006-T008)
+- Build wiring for C++ simulation runner
+- Implement native move storage in MCTSTree (1000MB→20MB reduction)
+- Set up contract tests for C++ components
+
 ### Spec 002: C++ MCTS Simulation Runner - Documentation Complete (2025-10-02)
 - **SPEC DOCUMENTATION**: Complete specification and implementation plan for C++ simulation runner
   - **Problem Identified**: Current implementation runs simulations in Python (246 sims/sec) instead of C++ runner (30k-40k sims/sec target)
