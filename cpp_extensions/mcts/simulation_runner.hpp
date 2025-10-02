@@ -135,6 +135,11 @@ public:
         return select_leaf(root, current_state, path);
     }
 
+    void backup_value_public(const std::vector<NodeIndex>& path,
+                             float leaf_value) {
+        backup_value(path, leaf_value);
+    }
+
 private:
     // References to shared MCTS components
     MCTSTree& tree_;

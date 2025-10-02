@@ -248,7 +248,33 @@ All 3 Phase 1 tasks (T006-T008) completed successfully:
   - ✅ Uniform fallback for zero-prior policies
 - **Status**: ✅ Complete
 
-**Next Task**: T011 (Backup Value) - Value propagation with sign flipping
+#### T011: Backup Value Implementation (2025-10-02)
+- **Implemented**: `SimulationRunner::backup_value()` - Value propagation with sign flipping and virtual loss removal
+- **File**: `cpp_extensions/mcts/simulation_runner.cpp`
+- **Changes**:
+  - **Core Implementation**:
+    - Delegate to `BackupManager::backup_value_along_path(path, leaf_value, &virtual_loss_)`
+    - BackupManager handles sign flipping automatically at each tree level
+    - Value alternates sign as it propagates up: leaf → -parent → +grandparent → -root...
+    - Virtual loss removal integrated by passing VirtualLossManager pointer
+    - Atomic visit count and total value updates for thread safety
+  - **Test Support**:
+    - Added `backup_value_public()` test wrapper in `simulation_runner.hpp`
+    - Enables unit testing of backup logic through public interface
+  - **Testing**:
+    - Created `tests/unit/test_simulation_backup.cpp`: 6 C++ standalone tests
+    - Tests: single node backup, two-level sign flip, three-level sign flip, virtual loss removal, multiple backups accumulation, terminal value backup
+- **Validation**:
+  - ✅ All 6 C++ tests pass
+  - ✅ Single node backup: visit=1, value=0.7, Q=0.7
+  - ✅ Two-level sign flip: child gets +0.8, root gets -0.8
+  - ✅ Three-level sign flip: grandchild +0.6, child -0.6, root +0.6
+  - ✅ Virtual loss removed during backup (VL before >0, after =0)
+  - ✅ Multiple backups accumulate correctly (3 backups: child 1.8 total, root -1.8 total)
+  - ✅ Terminal values propagate (+1.0 win → -1.0 opponent loss)
+- **Status**: ✅ Complete
+
+**Next Task**: T012 (Connect Pipeline) - Implement run_simulation() to connect select → expand → backup
 
 ### Spec 002: C++ MCTS Simulation Runner - Documentation Complete (2025-10-02)
 - **SPEC DOCUMENTATION**: Complete specification and implementation plan for C++ simulation runner

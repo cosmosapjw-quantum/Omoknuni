@@ -186,13 +186,20 @@ float SimulationRunner::expand_node(NodeIndex leaf,
 
 void SimulationRunner::backup_value(const std::vector<NodeIndex>& path,
                                     float leaf_value) {
-    // TODO: Phase 2 - Implement backup phase
-    // Propagate value from leaf to root using BackupManager
-    // BackupManager automatically handles:
-    // - Value sign flipping at each level
-    // - Virtual loss removal
-    // - Atomic visit count updates
-    throw std::runtime_error("SimulationRunner::backup_value not implemented yet - Phase 1 stub");
+    // Delegate to BackupManager which handles:
+    // - Value sign flipping at each tree level (alternating player perspective)
+    // - Atomic visit count and value updates for thread safety
+    // - Virtual loss removal along the path
+
+    BackupResult result = backup_.backup_value_along_path(
+        path,
+        leaf_value,
+        &virtual_loss_  // Remove virtual loss during backup
+    );
+
+    // Note: BackupManager logs warnings internally if backup fails
+    // The result can be checked but we don't throw here to allow graceful degradation
+    (void)result;  // Suppress unused variable warning
 }
 
 float SimulationRunner::get_terminal_value(const IGameState& state) {
