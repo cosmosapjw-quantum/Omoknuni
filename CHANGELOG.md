@@ -699,9 +699,46 @@ All 3 Phase 1 tasks (T006-T008) completed successfully:
 - **Status**: ✅ Complete - Soak test infrastructure validated for C++ runner
 
 **Phase 4 Complete**: All 4/4 tasks done (Performance + Integration + C++ unit tests + Soak tests)
-**Next Phase**: Phase 5 - Documentation & Evidence (T021-T023)
 
-**Next Phase**: Phase 4 - Testing & Performance (T017-T020)
+### Phase 5 — Documentation & Evidence
+
+#### T021: Documentation Refresh - C++ Runner Architecture Guide (2025-10-03)
+- **Created**: Comprehensive documentation for C++ simulation runner
+- **Files Created**:
+  - ✅ `docs/mcts_cpp_runner.md` (400+ lines) - Complete architecture guide
+    - Architecture overview with component diagram
+    - Integration flow (initialization → search → simulation → inference)
+    - Performance characteristics and optimization roadmap
+    - Memory management (SoA layout, 27 bytes/node)
+    - Thread safety validation (TSan clean, 6 races fixed)
+    - Troubleshooting guide (4 common issues with solutions)
+    - API reference (SimulationRunner, PyInferenceCallback, MCTSTree)
+    - Test suite documentation (contract/integration/performance/soak)
+    - Validation checklist for production deployment
+  - ✅ `docs/performance/cpp_runner_results.md` (600+ lines) - Performance validation results
+    - Executive summary (7× Python baseline, 30k+ target)
+    - Throughput metrics (1,744 sims/sec current)
+    - Thread scaling analysis (12.5% efficiency baseline)
+    - GIL release validation (56.6% Python time with sync mock)
+    - Memory efficiency (50× reduction, 20MB vs 1000MB)
+    - Memory stability (88.3MB growth in 30s)
+    - Thread safety (TSan clean, 6 data races fixed)
+    - Integration test results (8/8 equivalence tests pass)
+    - Python vs C++ comparison tables
+    - Next steps for GPU integration
+- **Files Updated**:
+  - ✅ `CLAUDE.md` - Added C++ Simulation Runner to core components, updated MCTS Implementation Specifics section with performance table showing current achievements vs targets
+- **Performance Results Documented**:
+  - ✅ Throughput: 1,744 sims/sec (7× Python, target 30k+ with GPU)
+  - ✅ Memory: 270MB for 10M nodes (target <1GB) ✅
+  - ✅ Move storage: 20MB (vs 1000MB Python dict) ✅
+  - ✅ Node footprint: 27 bytes (target <64 bytes) ✅
+  - ✅ Thread safety: TSan clean (6 races fixed) ✅
+  - ✅ GIL release: 56.6% Python time (baseline, target <10%)
+- **Status**: ✅ Complete - Documentation comprehensively describes architecture, integration, and validation
+
+**Phase 5 Progress**: 1/3 tasks done (Docs refresh complete)
+**Next Tasks**: T022 (AGENTS + Spec sync), T023 (Evidence bundle)
 
 ### Spec 002: C++ MCTS Simulation Runner - Documentation Complete (2025-10-02)
 - **SPEC DOCUMENTATION**: Complete specification and implementation plan for C++ simulation runner

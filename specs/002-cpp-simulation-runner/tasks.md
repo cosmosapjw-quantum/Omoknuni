@@ -355,11 +355,27 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
 
 ## Phase 5 — Documentation & Evidence
 
-- [ ] **T021** Docs refresh
-  - **Files**: `docs/mcts_guide.md`, `docs/performance/*`, `CLAUDE.md`
-  - **Changes**: Document C++ runner flow, integration steps, performance figures, troubleshooting
-  - **Acceptance**: Docs describe new architecture accurately
+- [x] **T021** Docs refresh
+  - **Files Created**:
+    - ✅ `docs/mcts_cpp_runner.md` - Comprehensive C++ runner architecture guide (400+ lines)
+    - ✅ `docs/performance/cpp_runner_results.md` - Complete performance validation results (600+ lines)
+  - **Files Updated**:
+    - ✅ `CLAUDE.md` - Added C++ runner to core components, updated MCTS implementation specifics with performance table
+  - **Content**:
+    - ✅ Architecture overview with component diagram
+    - ✅ Integration flow (initialization → search → simulation → inference bridge)
+    - ✅ Performance characteristics (7× Python baseline, 30k+ target with GPU)
+    - ✅ Memory management details (SoA layout, allocation strategy, 27 bytes/node)
+    - ✅ Thread safety validation (TSan clean, 6 data races fixed)
+    - ✅ Troubleshooting guide (low throughput, memory growth, thread efficiency, API errors)
+    - ✅ API reference (SimulationRunner, PyInferenceCallback, MCTSTree extensions)
+    - ✅ Test suite documentation (contract, integration, performance, soak, C++ unit)
+    - ✅ Performance results from Phase 4 (throughput, thread scaling, GIL release, memory stability)
+    - ✅ Comparison tables (Python vs C++, baseline vs target)
+    - ✅ Validation checklist and next steps
+  - **Acceptance**: ✅ Documentation comprehensively describes C++ runner architecture, integration, and validation results
   - **Est**: 2h
+  - **Completed**: 2025-10-03 by implement-next
 
 - [ ] **T022** AGENTS + Spec sync
   - **Files**: `AGENTS.md`, `specs/002-cpp-simulation-runner/*`
@@ -380,12 +396,14 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
 
 ## Tracking
 - **Total Tasks**: 23 (Phase 0: 5, Phase 1: 3, Phase 2: 4, Phase 3: 4, Phase 4: 4, Phase 5: 3)
-- **Completed**: 18 / 23 (78.3%) (Phase 0: ✅ 5/5, Phase 1: ✅ 3/3, Phase 2: ✅ 4/4, Phase 3: ✅ 4/4, Phase 4: 🔄 2/4)
-- **Next Up**: T019 (C++ unit tests expansion) - Continue Phase 4
+- **Completed**: 21 / 23 (91.3%) (Phase 0: ✅ 5/5, Phase 1: ✅ 3/3, Phase 2: ✅ 4/4, Phase 3: ✅ 4/4, Phase 4: ✅ 4/4, Phase 5: 🔄 1/3)
+- **Next Up**: T022 (AGENTS + Spec sync) - Continue Phase 5
 - **Critical Path**: T001-T005 (Phase 0) → T006-T008 (Phase 1) → T009-T012 (Phase 2) → T013-T016 (Phase 3) → T017-T020 (Phase 4) → T021-T023 (Phase 5)
 - **Estimated Total**: 5 days (0.5 + 1 + 1.5 + 1 + 1 + 0.5 buffer)
 - **Phase 0 Complete**: Python training fixes unblocked execution
 - **Phase 1 Complete**: Build wiring, contract tests, move storage
 - **Phase 2 Complete**: Select leaf, expansion, backup, and pipeline connection all implemented and tested
 - **Phase 3 Complete**: PyInferenceCallback bridge + AlphaZeroMCTS refactored + SearchCoordinator shutdown fixed + Inference bridge implemented (4/4 complete)
+- **Phase 4 Complete**: Performance tests + Integration tests + C++ unit tests + Soak tests (4/4 complete)
+- **Phase 5 In Progress**: Docs refresh complete (T021), AGENTS sync + Evidence bundle remaining (T022-T023)
 - Update this checklist after each task completion to stay aligned with Spec-Driven Development.

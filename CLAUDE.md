@@ -24,9 +24,10 @@ This is a high-performance AlphaZero-style reinforcement learning engine targeti
 The codebase follows a hybrid approach with Python orchestration and C++/pybind11 for performance-critical operations:
 
 ### Core Components
+- **C++ Simulation Runner** (`cpp_extensions/mcts/simulation_runner.cpp`): Zero-GIL MCTS simulation pipeline (select → expand → backup) achieving 1,744+ sims/sec (7× Python baseline), ready for 30k+ with GPU batching
 - **MCTS Engine** (`cpp_extensions/mcts/`): C++17 implementation with atomic operations, virtual loss coordination, AVX2-vectorized PUCT selection (3.6-5.2x speedup)
 - **Game Adapters** (`cpp_extensions/games/`): Uniform interface for Gomoku/Chess/Go with in-place move application and feature extraction
-- **Python Bindings** (`cpp_extensions/games/python_bindings.cpp`): pybind11 module with numpy array compatibility, 250k+ tensor extractions/second
+- **Python Bindings** (`cpp_extensions/mcts/python_bindings.cpp`): pybind11 module exposing SimulationRunner, PyInferenceCallback bridge, and move storage API
 - **Neural Network** (`src/neural/`): ResNet with Squeeze-Excitation blocks (20 blocks, 256 channels), mixed precision fp16
 - **Training Pipeline** (`src/training/`): Experience replay buffer using memory-mapped files, AdamW optimizer with cosine scheduling
 
@@ -115,6 +116,12 @@ python tests/performance/test_benchmarks.py
 
 # Memory leak detection (1-hour soak test)
 python -m pytest tests/soak/ -v
+
+# C++ simulation runner tests
+python -m pytest tests/contract/test_simulation_runner_api.py -v        # API contracts
+python -m pytest tests/integration/test_cpp_vs_python_equivalence.py -v # Equivalence
+python -m pytest tests/integration/test_gil_release.py -v -s             # GIL release
+python -m pytest tests/performance/test_simulation_runner_performance.py -v # Throughput
 
 # Test Python bindings specifically
 python -m pytest tests/unit/test_python_bindings.py -v
@@ -332,14 +339,27 @@ Your redirects prevent over-engineering. When uncertain about implementation, st
 - **Value sign flipping**: Value MUST flip sign at each tree level during backup
 - **Dynamic batching**: Batch by count (≥32) OR timeout (≤3ms), whichever comes first
 
+### C++ Simulation Runner (Spec 002)
+- **Zero GIL Re-entry**: Full simulation (select → expand → backup) in C++ without GIL
+- **Move Storage in Tree**: `uint16_t* moves_` array (20MB for 10M nodes vs 1000MB Python dict)
+- **Thread-Safe Allocation**: Mutex-protected node pools with atomic counters (TSan clean)
+- **PyInferenceCallback Bridge**: Re-acquire GIL only for neural network inference
+- **Current Performance**: 1,744 sims/sec (7× Python baseline, 30k+ target with GPU)
+- **Integration**: `src/core/mcts.py` uses `mcts_py.SimulationRunner` as primary execution path
+
+See `docs/mcts_cpp_runner.md` for detailed architecture and `docs/performance/cpp_runner_results.md` for validation results.
+
 ### Performance Targets (from specs)
-| Metric | Target | Notes |
-|--------|--------|-------|
-| Simulations/sec | 30-40k | Including neural network inference |
-| GPU utilization | 80-92% | Realistic target, not 95%+ |
-| Average batch size | 32-64 | For RTX 3060 Ti optimization |
-| Tree memory | <1GB | ✅ 270MB achieved for 10M nodes |
-| Games/hour | 200-300 | Self-play generation rate |
+| Metric | Target | Achieved | Status |
+|--------|--------|----------|--------|
+| Simulations/sec | 30-40k | 1,744 (7× Python) | 🔄 GPU integration pending |
+| GPU utilization | 80-92% | - | 📋 Next phase |
+| Average batch size | 32-64 | - | 📋 Next phase |
+| Tree memory | <1GB | ✅ 270MB (10M nodes) | ✅ Complete |
+| Move storage | <50MB | ✅ 20MB (10M nodes) | ✅ Complete |
+| Node footprint | <64 bytes | ✅ 27 bytes | ✅ Complete |
+| Thread safety | TSan clean | ✅ 6 races fixed | ✅ Complete |
+| Games/hour | 200-300 | - | 📋 End-to-end validation |
 
 ## Common Pitfalls
 
@@ -364,3 +384,4 @@ Your redirects prevent over-engineering. When uncertain about implementation, st
 **PUCT**: Upper confidence bound formula: `Q + c_puct * P * sqrt(N_parent) / (1 + N_child)`
 **Dynamic Batching**: Batch by count OR timeout, whichever comes first
 **Mixed Precision**: fp16 computation with fp32 fallback for numerical stability
+- always never mind how much the given this task takes and ensure all the functionality is validated and ensure the test passes with no omission or skip. always think very hard and deeply. memorize this also in claude memory: do NOT consider time limit specified in documentation. you job is to FULLY achieve the goal with NO simplification.
