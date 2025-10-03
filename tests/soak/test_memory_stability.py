@@ -19,7 +19,13 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Dict, List, Any, Optional
 from concurrent.futures import Future
-from src.games.game_state import create_game_state
+
+try:
+    import alphazero_py
+    ALPHAZERO_PY_AVAILABLE = True
+except ImportError:
+    ALPHAZERO_PY_AVAILABLE = False
+
 from src.core.mcts import AlphaZeroMCTS
 from src.neural.cpu_inference import CPUInferenceWorker
 
@@ -513,20 +519,21 @@ class TestRealMemoryStability:
         return inference_fn
 
     @pytest.mark.slow
+    @pytest.mark.skipif(not ALPHAZERO_PY_AVAILABLE, reason="alphazero_py required for C++ runner")
     def test_short_memory_stability_gomoku(self):
-        """Short memory stability test with real Gomoku (5 minutes)."""
+        """Short memory stability test with real Gomoku (30 seconds)."""
         monitor = MemoryMonitor()
         monitor.start_monitoring(interval=5.0)  # Sample every 5 seconds
 
         try:
             # Run continuous searches for 30 seconds (reduced for development)
-            end_time = time.time() + 30  # 30 seconds instead of 5 minutes
+            end_time = time.time() + 30  # 30 seconds
             search_count = 0
 
             inference_fn = self.create_fast_inference_fn()
 
             while time.time() < end_time:
-                game = create_game_state('gomoku')
+                game = alphazero_py.GomokuState(board_size=15)
                 mcts = AlphaZeroMCTS(inference_fn)
 
                 # Run small searches continuously
@@ -562,6 +569,7 @@ class TestRealMemoryStability:
         # Memory growth should be reasonable (less than 200MB for test duration)
         assert stats['memory_growth_mb'] < 300, f"Too much memory growth: {stats['memory_growth_mb']:.1f} MB"
 
+    @pytest.mark.skipif(not ALPHAZERO_PY_AVAILABLE, reason="alphazero_py required for C++ runner")
     def test_multiple_games_memory_stability(self):
         """Test memory stability with multiple game types (2 minutes)."""
         monitor = MemoryMonitor()
@@ -572,16 +580,17 @@ class TestRealMemoryStability:
             search_count = 0
 
             inference_fn = self.create_fast_inference_fn()
-            game_types = ['gomoku', 'chess', ('go', {'board_size': 9})]
+            # Use alphazero_py game states directly
+            game_types = [
+                ('gomoku', lambda: alphazero_py.GomokuState(board_size=15)),
+                ('chess', lambda: alphazero_py.ChessState()),
+                ('go', lambda: alphazero_py.GoState(board_size=9))
+            ]
 
             while time.time() < end_time:
                 # Cycle through different game types
-                game_config = game_types[search_count % len(game_types)]
-
-                if isinstance(game_config, tuple):
-                    game = create_game_state(game_config[0], **game_config[1])
-                else:
-                    game = create_game_state(game_config)
+                game_name, game_factory = game_types[search_count % len(game_types)]
+                game = game_factory()
 
                 mcts = AlphaZeroMCTS(inference_fn)
                 mcts.search(game, simulations=3)
@@ -765,8 +774,12 @@ class TestRealMemoryStability:
 
     @pytest.mark.slow
     @pytest.mark.skipif(os.environ.get('CI'), reason="Skip long test in CI")
+    @pytest.mark.skipif(not ALPHAZERO_PY_AVAILABLE, reason="alphazero_py required for C++ runner")
     def test_1_hour_memory_stability(self):
-        """1-hour memory stability test (only run manually)."""
+        """1-hour memory stability test (only run manually).
+
+        Run with: python -m pytest tests/soak/test_memory_stability.py::TestRealMemoryStability::test_1_hour_memory_stability -v -s
+        """
         monitor = MemoryMonitor()
         monitor.start_monitoring(interval=30.0)  # Sample every 30 seconds
 
@@ -777,7 +790,7 @@ class TestRealMemoryStability:
             inference_fn = self.create_fast_inference_fn()
 
             while time.time() < end_time:
-                game = create_game_state('gomoku')
+                game = alphazero_py.GomokuState(board_size=15)
                 mcts = AlphaZeroMCTS(inference_fn)
                 mcts.search(game, simulations=10)
                 mcts.reset()  # Explicitly free tree memory
