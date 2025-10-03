@@ -377,11 +377,22 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
   - **Est**: 2h
   - **Completed**: 2025-10-03 by implement-next
 
-- [ ] **T022** AGENTS + Spec sync
-  - **Files**: `AGENTS.md`, `specs/002-cpp-simulation-runner/*`
-  - **Changes**: Update workflow guidance, verify spec/plan/tasks reflect shipped code, mark PYTHON_FIXES_REQUIRED.md complete
-  - **Acceptance**: Repository guidelines current, spec synchronized
+- [x] **T022** AGENTS + Spec sync
+  - **Files Updated**:
+    - ✅ `AGENTS.md` - Added "C++ Simulation Runner Workflow" section with architecture overview, usage patterns, testing commands, and documentation references
+    - ✅ `specs/002-cpp-simulation-runner/PYTHON_FIXES_REQUIRED.md` - Added comprehensive completion status section showing all 18 issues resolved
+    - ✅ `specs/002-cpp-simulation-runner/spec.md` - Updated status to reflect implementation complete (Phase 0-4), added results summary
+    - ✅ `specs/002-cpp-simulation-runner/plan.md` - Updated status to reflect actual completion (21/23 tasks, 91.3%)
+  - **Changes Made**:
+    - ✅ Added C++ runner workflow to AGENTS.md (architecture, game state usage, MCTS search, testing, thread safety)
+    - ✅ Marked all 18 PYTHON_FIXES_REQUIRED.md issues complete with task references (T001-T021)
+    - ✅ Added performance achievements table (7× Python baseline, memory efficiency, thread safety)
+    - ✅ Added test coverage summary (contract, integration, performance, soak, C++ unit tests)
+    - ✅ Added documentation references (mcts_cpp_runner.md, cpp_runner_results.md)
+    - ✅ Updated spec/plan with implementation results and current status
+  - **Acceptance**: ✅ Repository guidelines current with C++ runner workflow, ✅ spec/plan/tasks reflect shipped code, ✅ PYTHON_FIXES_REQUIRED.md marked complete
   - **Est**: 1h
+  - **Completed**: 2025-10-03 by implement-next
 
 - [ ] **T023** Evidence bundle
   - **Actions**:
@@ -396,8 +407,8 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
 
 ## Tracking
 - **Total Tasks**: 23 (Phase 0: 5, Phase 1: 3, Phase 2: 4, Phase 3: 4, Phase 4: 4, Phase 5: 3)
-- **Completed**: 21 / 23 (91.3%) (Phase 0: ✅ 5/5, Phase 1: ✅ 3/3, Phase 2: ✅ 4/4, Phase 3: ✅ 4/4, Phase 4: ✅ 4/4, Phase 5: 🔄 1/3)
-- **Next Up**: T022 (AGENTS + Spec sync) - Continue Phase 5
+- **Completed**: 22 / 23 (95.7%) (Phase 0: ✅ 5/5, Phase 1: ✅ 3/3, Phase 2: ✅ 4/4, Phase 3: ✅ 4/4, Phase 4: ✅ 4/4, Phase 5: 🔄 2/3)
+- **Next Up**: T023 (Evidence bundle) - Final Phase 5 task
 - **Critical Path**: T001-T005 (Phase 0) → T006-T008 (Phase 1) → T009-T012 (Phase 2) → T013-T016 (Phase 3) → T017-T020 (Phase 4) → T021-T023 (Phase 5)
 - **Estimated Total**: 5 days (0.5 + 1 + 1.5 + 1 + 1 + 0.5 buffer)
 - **Phase 0 Complete**: Python training fixes unblocked execution
@@ -405,5 +416,5 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
 - **Phase 2 Complete**: Select leaf, expansion, backup, and pipeline connection all implemented and tested
 - **Phase 3 Complete**: PyInferenceCallback bridge + AlphaZeroMCTS refactored + SearchCoordinator shutdown fixed + Inference bridge implemented (4/4 complete)
 - **Phase 4 Complete**: Performance tests + Integration tests + C++ unit tests + Soak tests (4/4 complete)
-- **Phase 5 In Progress**: Docs refresh complete (T021), AGENTS sync + Evidence bundle remaining (T022-T023)
+- **Phase 5 Nearly Complete**: Docs refresh (T021) + AGENTS sync (T022) complete, Evidence bundle (T023) remaining
 - Update this checklist after each task completion to stay aligned with Spec-Driven Development.

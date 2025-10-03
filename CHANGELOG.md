@@ -737,8 +737,37 @@ All 3 Phase 1 tasks (T006-T008) completed successfully:
   - ✅ GIL release: 56.6% Python time (baseline, target <10%)
 - **Status**: ✅ Complete - Documentation comprehensively describes architecture, integration, and validation
 
-**Phase 5 Progress**: 1/3 tasks done (Docs refresh complete)
-**Next Tasks**: T022 (AGENTS + Spec sync), T023 (Evidence bundle)
+**Phase 5 Progress**: 2/3 tasks done (Docs refresh + AGENTS sync complete)
+
+#### T022: AGENTS + Spec Synchronization - Repository Guidelines Update (2025-10-03)
+- **Updated**: Repository documentation to reflect C++ runner implementation
+- **Files Updated**:
+  - ✅ `AGENTS.md` - Added comprehensive "C++ Simulation Runner Workflow" section
+    - Architecture overview (C++ pipeline, move storage, thread safety, inference bridge)
+    - Working with C++ runner (game state usage, MCTS search, testing, sanitizers)
+    - Documentation references (mcts_cpp_runner.md, cpp_runner_results.md, spec)
+  - ✅ `specs/002-cpp-simulation-runner/PYTHON_FIXES_REQUIRED.md` - Marked complete
+    - Added completion status section showing all 18 issues resolved (T001-T021)
+    - Performance achievements table (1,744 sims/sec, 7× Python baseline)
+    - Test coverage summary (contract, integration, performance, soak, C++ unit)
+    - Documentation references with completion checkmarks
+  - ✅ `specs/002-cpp-simulation-runner/spec.md` - Updated to reflect implementation status
+    - Changed status from "READY FOR IMPLEMENTATION" to "IMPLEMENTATION COMPLETE (Phase 0-4)"
+    - Added implementation results section (7× improvement, memory efficiency, thread safety)
+    - Executive summary now includes original problem + implementation results
+  - ✅ `specs/002-cpp-simulation-runner/plan.md` - Updated with actual completion
+    - Status updated to "IMPLEMENTATION COMPLETE (Phase 0-4), PHASE 5 IN PROGRESS"
+    - Added completion metrics (21/23 tasks, 91.3%)
+    - Added results summary (1,744 sims/sec, GPU integration next)
+- **Workflow Guidance Added**:
+  - ✅ Game state compatibility (use alphazero_py states, not GameStateWrapper)
+  - ✅ MCTS search pattern (automatic C++ runner usage)
+  - ✅ Testing commands (contract, integration, performance)
+  - ✅ Thread safety validation (TSan with clang++-18)
+- **Status**: ✅ Complete - All repository guidelines synchronized with shipped code
+
+**Phase 5 Progress**: 2/3 tasks done (Docs refresh + AGENTS sync complete)
+**Next Task**: T023 (Evidence bundle - profiling charts, comparison graphs)
 
 ### Spec 002: C++ MCTS Simulation Runner - Documentation Complete (2025-10-02)
 - **SPEC DOCUMENTATION**: Complete specification and implementation plan for C++ simulation runner
