@@ -569,6 +569,91 @@ All 3 Phase 1 tasks (T006-T008) completed successfully:
 **Phase 4 Progress**: Performance tests + integration tests complete (2/4 tasks)
 **Next Task**: T019 (C++ unit tests expansion) - Add concurrent tests with ThreadSanitizer
 
+#### T019: C++ Unit Tests Expansion - Concurrent Move Storage Tests + Thread Safety Fixes (2025-10-03)
+- **Created**: Comprehensive concurrent test suite for move storage thread safety
+- **File**: `tests/unit/test_move_storage_concurrent.cpp` (NEW)
+- **Purpose**: Validate thread safety of move storage under concurrent access patterns
+- **Test Suite** (6 comprehensive concurrent tests):
+  1. **`test_concurrent_reads()`** - ✅ PASS
+     - Multiple threads reading same move index simultaneously
+     - 8 threads × 10,000 reads = 80,000 total concurrent read operations
+     - Validates: Concurrent reads are always safe (no data races)
+  2. **`test_concurrent_writes_different_nodes()`** - ✅ PASS
+     - Threads writing to different node indices in parallel
+     - 100 nodes partitioned across 8 threads
+     - Validates: No shared memory conflicts when writing to different indices
+  3. **`test_move_storage_with_virtual_loss()`** - ✅ PASS
+     - Concurrent move reads while other threads apply/remove virtual loss
+     - Tests interaction between move storage and atomic VL operations
+     - Validates: Virtual loss atomics don't interfere with move storage
+  4. **`test_concurrent_allocation_with_move_access()`** - ✅ PASS
+     - Allocate nodes, set moves, verify, deallocate - all concurrent
+     - 200 successful allocation/deallocation cycles across 4 threads
+     - Validates: Move storage works correctly with node lifecycle management
+  5. **`test_stress_mixed_operations()`** - ✅ PASS
+     - Realistic MCTS workload simulation
+     - 1.4 million total operations (reads, visit count access)
+     - Validates: Thread safety under high-concurrency stress
+  6. **`test_boundary_indices()`** - ✅ PASS
+     - Concurrent access to edge case node positions
+     - Tests: first node, near-start, middle, near-end positions
+     - Validates: No issues at memory boundaries
+- **ThreadSanitizer Detection & Fixes**:
+  - ✅ **Ubuntu 24.04 TSan Setup**: Requires `clang++-18` due to higher ASLR entropy (g++ TSan fails)
+  - ✅ **REAL DATA RACES DETECTED by ThreadSanitizer**:
+    1. **`allocate_node()` (tree.cpp:316-340)**: Race on `next_free_index_`, `node_count_`, `free_nodes_`
+    2. **`allocate_nodes()` (tree.cpp:342-366)**: Race on `next_free_index_`, `node_count_`
+    3. **`deallocate_node()` (tree.cpp:368-378)**: Race on `node_count_`, `free_nodes_`
+    4. **`deallocate_nodes()` (tree.cpp:380-403)**: Race on `node_count_`, `free_nodes_`
+    5. **`is_valid_index()` (tree.hpp:375)**: Racy read of `next_free_index_`
+    6. **`get_available_nodes()` (tree.hpp:211)**: Racy read of `next_free_index_` and `free_nodes_`
+  - ✅ **FIXES IMPLEMENTED**:
+    - **Added `std::mutex allocation_mutex_`** (tree.hpp:444) to protect all allocation/deallocation
+    - **Made `next_free_index_` atomic** (tree.hpp:442): `std::atomic<std::size_t>`
+    - **Made `node_count_` atomic** (tree.hpp:435): `std::atomic<std::size_t>`
+    - **Protected all allocation functions** with `std::lock_guard<std::mutex>`:
+      - `allocate_node()`: Full function protected
+      - `allocate_nodes()`: Allocation logic protected
+      - `deallocate_node()`: Full function protected
+      - `deallocate_nodes()`: Deallocation logic protected
+    - **Updated all atomic accesses** (tree.cpp) to use:
+      - `.load(std::memory_order_relaxed)` for reads
+      - `.store(val, std::memory_order_relaxed)` for writes
+      - `.fetch_add(n, std::memory_order_relaxed)` for increments
+      - `.fetch_sub(n, std::memory_order_relaxed)` for decrements
+    - Memory ordering: `relaxed` used because mutex provides happens-before guarantees
+- **Build Commands**:
+  ```bash
+  # Standard build
+  g++ -std=c++17 -O2 -pthread -I./cpp_extensions -o test_move_storage_concurrent \
+      tests/unit/test_move_storage_concurrent.cpp cpp_extensions/mcts/tree.cpp \
+      cpp_extensions/mcts/virtual_loss.cpp
+
+  # ThreadSanitizer build (Ubuntu 24.04+ with clang++-18)
+  clang++-18 -std=c++17 -O1 -g -pthread -fsanitize=thread -I./cpp_extensions \
+      -o test_move_storage_concurrent_tsan tests/unit/test_move_storage_concurrent.cpp \
+      cpp_extensions/mcts/tree.cpp cpp_extensions/mcts/virtual_loss.cpp
+
+  # ThreadSanitizer build (Ubuntu 22.04 and earlier)
+  g++ -std=c++17 -O1 -g -pthread -fsanitize=thread -I./cpp_extensions \
+      -o test_move_storage_concurrent_tsan tests/unit/test_move_storage_concurrent.cpp \
+      cpp_extensions/mcts/tree.cpp cpp_extensions/mcts/virtual_loss.cpp
+  ```
+- **Test Results**:
+  - ✅ **ALL 6/6 TESTS PASS** with standard build
+  - ✅ **TSan CLEAN**: NO data races detected after fixes (clang++-18 with -fsanitize=thread)
+  - ✅ **Integration Tests PASS**: GIL release (3/3), C++ equivalence (8/8)
+  - ✅ **Performance Tests PASS**: 7/7 runnable tests (1 pre-existing test API issue unrelated to fixes)
+- **Files Modified**:
+  - `tests/unit/test_move_storage_concurrent.cpp` (411 lines, NEW)
+  - `cpp_extensions/mcts/tree.hpp` (added includes, atomic types, mutex)
+  - `cpp_extensions/mcts/tree.cpp` (protected allocation functions, atomic operations)
+- **Acceptance Criteria**: ✅ Concurrent tests created, ✅ TSan used and clean, ✅ data races fixed
+- **Status**: ✅ Complete - All data races fixed, all tests pass, ThreadSanitizer clean
+
+**Phase 4 Progress**: Performance + integration + C++ unit tests complete (3/4 tasks)
+**Next Task**: T020 (Soak & sanitizer tests) - Extended stability validation
+
 **Next Phase**: Phase 4 - Testing & Performance (T017-T020)
 
 ### Spec 002: C++ MCTS Simulation Runner - Documentation Complete (2025-10-02)

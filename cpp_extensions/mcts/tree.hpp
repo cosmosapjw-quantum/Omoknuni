@@ -20,6 +20,8 @@
 #include <vector>
 #include <cassert>
 #include <cstring>
+#include <mutex>
+#include <atomic>
 #include <immintrin.h>  // For SIMD intrinsics
 
 namespace mcts {
@@ -429,14 +431,20 @@ private:
     std::size_t max_nodes_;
 
     // Current number of nodes in tree (actively used nodes)
-    std::size_t node_count_;
+    // Atomic to allow lock-free reads from get_node_count()
+    std::atomic<std::size_t> node_count_;
 
     // Free list for efficient node reuse
     std::vector<NodeIndex> free_nodes_;
 
     // Index of the next contiguous node to allocate (when free list is empty)
     // This tracks the high-water mark of allocated indices
-    std::size_t next_free_index_;
+    // Atomic to allow lock-free reads from is_valid_index() and get_available_nodes()
+    std::atomic<std::size_t> next_free_index_;
+
+    // Mutex to protect allocation/deallocation operations
+    // Needed for thread-safe concurrent node allocation in MCTS search
+    mutable std::mutex allocation_mutex_;
 
     // Structure-of-Arrays: separate aligned arrays for each node attribute
     // All arrays are 64-byte aligned for SIMD operations
