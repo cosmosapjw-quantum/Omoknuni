@@ -140,7 +140,7 @@ public:
         backup_value(path, leaf_value);
     }
 
-private:
+protected:
     // References to shared MCTS components
     MCTSTree& tree_;
     PUCTSelector& selector_;

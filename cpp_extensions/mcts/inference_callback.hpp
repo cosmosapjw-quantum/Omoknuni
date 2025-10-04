@@ -132,4 +132,95 @@ private:
     py::object python_fn_;  ///< Python callable for inference
 };
 
+/**
+ * @brief Python batch inference callback implementation
+ *
+ * Wraps a Python callable for batched inference. Reduces GIL crossings
+ * from N (one per simulation) to 1 (one per batch).
+ *
+ * The Python callable should have signature:
+ *   def batch_inference(states: list[IGameState]) -> list[tuple[list[float], float]]:
+ *       # Batch all states through neural network
+ *       return [(policy1, value1), (policy2, value2), ...]
+ */
+class PyBatchInferenceCallback : public BatchInferenceCallback {
+public:
+    explicit PyBatchInferenceCallback(py::object python_fn)
+        : python_fn_(python_fn) {
+        if (!py::hasattr(python_fn, "__call__")) {
+            throw std::invalid_argument(
+                "PyBatchInferenceCallback requires a callable Python object"
+            );
+        }
+    }
+
+    std::vector<std::pair<std::vector<float>, float>>
+    batch_inference(const std::vector<const IGameState*>& states) override {
+        try {
+            // Convert C++ state pointers to Python list
+            py::list py_states;
+            for (const auto* state : states) {
+                // Cast away const for Python (won't be modified)
+                IGameState* state_ptr = const_cast<IGameState*>(state);
+                py_states.append(py::cast(state_ptr, py::return_value_policy::reference));
+            }
+
+            // Call Python batch inference (GIL acquired automatically)
+            py::object result = python_fn_(py_states);
+
+            // Extract results
+            if (!py::isinstance<py::list>(result)) {
+                throw std::runtime_error(
+                    "Batch inference must return list of (policy, value) tuples"
+                );
+            }
+
+            py::list result_list = result.cast<py::list>();
+            if (py::len(result_list) != states.size()) {
+                throw std::runtime_error(
+                    "Batch inference returned wrong number of results"
+                );
+            }
+
+            std::vector<std::pair<std::vector<float>, float>> results;
+            results.reserve(states.size());
+
+            for (size_t i = 0; i < py::len(result_list); ++i) {
+                py::tuple item = result_list[i].cast<py::tuple>();
+                if (py::len(item) != 2) {
+                    throw std::runtime_error(
+                        "Each result must be (policy, value) tuple"
+                    );
+                }
+
+                // Extract policy
+                py::object policy_obj = item[0];
+                std::vector<float> policy;
+                if (py::isinstance<py::list>(policy_obj)) {
+                    policy = policy_obj.cast<std::vector<float>>();
+                } else if (py::hasattr(policy_obj, "tolist")) {
+                    policy = policy_obj.attr("tolist")().cast<std::vector<float>>();
+                } else {
+                    throw std::runtime_error("Policy must be list or numpy array");
+                }
+
+                // Extract value
+                float value = item[1].cast<float>();
+
+                results.emplace_back(policy, value);
+            }
+
+            return results;
+
+        } catch (const py::error_already_set& e) {
+            throw std::runtime_error(
+                std::string("Python batch inference failed: ") + e.what()
+            );
+        }
+    }
+
+private:
+    py::object python_fn_;
+};
+
 } // namespace mcts
