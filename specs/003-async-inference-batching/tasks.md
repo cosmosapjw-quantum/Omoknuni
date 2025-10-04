@@ -268,7 +268,7 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
   - **Est**: 1h
   - **Completed**: 2025-10-04
 
-- [ ] **T014** AlphaZeroMCTS integration
+- [x] **T014** AlphaZeroMCTS integration
   - **File**: `src/core/mcts.py`
   - **Changes**:
     - Add async mode flag: `use_async_inference: bool = True`
@@ -277,9 +277,12 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
     - Use `ContinuousSimulationRunner` instead of `SimulationRunner`
     - Stop coordinator after search complete
     - Maintain backward compatibility with sync mode for testing
+    - Created `_create_batch_inference_callback()` for coordinator
   - **Test File**: `tests/integration/test_mcts_async_mode.py` (8 tests)
   - **Acceptance**: ✅ Async mode works, backward compatible with sync mode
+  - **Test Results**: 8/8 tests pass (initialization, sync compatibility, async/sync completion, policy validity, coordinator cleanup, performance, batch settings)
   - **Est**: 2h
+  - **Completed**: 2025-10-04
 
 - [ ] **T015** GPUInferenceWorker batching
   - **File**: `src/neural/inference_worker.py`
@@ -481,11 +484,11 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
 
 ## Tracking
 - **Total Tasks**: 29 (Phase 1: 5, Phase 2: 4, Phase 3: 3, Phase 4: 4, Phase 5: 4, Phase 6: 4, Phase 7: 5)
-- **Completed**: 11 / 29 (37.9%)
+- **Completed**: 12 / 29 (41.4%)
 - **Phase 1**: ✅ 4/5 Complete - AsyncInferenceQueue (C++) - **T001-T004 complete, T005 TSan pending**
 - **Phase 2**: ✅ 4/4 Complete - ContinuousSimulationRunner (C++) - **T006-T009 complete**
 - **Phase 3**: ✅ 2/3 Complete - BatchInferenceCoordinator (C++) - **T010-T011 complete, T012 GIL profiling pending**
-- **Phase 4**: ✅ 1/4 Complete - Python integration - **T013 complete**
+- **Phase 4**: ✅ 2/4 Complete - Python integration - **T013-T014 complete**
 - **Phase 5**: 0/4 Complete - Performance optimization
 - **Phase 6**: 0/4 Complete - Correctness validation
 - **Phase 7**: 0/5 Complete - Documentation

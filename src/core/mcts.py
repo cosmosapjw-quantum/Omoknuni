@@ -90,7 +90,10 @@ class AlphaZeroMCTS(MCTSEngine):
                  virtual_loss_magnitude: float = 1.0,
                  enable_virtual_loss: bool = True,
                  enable_value_clipping: bool = True,
-                 num_threads: int = 8):
+                 num_threads: int = 8,
+                 use_async_inference: bool = True,
+                 async_batch_size: int = 32,
+                 async_timeout_ms: float = 2.0):
         """Initialize high-performance MCTS engine.
 
         Args:
@@ -102,6 +105,10 @@ class AlphaZeroMCTS(MCTSEngine):
             virtual_loss_magnitude: Virtual loss penalty for thread coordination
             enable_virtual_loss: Enable virtual loss for thread safety
             enable_value_clipping: Clip values to [-1, 1] range
+            num_threads: Number of parallel simulation threads
+            use_async_inference: Enable async batched inference (30k+ sims/sec)
+            async_batch_size: Minimum batch size for async inference (32 optimal)
+            async_timeout_ms: Maximum batch collection timeout in ms (2.0 optimal)
         """
         self.inference_fn = inference_fn
         self.dirichlet_alpha = dirichlet_alpha
@@ -127,13 +134,36 @@ class AlphaZeroMCTS(MCTSEngine):
         backup_config = mcts_py.BackupConfig(enable_value_clipping, True, -1.0, 1.0)
         self.backup_manager = mcts_py.create_backup_manager(self.tree, backup_config)
 
-        # Initialize C++ SimulationRunner for high-performance simulations
-        self.simulation_runner = mcts_py.SimulationRunner(
-            self.tree,
-            self.selector,
-            self.backup_manager,
-            self.virtual_loss_manager
-        )
+        # Async inference configuration
+        self.use_async_inference = use_async_inference
+        self.async_batch_size = async_batch_size
+        self.async_timeout_ms = async_timeout_ms
+
+        # Initialize async components if enabled
+        if self.use_async_inference:
+            # Create AsyncInferenceQueue for non-blocking request/result exchange
+            self.async_queue = mcts_py.AsyncInferenceQueue()
+
+            # Create ContinuousSimulationRunner for async MCTS (30k+ sims/sec)
+            self.simulation_runner = mcts_py.ContinuousSimulationRunner(
+                self.tree,
+                self.selector,
+                self.backup_manager,
+                self.virtual_loss_manager
+            )
+
+            # Coordinator will be created per-search
+            self.coordinator = None
+        else:
+            # Use synchronous SimulationRunner for backward compatibility
+            self.simulation_runner = mcts_py.SimulationRunner(
+                self.tree,
+                self.selector,
+                self.backup_manager,
+                self.virtual_loss_manager
+            )
+            self.async_queue = None
+            self.coordinator = None
 
         # State management
         self.root_state = None
@@ -147,12 +177,15 @@ class AlphaZeroMCTS(MCTSEngine):
         # Parallel search configuration
         self.num_threads = num_threads
 
-        self.logger.info(f"AlphaZero MCTS initialized with C++ SimulationRunner")
+        mode_str = "ContinuousSimulationRunner (async)" if self.use_async_inference else "SimulationRunner (sync)"
+        self.logger.info(f"AlphaZero MCTS initialized with C++ {mode_str}")
         self.logger.info(f"  Tree capacity: {max_tree_size:,} nodes (~{max_tree_size * 32 // 1024 // 1024}MB)")
         self.logger.info(f"  AVX2 support: {mcts_py.PUCTSelector.is_avx2_supported()}")
         self.logger.info(f"  PUCT constant: {c_puct}")
         self.logger.info(f"  Virtual loss: {virtual_loss_magnitude} (enabled: {enable_virtual_loss})")
         self.logger.info(f"  Parallel threads: {num_threads}")
+        if self.use_async_inference:
+            self.logger.info(f"  Async batching: batch_size={async_batch_size}, timeout={async_timeout_ms}ms")
 
     def search(self, root_state: IGameState, simulations: int, add_noise: bool = False) -> Dict[int, float]:
         """Run high-performance MCTS search with C++ SimulationRunner.
@@ -176,22 +209,44 @@ class AlphaZeroMCTS(MCTSEngine):
         # NOTE: Do NOT pre-expand root - let C++ SimulationRunner handle all expansion
         # The C++ runner will expand the root on the first simulation
 
-        # Create Python inference callback for C++ runner
-        callback = mcts_py.PyInferenceCallback(self._create_inference_callback())
-
-        # Run MCTS simulations using C++ SimulationRunner (30k+ sims/sec)
         successful_simulations = 0
         failed_simulations = 0
-        for _ in range(simulations):
-            if self.tree.get_node_count() >= self.tree.get_max_nodes():
-                break
-            if self.simulation_runner.run_simulation(root_state, self.root_index, callback):
-                successful_simulations += 1
-            else:
-                failed_simulations += 1
 
-        if failed_simulations > 0:
-            self.logger.warning(f"Failed simulations: {failed_simulations}/{simulations}")
+        if self.use_async_inference:
+            # Async mode: Use ContinuousSimulationRunner with BatchInferenceCoordinator
+            # Create batch inference callback
+            batch_callback = mcts_py.PyBatchInferenceCallback(self._create_batch_inference_callback())
+
+            # Create and start coordinator
+            self.coordinator = mcts_py.BatchInferenceCoordinator()
+            self.coordinator.start(self.async_queue, batch_callback,
+                                   self.async_batch_size, self.async_timeout_ms)
+
+            try:
+                # Run continuous simulations (non-blocking, 30k+ sims/sec)
+                successful_simulations = self.simulation_runner.run_continuous(
+                    root_state, self.root_index, self.async_queue, simulations
+                )
+            finally:
+                # Always stop coordinator
+                self.coordinator.stop()
+                self.coordinator = None
+
+        else:
+            # Sync mode: Use SimulationRunner (backward compatibility)
+            callback = mcts_py.PyInferenceCallback(self._create_inference_callback())
+
+            # Run MCTS simulations using synchronous loop
+            for _ in range(simulations):
+                if self.tree.get_node_count() >= self.tree.get_max_nodes():
+                    break
+                if self.simulation_runner.run_simulation(root_state, self.root_index, callback):
+                    successful_simulations += 1
+                else:
+                    failed_simulations += 1
+
+            if failed_simulations > 0:
+                self.logger.warning(f"Failed simulations: {failed_simulations}/{simulations}")
 
         # Collect visit counts for policy using tree.get_move()
         visit_counts = {}
@@ -485,7 +540,7 @@ class AlphaZeroMCTS(MCTSEngine):
                 self.logger.error(f"Inference callback failed: {e}")
                 # Fallback to uniform policy
                 legal_moves = game_state.get_legal_moves()
-                action_space = game_state.action_space_size
+                action_space = game_state.get_action_space_size()
                 policy = [0.0] * action_space
                 if len(legal_moves) > 0:
                     prob = 1.0 / len(legal_moves)
@@ -494,6 +549,54 @@ class AlphaZeroMCTS(MCTSEngine):
                 return (policy, 0.0)
 
         return inference_callback
+
+    def _create_batch_inference_callback(self) -> Callable:
+        """Create batch inference callback for BatchInferenceCoordinator.
+
+        Returns:
+            Callable that takes list of IGameState and returns list of (policy, value) tuples
+        """
+        def batch_inference_callback(game_states: List[IGameState]) -> List[Tuple[List[float], float]]:
+            """Batch inference for async coordinator."""
+            try:
+                # Call inference function for each state (they will be batched by GPUInferenceWorker)
+                futures = [self.inference_fn(state) for state in game_states]
+
+                # Collect results
+                results = []
+                for future in futures:
+                    policy, value = future.result(timeout=1.0)
+
+                    # Extract policy if batched
+                    if policy.ndim > 1:
+                        policy = policy[0]
+
+                    # Convert to Python list for C++ compatibility
+                    if hasattr(policy, 'tolist'):
+                        policy = policy.tolist()
+                    else:
+                        policy = list(policy)
+
+                    results.append((policy, float(value)))
+
+                return results
+
+            except Exception as e:
+                self.logger.error(f"Batch inference callback failed: {e}")
+                # Fallback to uniform policy for all states
+                results = []
+                for state in game_states:
+                    legal_moves = state.get_legal_moves()
+                    action_space = state.get_action_space_size()
+                    policy = [0.0] * action_space
+                    if len(legal_moves) > 0:
+                        prob = 1.0 / len(legal_moves)
+                        for move in legal_moves:
+                            policy[move] = prob
+                    results.append((policy, 0.0))
+                return results
+
+        return batch_inference_callback
 
 
 # Backward compatibility
