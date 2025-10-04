@@ -21,7 +21,7 @@ from typing import List, Dict, Any, Optional, Tuple, Callable
 import numpy as np
 import logging
 import time
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Lock
 
 try:
@@ -138,19 +138,24 @@ class AlphaZeroMCTS(MCTSEngine):
         self.use_async_inference = use_async_inference
         self.async_batch_size = async_batch_size
         self.async_timeout_ms = async_timeout_ms
+        self.num_threads = num_threads  # Number of parallel simulation threads
 
         # Initialize async components if enabled
         if self.use_async_inference:
             # Create AsyncInferenceQueue for non-blocking request/result exchange
             self.async_queue = mcts_py.AsyncInferenceQueue()
 
-            # Create ContinuousSimulationRunner for async MCTS (30k+ sims/sec)
-            self.simulation_runner = mcts_py.ContinuousSimulationRunner(
-                self.tree,
-                self.selector,
-                self.backup_manager,
-                self.virtual_loss_manager
-            )
+            # Create one ContinuousSimulationRunner per thread
+            # Each runner has its own state but shares thread-safe tree/selector/backup/vl
+            self.simulation_runners = [
+                mcts_py.ContinuousSimulationRunner(
+                    self.tree,
+                    self.selector,
+                    self.backup_manager,
+                    self.virtual_loss_manager
+                )
+                for _ in range(self.num_threads)
+            ]
 
             # Coordinator will be created per-search
             self.coordinator = None
@@ -223,10 +228,38 @@ class AlphaZeroMCTS(MCTSEngine):
                                    self.async_batch_size, self.async_timeout_ms)
 
             try:
-                # Run continuous simulations (non-blocking, 30k+ sims/sec)
-                successful_simulations = self.simulation_runner.run_continuous(
-                    root_state, self.root_index, self.async_queue, simulations
-                )
+                # Multi-threaded search: Distribute simulations across threads
+                if self.num_threads > 1:
+                    # Distribute simulations evenly across threads
+                    sims_per_thread = simulations // self.num_threads
+                    remainder = simulations % self.num_threads
+
+                    def worker_thread(thread_id: int) -> int:
+                        """Worker thread running continuous simulations."""
+                        # First thread gets remainder simulations
+                        thread_sims = sims_per_thread + (remainder if thread_id == 0 else 0)
+
+                        # Each thread uses its own runner (thread-safe)
+                        runner = self.simulation_runners[thread_id]
+                        completed = runner.run_continuous(
+                            root_state, self.root_index, self.async_queue, thread_sims
+                        )
+                        return completed
+
+                    # Run threads in parallel
+                    with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
+                        futures = [executor.submit(worker_thread, i) for i in range(self.num_threads)]
+                        thread_results = [f.result() for f in futures]
+
+                    successful_simulations = sum(thread_results)
+
+                    self.logger.info(f"Multi-threaded search: {self.num_threads} threads, "
+                                     f"{successful_simulations}/{simulations} sims completed")
+                else:
+                    # Single-threaded mode - use first runner
+                    successful_simulations = self.simulation_runners[0].run_continuous(
+                        root_state, self.root_index, self.async_queue, simulations
+                    )
             finally:
                 # Always stop coordinator
                 self.coordinator.stop()
