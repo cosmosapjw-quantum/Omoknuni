@@ -37,10 +37,10 @@ add_library(mcts_core STATIC
     backup.hpp
     simulation_runner.cpp
     simulation_runner.hpp
-    simulation_runner_batch.cpp
-    simulation_runner_batch.hpp
     async_inference_queue.cpp
     async_inference_queue.hpp
+    continuous_simulation_runner.cpp
+    continuous_simulation_runner.hpp
 )
 
 # Set compile features and flags

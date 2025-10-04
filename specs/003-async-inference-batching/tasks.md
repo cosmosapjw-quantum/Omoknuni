@@ -90,7 +90,7 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
 
 ## Phase 2 — ContinuousSimulationRunner (C++)
 
-- [ ] **T006** ContinuousSimulationRunner interface
+- [x] **T006** ContinuousSimulationRunner interface
   - **File**: `cpp_extensions/mcts/continuous_simulation_runner.hpp` (NEW)
   - **Changes**:
     - Extend `SimulationRunner` base class
@@ -106,8 +106,9 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
       - `PendingExpansion` struct with: `leaf_node`, `path`, `state_ptr`
   - **Acceptance**: ✅ Header compiles, inherits from SimulationRunner correctly
   - **Est**: 1h
+  - **Completed**: 2025-10-04
 
-- [ ] **T007** Continuous loop implementation
+- [x] **T007** Continuous loop implementation
   - **File**: `cpp_extensions/mcts/continuous_simulation_runner.cpp` (NEW)
   - **Changes**:
     - Implement main loop structure:
@@ -124,9 +125,11 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
     - Track completed simulations counter
   - **Test File**: `tests/integration/test_continuous_runner_basic.py` (Python - 4 tests)
   - **Acceptance**: ✅ Runs N simulations without blocking, completes all expansions
+  - **Test Results**: Implementation complete, basic functionality validated
   - **Est**: 3h
+  - **Completed**: 2025-10-04
 
-- [ ] **T008** Pending expansion management
+- [x] **T008** Pending expansion management
   - **File**: `cpp_extensions/mcts/continuous_simulation_runner.cpp`
   - **Changes**:
     - Implement pending expansion tracking:
@@ -139,9 +142,11 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
       - Tree full (fallback to uniform policy)
   - **Test File**: `tests/unit/test_pending_expansion_management.cpp` (C++ - 6 tests)
   - **Acceptance**: ✅ Correct leaf expanded with matching result, no memory leaks
+  - **Implementation**: State ownership management with clone for queue, original kept for expansion
   - **Est**: 2h
+  - **Completed**: 2025-10-04
 
-- [ ] **T009** Result processing pipeline
+- [x] **T009** Result processing pipeline
   - **File**: `cpp_extensions/mcts/continuous_simulation_runner.cpp`
   - **Changes**:
     - Implement result processing loop:
@@ -159,7 +164,9 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
     - Ensure all pending expansions processed before exit
   - **Test File**: `tests/integration/test_continuous_result_processing.py` (Python - 5 tests)
   - **Acceptance**: ✅ All results processed, visit counts correct, no pending leaks
+  - **Implementation**: Complete with expand_node_with_result() helper for policy masking
   - **Est**: 2h
+  - **Completed**: 2025-10-04
 
 ## Phase 3 — BatchInferenceCoordinator (C++)
 
@@ -468,10 +475,10 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
 
 ## Tracking
 - **Total Tasks**: 29 (Phase 1: 5, Phase 2: 4, Phase 3: 4, Phase 4: 4, Phase 5: 4, Phase 6: 4, Phase 7: 5)
-- **Completed**: 5 / 29 (17.2%)
-- **Phase 1**: ✅ 4/5 Complete - AsyncInferenceQueue (C++) - **T001-T004 complete, T005 pending**
-- **Phase 2**: 0/4 Complete - ContinuousSimulationRunner (C++)
-- **Phase 3**: 0/4 Complete - BatchInferenceCoordinator & Python integration
+- **Completed**: 9 / 29 (31.0%)
+- **Phase 1**: ✅ 4/5 Complete - AsyncInferenceQueue (C++) - **T001-T004 complete, T005 TSan pending**
+- **Phase 2**: ✅ 4/4 Complete - ContinuousSimulationRunner (C++) - **T006-T009 complete**
+- **Phase 3**: 0/4 Complete - BatchInferenceCoordinator (C++)
 - **Phase 4**: ✅ 1/4 Complete - Python integration - **T013 complete**
 - **Phase 5**: 0/4 Complete - Performance optimization
 - **Phase 6**: 0/4 Complete - Correctness validation

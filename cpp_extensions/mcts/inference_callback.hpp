@@ -133,6 +133,26 @@ private:
 };
 
 /**
+ * @brief Abstract batch inference callback interface
+ *
+ * Allows C++ simulation runner to request batched neural network inference from Python.
+ * Batching reduces GIL crossings from N (per simulation) to 1 (per batch).
+ */
+class BatchInferenceCallback {
+public:
+    virtual ~BatchInferenceCallback() = default;
+
+    /**
+     * @brief Request neural network inference for a batch of game states
+     *
+     * @param states Vector of game state pointers to evaluate
+     * @return Vector of (policy vector, value scalar) pairs
+     */
+    virtual std::vector<std::pair<std::vector<float>, float>>
+    batch_inference(const std::vector<const IGameState*>& states) = 0;
+};
+
+/**
  * @brief Python batch inference callback implementation
  *
  * Wraps a Python callable for batched inference. Reduces GIL crossings

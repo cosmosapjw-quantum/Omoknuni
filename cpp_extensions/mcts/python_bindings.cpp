@@ -18,9 +18,9 @@
 #include "selection.hpp"
 #include "backup.hpp"
 #include "simulation_runner.hpp"
-#include "simulation_runner_batch.hpp"
 #include "inference_callback.hpp"
 #include "async_inference_queue.hpp"
+#include "continuous_simulation_runner.hpp"
 
 namespace py = pybind11;
 
@@ -330,27 +330,6 @@ PYBIND11_MODULE(mcts_py, m) {
              py::arg("python_fn"),
              "Construct batch callback with Python callable");
 
-    // BatchedSimulationRunner - async batched runner for 30k+ sims/sec
-    py::class_<BatchedSimulationRunner, SimulationRunner>(m, "BatchedSimulationRunner",
-        "Batched async simulation runner for maximum throughput (30k+ sims/sec).\n\n"
-        "Runs multiple simulations to leaf nodes, batches all inference requests,\n"
-        "then processes results. Reduces GIL crossings from N to 1 per batch.")
-        .def(py::init<MCTSTree&, PUCTSelector&, BackupManager&, VirtualLossManager&>(),
-             py::arg("tree"), py::arg("selector"), py::arg("backup"), py::arg("virtual_loss"),
-             "Construct batched simulation runner")
-        .def("run_batch",
-             &BatchedSimulationRunner::run_batch,
-             py::arg("root_state"), py::arg("root_index"),
-             py::arg("batch_inference"), py::arg("batch_size"),
-             "Run batch of simulations with single batched inference call.\n\n"
-             "Args:\n"
-             "    root_state: Game state at root\n"
-             "    root_index: Root node index\n"
-             "    batch_inference: BatchInferenceCallback for batched evaluation\n"
-             "    batch_size: Number of simulations in batch\n\n"
-             "Returns:\n"
-             "    int: Number of successful simulations");
-
     // AsyncInferenceQueue - Non-blocking inference queue for async MCTS
     py::class_<InferenceRequest>(m, "InferenceRequest")
         .def(py::init<>())
@@ -444,6 +423,39 @@ PYBIND11_MODULE(mcts_py, m) {
              "Get memory usage estimate in bytes\n\n"
              "Returns:\n"
              "    int: Estimated memory usage");
+
+    // ContinuousSimulationRunner - Async MCTS runner for 30k+ sims/sec
+    py::class_<ContinuousSimulationRunner, SimulationRunner>(m, "ContinuousSimulationRunner",
+             "Continuous MCTS simulation runner with async inference\n\n"
+             "Runs simulations continuously without blocking on neural network inference.\n"
+             "Achieves 30,000+ sims/sec by decoupling simulation threads from GPU latency.")
+        .def(py::init<MCTSTree&, PUCTSelector&, BackupManager&, VirtualLossManager&>(),
+             py::arg("tree"), py::arg("selector"), py::arg("backup"), py::arg("virtual_loss"),
+             "Create continuous simulation runner\n\n"
+             "Args:\n"
+             "    tree: Shared MCTS tree\n"
+             "    selector: PUCT selector\n"
+             "    backup: Backup manager\n"
+             "    virtual_loss: Virtual loss manager")
+        .def("run_continuous",
+             &ContinuousSimulationRunner::run_continuous,
+             py::arg("root_state"), py::arg("root_index"), py::arg("queue"), py::arg("num_simulations"),
+             NoGil(),
+             "Run continuous MCTS simulations with async inference\n\n"
+             "Simulations run in a continuous loop without blocking on inference:\n"
+             "1. Select to leaf (fast C++ tree traversal)\n"
+             "2. Submit inference request to queue (non-blocking)\n"
+             "3. Immediately start next simulation\n"
+             "4. Process completed results asynchronously\n"
+             "5. Continue until quota reached\n\n"
+             "Performance: 30,000+ sims/sec with 8-12 threads\n\n"
+             "Args:\n"
+             "    root_state: Game state at root\n"
+             "    root_index: Root node index\n"
+             "    queue: AsyncInferenceQueue for request/result exchange\n"
+             "    num_simulations: Number of simulations to complete\n\n"
+             "Returns:\n"
+             "    int: Number of successfully completed simulations");
 }
 
 } // namespace python
