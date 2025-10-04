@@ -951,6 +951,9 @@ class GPUInferenceWorker(InferenceWorker):
         if self.model is None:
             raise RuntimeError("Model not loaded")
 
+        # Record start time for metrics
+        start_time = time.time()
+
         # Try GPU inference first if available and not permanently failed (T018)
         if self._should_attempt_gpu_retry():
             try:
@@ -977,6 +980,10 @@ class GPUInferenceWorker(InferenceWorker):
 
                 # Attempt to gradually increase batch size if conditions are favorable
                 self._attempt_batch_size_increase()
+
+                # Update metrics (T015)
+                inference_time = time.time() - start_time
+                self._update_metrics(len(positions), inference_time)
 
                 return policies_np, values_np
 
@@ -1028,13 +1035,20 @@ class GPUInferenceWorker(InferenceWorker):
         # Use CPU fallback if GPU failed or fallback is already active (T018)
         if self._cpu_fallback_worker is not None:
             try:
-                return self._cpu_fallback_worker.batch_inference(positions)
+                result = self._cpu_fallback_worker.batch_inference(positions)
+                # Update metrics even for CPU fallback (T015)
+                inference_time = time.time() - start_time
+                self._update_metrics(len(positions), inference_time)
+                return result
             except Exception as fallback_error:
                 self.logger.error(f"CPU fallback also failed: {fallback_error}")
                 # Return safe default values as last resort (Gomoku 15x15 = 225 actions)
                 batch_size = len(positions)
                 policies_np = np.ones((batch_size, 225)) / 225  # Uniform distribution
                 values_np = np.zeros(batch_size)
+                # Update metrics even for fallback (T015)
+                inference_time = time.time() - start_time
+                self._update_metrics(batch_size, inference_time)
                 return policies_np, values_np
 
         # No fallback available and GPU failed
@@ -1098,6 +1112,76 @@ class GPUInferenceWorker(InferenceWorker):
                 f"avg batch: {self._metrics['total_requests'] / self._metrics['total_batches']:.1f}{gpu_status}"
             )
 
+    def _calculate_batch_size_distribution(self, batch_sizes: List[int]) -> Dict[str, float]:
+        """Calculate batch size distribution statistics (T015).
+
+        Args:
+            batch_sizes: List of recent batch sizes
+
+        Returns:
+            Dictionary with batch size distribution metrics
+        """
+        if not batch_sizes:
+            return {
+                'batch_size_min': 0.0,
+                'batch_size_max': 0.0,
+                'batch_size_median': 0.0,
+                'batch_size_p50': 0.0,
+                'batch_size_p90': 0.0,
+                'batch_size_p95': 0.0,
+                'batch_size_p99': 0.0,
+                'batch_size_std': 0.0,
+            }
+
+        batch_array = np.array(batch_sizes)
+        return {
+            'batch_size_min': float(np.min(batch_array)),
+            'batch_size_max': float(np.max(batch_array)),
+            'batch_size_median': float(np.median(batch_array)),
+            'batch_size_p50': float(np.percentile(batch_array, 50)),
+            'batch_size_p90': float(np.percentile(batch_array, 90)),
+            'batch_size_p95': float(np.percentile(batch_array, 95)),
+            'batch_size_p99': float(np.percentile(batch_array, 99)),
+            'batch_size_std': float(np.std(batch_array)),
+        }
+
+    def _calculate_timeout_compliance(self, inference_times: List[float]) -> Dict[str, Any]:
+        """Calculate timeout compliance metrics (T015).
+
+        Args:
+            inference_times: List of recent inference times in seconds
+
+        Returns:
+            Dictionary with timeout compliance metrics
+        """
+        if not inference_times:
+            return {
+                'timeout_compliance_rate': 1.0,
+                'timeout_violations': 0,
+                'inference_time_p50_ms': 0.0,
+                'inference_time_p90_ms': 0.0,
+                'inference_time_p95_ms': 0.0,
+                'inference_time_p99_ms': 0.0,
+                'inference_time_max_ms': 0.0,
+            }
+
+        times_array = np.array(inference_times)
+        times_ms = times_array * 1000  # Convert to milliseconds
+
+        # Count timeout violations (times > max_timeout_ms)
+        violations = np.sum(times_array > self.max_timeout_ms)
+        compliance_rate = 1.0 - (violations / len(inference_times))
+
+        return {
+            'timeout_compliance_rate': float(compliance_rate),
+            'timeout_violations': int(violations),
+            'inference_time_p50_ms': float(np.percentile(times_ms, 50)),
+            'inference_time_p90_ms': float(np.percentile(times_ms, 90)),
+            'inference_time_p95_ms': float(np.percentile(times_ms, 95)),
+            'inference_time_p99_ms': float(np.percentile(times_ms, 99)),
+            'inference_time_max_ms': float(np.max(times_ms)),
+        }
+
     def get_metrics(self) -> Dict[str, float]:
         """Get enhanced inference performance metrics including micro-batching data.
 
@@ -1112,6 +1196,9 @@ class GPUInferenceWorker(InferenceWorker):
 
             avg_batch_size = np.mean(recent_batch_sizes) if recent_batch_sizes else 0.0
             avg_inference_time = np.mean(recent_inference_times) if recent_inference_times else 0.0
+
+            # Calculate batch size distribution (T015)
+            batch_size_metrics = self._calculate_batch_size_distribution(recent_batch_sizes)
 
             # Calculate inference rate
             if avg_inference_time > 0:
@@ -1136,6 +1223,9 @@ class GPUInferenceWorker(InferenceWorker):
 
             memory_usage_gb = self._get_memory_usage()
 
+            # Timeout compliance metrics (T015)
+            timeout_metrics = self._calculate_timeout_compliance(recent_inference_times)
+
             metrics = {
                 # Core performance metrics
                 'gpu_utilization': current_gpu_util,
@@ -1158,6 +1248,12 @@ class GPUInferenceWorker(InferenceWorker):
                 'meets_gpu_target': avg_gpu_util >= self.target_gpu_utilization,
                 'timeout_compliance': avg_inference_time <= self.max_timeout_ms
             }
+
+            # Add batch size distribution metrics (T015)
+            metrics.update(batch_size_metrics)
+
+            # Add timeout compliance metrics (T015)
+            metrics.update(timeout_metrics)
 
             # Add mixed precision metrics
             memory_metrics = self._get_memory_efficiency_metrics()
