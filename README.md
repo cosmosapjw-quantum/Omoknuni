@@ -4,56 +4,56 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 
 ## Project Status
 
-🔧 **In Development: C++ Simulation Runner** - Closing 122-163× performance gap (Spec 002)
+🚀 **In Development: Async Inference Batching** - Achieving 30k+ sims/sec target (Spec 003)
 
 ### Current Status
-- **Version**: 1.0.0-alpha + Spec 002 (Phases 0-2 Complete, Phase 3 In Progress)
+- **Version**: 1.0.0-alpha + Spec 003 (Phases 1-2 Complete, Phase 3 In Progress)
 - **Alpha Release Date**: 2025-10-01
-- **Spec 002 Phase 0**: ✅ COMPLETE (2025-10-02) - Training pipeline unblocked
-- **Spec 002 Phase 1**: ✅ COMPLETE (2025-10-02) - Build & move storage
-- **Spec 002 Phase 2**: ✅ COMPLETE (2025-10-02) - C++ runner core implementation
-- **Spec 002 Phase 3**: 🔄 IN PROGRESS (1/4 complete) - Python integration
-- **Target**: Increase throughput from 246 → 30,000-40,000 sims/sec
+- **Spec 002**: ✅ COMPLETE (2025-10-03) - C++ Simulation Runner (7× Python baseline achieved)
+- **Spec 003 Phase 1**: ✅ COMPLETE (2025-10-04) - AsyncInferenceQueue infrastructure
+- **Spec 003 Phase 2**: ✅ COMPLETE (2025-10-04) - ContinuousSimulationRunner
+- **Spec 003 Phase 3**: 🔄 IN PROGRESS - BatchInferenceCoordinator (next)
+- **Target**: Achieve 30,000+ simulations/second with async GPU batching
 
-### Active Work: C++ MCTS Simulation Runner
-**Problem**: Current implementation executes Monte Carlo simulations in Python (246 sims/sec) instead of the designed C++ runner (30k-40k sims/sec).
+### Active Work: Async Inference Batching for 30k+ Sims/Sec
+**Problem**: Current implementation achieves only 900-1,000 sims/sec (3% of 30k target) due to synchronous Python/C++ boundary crossings. Each simulation blocks waiting for neural network inference, causing:
+- 1.1ms Python callback overhead (4.2× C++ execution time)
+- Excessive GIL acquisitions (1 per simulation)
+- GPU underutilization (42% vs 80%+ target)
+- Threads blocking during inference instead of continuing search
 
-**Impact**:
-- **Throughput**: 122-163× slower than target
-- **GIL contention**: 80% wall time vs target <10%
-- **Thread efficiency**: 3% vs target 75% (1→8 threads)
-- **GPU utilization**: <5% vs target 80-92%
-- **Memory overhead**: 1000MB vs 20MB for move storage
+**Root Cause**: C++ SimulationRunner (Spec 002) has synchronous blocking at inference callback. Profiling shows C++ tree operations take 0.26ms/sim (3,846 sims/sec potential), but Python overhead adds 1.1ms, reducing throughput to 714 sims/sec. With 512 threads, performance plateaus at 905 sims/sec due to GIL contention.
 
-**Solution**: Complete C++ `SimulationRunner` implementation per [Spec 002](specs/002-cpp-simulation-runner/)
+**Solution**: Implement async inference batching architecture per [Spec 003](specs/003-async-inference-batching/)
+- **AsyncInferenceQueue**: Non-blocking request submission and result distribution
+- **ContinuousSimulationRunner**: Continuous simulation loops without blocking on inference
+- **BatchInferenceCoordinator**: Background thread for GPU batching (Phase 3)
 
-**Phase 0 Complete** (2025-10-02):
-- ✅ T001: Policy loss function fixed (KL divergence for continuous distributions)
-- ✅ T002: TrainingConfig fields added (MCTS configuration parameters)
-- ✅ T003: Config factory filtering (handles YAML extra fields)
-- ✅ T004: Signal handler guard (worker thread compatibility)
-- ✅ T005: Training pipeline smoke test (validates all fixes)
+**Phase 1 Complete** (2025-10-04): AsyncInferenceQueue (C++)
+- ✅ T001: AsyncInferenceQueue interface with thread-safe design
+- ✅ T002: Request submission (non-blocking, <1ms including state construction)
+- ✅ T003: Batch collection (dual-trigger: count≥32 OR timeout≤2ms)
+- ✅ T004: Result distribution with consumption model
+- ⏳ T005: Thread safety validation (TSan) - pending
+- **Tests**: 15/15 C++ tests passing, 14/14 Python contract tests passing
 
-**Phase 1 Complete** (2025-10-02):
-- ✅ T006: Build wiring with sanitizer support (ASan/TSan/UBSan)
-- ✅ T007: Contract tests for SimulationRunner API (12 tests passing)
-- ✅ T008: Native move storage in MCTSTree (1000MB→20MB reduction achieved)
+**Phase 2 Complete** (2025-10-04): ContinuousSimulationRunner (C++)
+- ✅ T006: ContinuousSimulationRunner interface (extends SimulationRunner)
+- ✅ T007: Continuous loop implementation (select→submit→process)
+- ✅ T008: Pending expansion management (state ownership with cloning)
+- ✅ T009: Result processing pipeline with expand_node_with_result()
+- **Algorithm**: Non-blocking loop where threads select to leaf, submit inference request to queue, immediately continue with next simulation, and asynchronously process completed results
 
-**Phase 2 Complete** (2025-10-02):
-- ✅ T009: Select leaf implementation with PUCT selector and virtual loss
-- ✅ T010: Expand node with terminal detection and inference callback
-- ✅ T011: Backup value with sign flipping and virtual loss removal
-- ✅ T012: Pipeline connection (select → expand → backup)
+**Phase 3 In Progress** - BatchInferenceCoordinator (C++)
+- ⏳ T010: Coordinator background thread - next
+- ⏳ T011: Coordinator loop implementation
+- ⏳ T012: GIL profiling validation
 
-**Phase 3 In Progress** (1/4 complete):
-- ✅ T013: PyInferenceCallback bridge - Python/C++ inference integration (16 tests passing)
-- ⏳ T014: AlphaZeroMCTS refactor - Wire C++ runner into Python MCTS (next)
-- ⏳ T015: SearchCoordinator fix - Cleanup shutdown logic and GPU worker integration
-- ⏳ T016: Inference bridge - CppInferenceBridge wrapper for GPUInferenceWorker
+**Progress**: 9/29 tasks complete (31.0%)
 
-**Next**: T014 - AlphaZeroMCTS refactor to use C++ SimulationRunner
+**Next**: T010 - Implement BatchInferenceCoordinator background thread to collect requests from queue, batch for GPU, and submit results
 
-See [PYTHON_FIXES_REQUIRED.md](specs/002-cpp-simulation-runner/PYTHON_FIXES_REQUIRED.md) for comprehensive analysis and [MIGRATION.md](specs/002-cpp-simulation-runner/MIGRATION.md) for deployment guide.
+See [Spec 003](specs/003-async-inference-batching/) for complete architecture and implementation plan.
 
 ### Completed
 - [x] **T001**: Project structure and build system setup
