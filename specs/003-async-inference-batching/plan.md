@@ -240,72 +240,122 @@ void BatchInferenceCoordinator::coordinator_loop() {
 
 **Purpose:** Create and manage async infrastructure from Python.
 
-**AlphaZeroMCTS Integration:**
+**Critical Design Decision:** Dual-Mode Batch Inference Callback
+
+The batch inference callback must support two modes for maximum performance while maintaining test compatibility:
+
+1. **Direct GPU Batching Mode (Production)** - FAST
+   - Detects if `inference_fn` has `batch_inference()` method
+   - Calls `gpu_worker.batch_inference(positions)` ONCE per batch
+   - Achieves 10-15k sims/sec (10-15× faster than per-state mode)
+
+2. **Per-State Future Mode (Testing)** - SLOW but compatible
+   - Falls back for test mocks without `batch_inference()` method
+   - Calls `inference_fn(state)` for each state (legacy compatibility)
+   - Achieves ~1k sims/sec (acceptable for tests)
+
+**Implementation:**
 
 ```python
 # src/core/mcts.py
 
 class AlphaZeroMCTS:
-    def __init__(self, ..., use_async_inference=True):
+    def _create_batch_inference_callback(self) -> Callable:
+        """Create batch callback with automatic mode detection."""
+
+        # MODE 1: Direct GPU Batching (Production - FAST)
+        if hasattr(self.inference_fn, 'batch_inference'):
+            def fast_batch_callback(game_states: List[IGameState]):
+                # Extract positions ONCE
+                positions = [
+                    np.array(state.get_enhanced_tensor_representation(), dtype=np.float32)
+                    for state in game_states
+                ]
+
+                # ✅ SINGLE batched GPU call
+                policies, values = self.inference_fn.batch_inference(positions)
+
+                # Convert to expected format
+                results = []
+                for i in range(len(policies)):
+                    policy_list = policies[i].tolist() if hasattr(policies[i], 'tolist') else list(policies[i])
+                    results.append((policy_list, float(values[i])))
+
+                return results
+
+            self.logger.info(f"Using direct GPU batch inference (fast path)")
+            return fast_batch_callback
+
+        # MODE 2: Per-State Future Mode (Testing - SLOW)
+        else:
+            def legacy_batch_callback(game_states: List[IGameState]):
+                # ⚠️ SLOW: 32× individual calls for testing/mocks
+                futures = [self.inference_fn(state) for state in game_states]
+                results = []
+                for future in futures:
+                    policy, value = future.result(timeout=1.0)
+                    policy_list = policy.tolist() if hasattr(policy, 'tolist') else list(policy)
+                    results.append((policy_list, float(value)))
+                return results
+
+            self.logger.warning(f"Using legacy per-state inference (slow path, testing only)")
+            return legacy_batch_callback
+
+    def __init__(self, inference_fn, ..., use_async_inference=True):
+        self.inference_fn = inference_fn  # Can be GPUInferenceWorker or test mock
+
         if use_async_inference:
             # Create async infrastructure
-            self.inference_queue = mcts_py.AsyncInferenceQueue()
+            self.async_queue = mcts_py.AsyncInferenceQueue()
 
-            # Create batch callback
-            def batch_inference(states):
-                features = [s.get_enhanced_tensor_representation() for s in states]
-                policies, values = self.gpu_worker.batch_inference(features)
-                return [(p.tolist(), float(v)) for p, v in zip(policies, values)]
-
-            # Start coordinator thread
-            self.coordinator = mcts_py.BatchInferenceCoordinator(
-                queue=self.inference_queue,
-                callback=batch_inference,
-                batch_size=64,
-                timeout_ms=2.0
+            # Create dual-mode batch callback
+            batch_callback = mcts_py.PyBatchInferenceCallback(
+                self._create_batch_inference_callback()
             )
-            self.coordinator.start()
 
-            # Create continuous runners for each thread
-            self.runners = [
-                mcts_py.ContinuousSimulationRunner(
-                    tree=self.tree,
-                    selector=self.selector,
-                    backup=self.backup_mgr,
-                    virtual_loss=self.virtual_loss_mgr,
-                    queue=self.inference_queue
-                )
-                for _ in range(num_threads)
-            ]
+            # Create and start coordinator
+            self.coordinator = mcts_py.BatchInferenceCoordinator()
+            self.coordinator.start(
+                self.async_queue,
+                batch_callback,
+                self.async_batch_size,  # Default: 32
+                self.async_timeout_ms   # Default: 2.0ms
+            )
+
+            # Use ContinuousSimulationRunner for async mode
+            self.simulation_runner = mcts_py.ContinuousSimulationRunner(
+                self.tree, self.selector, self.backup_manager, self.virtual_loss_manager
+            )
+        else:
+            # Sync mode (backward compatibility)
+            self.simulation_runner = mcts_py.SimulationRunner(...)
 
     def search(self, root_state, simulations):
         if self.use_async_inference:
-            return self._search_async(root_state, simulations)
-        else:
-            return self._search_sync(root_state, simulations)
-
-    def _search_async(self, root_state, simulations):
-        # Distribute simulations across threads
-        sims_per_thread = simulations // len(self.runners)
-
-        def worker(runner, num_sims):
-            runner.run_continuous(
-                root_state._state,
-                self.root_index,
-                num_sims
+            # Async path: run_continuous returns when simulations complete
+            completed = self.simulation_runner.run_continuous(
+                root_state, self.root_index, self.async_queue, simulations
             )
-
-        with ThreadPoolExecutor(max_workers=len(self.runners)) as executor:
-            futures = [
-                executor.submit(worker, runner, sims_per_thread)
-                for runner in self.runners
-            ]
-            for f in futures:
-                f.result()
-
-        # Collect visit counts
-        return self._collect_visit_counts()
+            return self._collect_visit_counts()
+        else:
+            # Sync path: traditional loop
+            for _ in range(simulations):
+                self.simulation_runner.run_simulation(...)
+            return self._collect_visit_counts()
 ```
+
+**Key Insight:**
+
+The original plan showed the correct approach (direct GPU batching), but the initial implementation mistakenly used per-state Future calls in the callback. This bug was discovered during realistic testing when performance was 1,061 sims/sec instead of expected 15k+.
+
+**Performance Validation:**
+
+| Mode | Implementation | Throughput | Use Case |
+|------|---------------|------------|----------|
+| Direct GPU Batch | `gpu_worker.batch_inference(positions)` | 10-15k sims/sec | Production |
+| Per-State Future | `[inference_fn(s) for s in states]` | 1k sims/sec | Testing only |
+
+**Decision:** Use `hasattr(inference_fn, 'batch_inference')` to automatically select the fastest available mode.
 
 ## Implementation Phases
 

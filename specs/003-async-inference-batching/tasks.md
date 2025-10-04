@@ -283,6 +283,40 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
   - **Test Results**: 8/8 tests pass (initialization, sync compatibility, async/sync completion, policy validity, coordinator cleanup, performance, batch settings)
   - **Est**: 2h
   - **Completed**: 2025-10-04
+  - **Note**: ⚠️ Initial implementation had performance bug (T014.5 fixes it)
+
+- [ ] **T014.5** Fix direct GPU batching in callback (CRITICAL PERFORMANCE FIX)
+  - **File**: `src/core/mcts.py` - `_create_batch_inference_callback()`
+  - **Problem Found**: Initial implementation calls `inference_fn(state)` 32 times per batch instead of calling `gpu_worker.batch_inference(positions)` once
+    - Current: 1,061 sims/sec (28× below target)
+    - Root cause: Per-state Future calls with sequential waits
+    - Overhead: 32× function calls, 32× Future objects, 32× queue ops, sequential timeouts
+  - **Changes**:
+    - Implement dual-mode callback with automatic detection
+    - MODE 1 (Fast): Detect `hasattr(inference_fn, 'batch_inference')` and call directly
+      ```python
+      positions = [np.array(s.get_enhanced_tensor_representation()) for s in game_states]
+      policies, values = self.inference_fn.batch_inference(positions)  # ✅ SINGLE CALL
+      return [(policies[i].tolist(), float(values[i])) for i in range(len(policies))]
+      ```
+    - MODE 2 (Slow): Fallback to per-state Future mode for test compatibility
+      ```python
+      futures = [self.inference_fn(state) for state in game_states]  # ⚠️ SLOW (tests only)
+      return [(f.result()[0].tolist(), float(f.result()[1])) for f in futures]
+      ```
+    - Add mode detection logging: "Using direct GPU batch inference (fast path)" vs "Using legacy per-state inference (slow path, testing only)"
+  - **Test File**: `tests/integration/test_direct_gpu_batching.py` (NEW)
+    - test_dual_mode_detection: Verify auto-detection works
+    - test_direct_batch_mode_performance: Validate ≥10k sims/sec with GPUInferenceWorker
+    - test_legacy_mode_compatibility: Validate test mocks still work (slow path)
+    - test_performance_comparison: Compare both modes quantitatively
+  - **Acceptance**: ✅ Achieves ≥10,000 sims/sec with direct GPU batching, maintains test compatibility
+  - **Expected Performance**:
+    - Current (bug): 1,061 sims/sec
+    - After fix: 10-15k sims/sec (10-15× improvement)
+    - With tuning (T017-T020): 30-35k sims/sec
+  - **Priority**: 🔴 CRITICAL - Blocks 30k sims/sec target
+  - **Est**: 1.5h
 
 - [x] **T015** GPUInferenceWorker batching
   - **File**: `src/neural/inference_worker.py`
@@ -494,15 +528,22 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
 ---
 
 ## Tracking
-- **Total Tasks**: 29 (Phase 1: 5, Phase 2: 4, Phase 3: 3, Phase 4: 4, Phase 5: 4, Phase 6: 4, Phase 7: 5)
-- **Completed**: 13 / 29 (44.8%)
+- **Total Tasks**: 30 (Phase 1: 5, Phase 2: 4, Phase 3: 3, Phase 4: 5, Phase 5: 4, Phase 6: 4, Phase 7: 5)
+- **Completed**: 13 / 30 (43.3%)
+- **In Progress**: T014.5 (CRITICAL - direct GPU batching fix)
 - **Phase 1**: ✅ 4/5 Complete - AsyncInferenceQueue (C++) - **T001-T004 complete, T005 TSan pending**
 - **Phase 2**: ✅ 4/4 Complete - ContinuousSimulationRunner (C++) - **T006-T009 complete**
 - **Phase 3**: ✅ 2/3 Complete - BatchInferenceCoordinator (C++) - **T010-T011 complete, T012 GIL profiling pending**
-- **Phase 4**: ✅ 2/4 Complete - Python integration - **T013-T014 complete, T016 config pending**
+- **Phase 4**: ✅ 2/5 Complete - Python integration - **T013-T014 complete, T014.5 CRITICAL IN PROGRESS, T016 config pending**
 - **Phase 5**: ✅ 1/4 Complete - Performance optimization - **T015 complete**
 - **Phase 6**: 0/4 Complete - Correctness validation
 - **Phase 7**: 0/5 Complete - Documentation
+
+**CRITICAL PATH UPDATE:**
+- 🔴 **T014.5 (CRITICAL)**: Must complete BEFORE T017-T020 tuning
+- Performance blocked at 1,061 sims/sec until T014.5 complete
+- Expected: 10-15k sims/sec after T014.5
+- Target: 30-35k sims/sec after T017-T020
 
 **Critical Path**: T001-T005 (Queue) → T006-T009 (Runner) → T010-T012 (Coordinator) → T013-T016 (Integration) → T017-T020 (Optimization) → T021-T024 (Validation) → T025-T029 (Docs)
 
