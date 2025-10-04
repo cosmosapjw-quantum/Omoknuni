@@ -21,6 +21,7 @@
 #include "inference_callback.hpp"
 #include "async_inference_queue.hpp"
 #include "continuous_simulation_runner.hpp"
+#include "batch_inference_coordinator.hpp"
 
 namespace py = pybind11;
 
@@ -456,6 +457,33 @@ PYBIND11_MODULE(mcts_py, m) {
              "    num_simulations: Number of simulations to complete\n\n"
              "Returns:\n"
              "    int: Number of successfully completed simulations");
+
+    // BatchInferenceCoordinator - Background batching coordinator
+    py::class_<BatchInferenceCoordinator>(m, "BatchInferenceCoordinator",
+             "Background coordinator for batched GPU inference\n\n"
+             "Spawns a background thread that continuously collects inference requests\n"
+             "from AsyncInferenceQueue, batches them, calls Python for GPU inference\n"
+             "(single GIL crossing per batch), and distributes results back.\n\n"
+             "This reduces GIL time from >50% to <30% by batching all GPU calls.")
+        .def(py::init<>(),
+             "Create batch inference coordinator (thread not started)")
+        .def("start",
+             &BatchInferenceCoordinator::start,
+             py::arg("queue"), py::arg("callback"), py::arg("batch_size"), py::arg("timeout_ms"),
+             "Start background coordinator thread\n\n"
+             "Args:\n"
+             "    queue: AsyncInferenceQueue for request/result exchange\n"
+             "    callback: BatchInferenceCallback for GPU inference\n"
+             "    batch_size: Minimum batch size (e.g., 32)\n"
+             "    timeout_ms: Maximum wait time for batch (e.g., 2.0ms)")
+        .def("stop",
+             &BatchInferenceCoordinator::stop,
+             "Stop background thread and wait for completion")
+        .def("is_running",
+             &BatchInferenceCoordinator::is_running,
+             "Check if coordinator is running\n\n"
+             "Returns:\n"
+             "    bool: True if coordinator thread is active");
 }
 
 } // namespace python

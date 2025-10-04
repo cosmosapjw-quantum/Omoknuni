@@ -41,6 +41,9 @@ add_library(mcts_core STATIC
     async_inference_queue.hpp
     continuous_simulation_runner.cpp
     continuous_simulation_runner.hpp
+    batch_inference_callback.hpp
+    batch_inference_coordinator.cpp
+    batch_inference_coordinator.hpp
 )
 
 # Set compile features and flags

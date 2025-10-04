@@ -170,7 +170,7 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
 
 ## Phase 3 — BatchInferenceCoordinator (C++)
 
-- [ ] **T010** Coordinator background thread
+- [x] **T010** Coordinator background thread
   - **File**: `cpp_extensions/mcts/batch_inference_coordinator.hpp` (NEW), `.cpp` (NEW)
   - **Changes**:
     - Create `BatchInferenceCoordinator` class:
@@ -187,11 +187,13 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
       ```
     - Implement background thread spawning and lifecycle management
     - Thread-safe start/stop with join on destruction
-  - **Test File**: `tests/unit/test_coordinator_lifecycle.cpp` (C++ - 4 tests)
+  - **Test File**: `tests/unit/test_coordinator_lifecycle_simple.cpp` (C++ - 4 tests)
   - **Acceptance**: ✅ Thread starts/stops cleanly, no resource leaks
+  - **Test Results**: 4/4 tests pass (start, stop, idempotent, destructor cleanup)
   - **Est**: 2h
+  - **Completed**: 2025-10-04
 
-- [ ] **T011** Coordinator loop implementation
+- [x] **T011** Coordinator loop implementation
   - **File**: `cpp_extensions/mcts/batch_inference_coordinator.cpp`
   - **Changes**:
     - Implement `coordinator_loop()`:
@@ -202,20 +204,24 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
 
           // Extract states
           std::vector<const IGameState*> states;
-          for (auto& req : batch) states.push_back(req.state_ptr);
+          for (auto& req : batch) states.push_back(req.state.get());
 
-          // Call Python (GIL acquired ONCE)
+          // Call Python (GIL acquired ONCE in PyBatchInferenceCallback)
           auto results = callback.batch_inference(states);
 
           // Submit results back to queue
           queue.submit_results(results);
       }
       ```
-    - Single GIL acquisition per batch via pybind11 callback
+    - Single GIL acquisition per batch via `py::gil_scoped_acquire` in PyBatchInferenceCallback
     - Error handling for callback failures
+    - Created `batch_inference_callback.hpp` (pure C++ abstract base) separate from Python impl
   - **Test File**: `tests/integration/test_coordinator_batching.py` (Python - 6 tests)
   - **Acceptance**: ✅ Batches collected and processed, GIL acquired once per batch
+  - **Test Results**: 6/6 tests pass (lifecycle, processing, batch trigger, timeout trigger, continuous runner integration, error handling)
+  - **Critical Fix**: Added explicit `py::gil_scoped_acquire` in PyBatchInferenceCallback for C++ thread → Python calls
   - **Est**: 2h
+  - **Completed**: 2025-10-04
 
 - [ ] **T012** GIL profiling validation
   - **File**: `tests/integration/test_gil_release_continuous.py` (NEW)
@@ -474,11 +480,11 @@ _Format: `Summary | File:Lines | Changes | Acceptance | Est`_
 ---
 
 ## Tracking
-- **Total Tasks**: 29 (Phase 1: 5, Phase 2: 4, Phase 3: 4, Phase 4: 4, Phase 5: 4, Phase 6: 4, Phase 7: 5)
-- **Completed**: 9 / 29 (31.0%)
+- **Total Tasks**: 29 (Phase 1: 5, Phase 2: 4, Phase 3: 3, Phase 4: 4, Phase 5: 4, Phase 6: 4, Phase 7: 5)
+- **Completed**: 11 / 29 (37.9%)
 - **Phase 1**: ✅ 4/5 Complete - AsyncInferenceQueue (C++) - **T001-T004 complete, T005 TSan pending**
 - **Phase 2**: ✅ 4/4 Complete - ContinuousSimulationRunner (C++) - **T006-T009 complete**
-- **Phase 3**: 0/4 Complete - BatchInferenceCoordinator (C++)
+- **Phase 3**: ✅ 2/3 Complete - BatchInferenceCoordinator (C++) - **T010-T011 complete, T012 GIL profiling pending**
 - **Phase 4**: ✅ 1/4 Complete - Python integration - **T013 complete**
 - **Phase 5**: 0/4 Complete - Performance optimization
 - **Phase 6**: 0/4 Complete - Correctness validation

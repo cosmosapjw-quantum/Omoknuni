@@ -16,6 +16,7 @@
 #pragma once
 
 #include "simulation_runner.hpp"
+#include "batch_inference_callback.hpp"
 #include "../utils/igamestate.h"
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -133,26 +134,6 @@ private:
 };
 
 /**
- * @brief Abstract batch inference callback interface
- *
- * Allows C++ simulation runner to request batched neural network inference from Python.
- * Batching reduces GIL crossings from N (per simulation) to 1 (per batch).
- */
-class BatchInferenceCallback {
-public:
-    virtual ~BatchInferenceCallback() = default;
-
-    /**
-     * @brief Request neural network inference for a batch of game states
-     *
-     * @param states Vector of game state pointers to evaluate
-     * @return Vector of (policy vector, value scalar) pairs
-     */
-    virtual std::vector<std::pair<std::vector<float>, float>>
-    batch_inference(const std::vector<const IGameState*>& states) = 0;
-};
-
-/**
  * @brief Python batch inference callback implementation
  *
  * Wraps a Python callable for batched inference. Reduces GIL crossings
@@ -176,6 +157,9 @@ public:
 
     std::vector<std::pair<std::vector<float>, float>>
     batch_inference(const std::vector<const IGameState*>& states) override {
+        // Acquire GIL for calling Python from C++ thread
+        py::gil_scoped_acquire gil;
+
         try {
             // Convert C++ state pointers to Python list
             py::list py_states;
@@ -185,7 +169,7 @@ public:
                 py_states.append(py::cast(state_ptr, py::return_value_policy::reference));
             }
 
-            // Call Python batch inference (GIL acquired automatically)
+            // Call Python batch inference (with GIL held)
             py::object result = python_fn_(py_states);
 
             // Extract results
