@@ -18,7 +18,9 @@
 #include "selection.hpp"
 #include "backup.hpp"
 #include "simulation_runner.hpp"
+#include "simulation_runner_batch.hpp"
 #include "inference_callback.hpp"
+#include "async_inference_queue.hpp"
 
 namespace py = pybind11;
 
@@ -309,6 +311,139 @@ PYBIND11_MODULE(mcts_py, m) {
              "    inference_fn: InferenceCallback for neural network evaluation\n\n"
              "Returns:\n"
              "    bool: True if simulation completed successfully");
+
+    // BatchInferenceCallback - for batched async inference
+    py::class_<BatchInferenceCallback>(m, "BatchInferenceCallback",
+        "Abstract base class for batched neural network inference")
+        .def("batch_inference", &BatchInferenceCallback::batch_inference,
+             py::arg("states"),
+             "Evaluate multiple game states in a single batch.\n\n"
+             "Args:\n"
+             "    states: List of IGameState pointers\n\n"
+             "Returns:\n"
+             "    List of (policy, value) tuples");
+
+    // PyBatchInferenceCallback - Python wrapper
+    py::class_<PyBatchInferenceCallback, BatchInferenceCallback>(m, "PyBatchInferenceCallback",
+        "Python wrapper for batch inference callbacks")
+        .def(py::init<py::object>(),
+             py::arg("python_fn"),
+             "Construct batch callback with Python callable");
+
+    // BatchedSimulationRunner - async batched runner for 30k+ sims/sec
+    py::class_<BatchedSimulationRunner, SimulationRunner>(m, "BatchedSimulationRunner",
+        "Batched async simulation runner for maximum throughput (30k+ sims/sec).\n\n"
+        "Runs multiple simulations to leaf nodes, batches all inference requests,\n"
+        "then processes results. Reduces GIL crossings from N to 1 per batch.")
+        .def(py::init<MCTSTree&, PUCTSelector&, BackupManager&, VirtualLossManager&>(),
+             py::arg("tree"), py::arg("selector"), py::arg("backup"), py::arg("virtual_loss"),
+             "Construct batched simulation runner")
+        .def("run_batch",
+             &BatchedSimulationRunner::run_batch,
+             py::arg("root_state"), py::arg("root_index"),
+             py::arg("batch_inference"), py::arg("batch_size"),
+             "Run batch of simulations with single batched inference call.\n\n"
+             "Args:\n"
+             "    root_state: Game state at root\n"
+             "    root_index: Root node index\n"
+             "    batch_inference: BatchInferenceCallback for batched evaluation\n"
+             "    batch_size: Number of simulations in batch\n\n"
+             "Returns:\n"
+             "    int: Number of successful simulations");
+
+    // AsyncInferenceQueue - Non-blocking inference queue for async MCTS
+    py::class_<InferenceRequest>(m, "InferenceRequest")
+        .def(py::init<>())
+        .def_readwrite("request_id", &InferenceRequest::request_id)
+        .def_readwrite("node_index", &InferenceRequest::node_index)
+        .def_property("state",
+            [](InferenceRequest& req) -> IGameState* {
+                return req.state.get();
+            },
+            [](InferenceRequest& req, std::unique_ptr<IGameState> state) {
+                req.state = std::move(state);
+            })
+        .def("__repr__", [](const InferenceRequest& req) {
+            return "<InferenceRequest id=" + std::to_string(req.request_id) +
+                   " node=" + std::to_string(req.node_index) + ">";
+        });
+
+    py::class_<InferenceResult>(m, "InferenceResult")
+        .def(py::init<>())
+        .def_readwrite("request_id", &InferenceResult::request_id)
+        .def_readwrite("policy", &InferenceResult::policy)
+        .def_readwrite("value", &InferenceResult::value)
+        .def("__repr__", [](const InferenceResult& res) {
+            return "<InferenceResult id=" + std::to_string(res.request_id) +
+                   " value=" + std::to_string(res.value) + ">";
+        });
+
+    py::class_<AsyncInferenceQueue>(m, "AsyncInferenceQueue",
+             "Thread-safe async inference queue for decoupling simulation from GPU\n\n"
+             "Allows simulation threads to submit inference requests without blocking,\n"
+             "while a coordinator thread batches requests for efficient GPU inference.")
+        .def(py::init<>(),
+             "Create empty async inference queue")
+        .def("submit_request",
+             [](AsyncInferenceQueue& queue, IGameState* state,
+                NodeIndex node_index, std::vector<NodeIndex> path) -> uint64_t {
+                 // Clone the state to transfer ownership to queue
+                 auto cloned_state = state->clone();
+                 return queue.submit_request(std::move(cloned_state), node_index, std::move(path));
+             },
+             py::arg("state"), py::arg("node_index"), py::arg("path"),
+             "Submit inference request (non-blocking)\n\n"
+             "Args:\n"
+             "    state: Game state to evaluate (ownership transferred)\n"
+             "    node_index: Tree node to expand\n"
+             "    path: Path from root to node\n\n"
+             "Returns:\n"
+             "    int: Unique request ID for retrieving result")
+        .def("collect_batch",
+             &AsyncInferenceQueue::collect_batch,
+             py::arg("min_batch_size"), py::arg("timeout_ms"),
+             NoGil(),
+             "Collect batch of pending requests\n\n"
+             "Returns when either min_batch_size requests available OR timeout elapsed.\n\n"
+             "Args:\n"
+             "    min_batch_size: Minimum batch size to wait for\n"
+             "    timeout_ms: Maximum wait time in milliseconds\n\n"
+             "Returns:\n"
+             "    list[InferenceRequest]: Batch of requests to process")
+        .def("submit_results",
+             &AsyncInferenceQueue::submit_results,
+             py::arg("results"),
+             "Submit batch of inference results\n\n"
+             "Args:\n"
+             "    results: List of InferenceResult matching collected requests")
+        .def("try_get_result",
+             &AsyncInferenceQueue::try_get_result,
+             py::arg("request_id"),
+             "Try to retrieve result for a request (non-blocking)\n\n"
+             "Args:\n"
+             "    request_id: Request ID from submit_request()\n\n"
+             "Returns:\n"
+             "    InferenceResult or None if not available")
+        .def("has_results",
+             &AsyncInferenceQueue::has_results,
+             "Check if any results are available\n\n"
+             "Returns:\n"
+             "    bool: True if results available for retrieval")
+        .def("pending_count",
+             &AsyncInferenceQueue::pending_count,
+             "Get number of pending requests\n\n"
+             "Returns:\n"
+             "    int: Number of requests waiting for inference")
+        .def("results_count",
+             &AsyncInferenceQueue::results_count,
+             "Get number of completed results\n\n"
+             "Returns:\n"
+             "    int: Number of results available for retrieval")
+        .def("get_memory_usage",
+             &AsyncInferenceQueue::get_memory_usage,
+             "Get memory usage estimate in bytes\n\n"
+             "Returns:\n"
+             "    int: Estimated memory usage");
 }
 
 } // namespace python
