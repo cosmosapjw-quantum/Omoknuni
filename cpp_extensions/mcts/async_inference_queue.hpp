@@ -211,6 +211,15 @@ public:
      */
     size_t get_memory_usage() const;
 
+    /**
+     * @brief Snapshot the request IDs with completed inference results.
+     *
+     * Thread Safety: Safe to call from any thread.
+     *
+     * @return Vector of request IDs currently ready for retrieval
+     */
+    std::vector<uint64_t> get_ready_request_ids() const;
+
 private:
     // Request ID generation
     std::atomic<uint64_t> next_request_id_{0};

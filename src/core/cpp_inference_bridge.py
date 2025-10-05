@@ -13,7 +13,7 @@ simulation runner implementation (spec 002-cpp-simulation-runner).
 import numpy as np
 import logging
 import time
-from typing import Tuple, Callable
+from typing import Tuple, Callable, List
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from threading import Lock
 
@@ -56,6 +56,8 @@ class CppInferenceBridge:
         self._failed_requests = 0
         self._timeout_requests = 0
         self._cpu_fallback_requests = 0
+        self._batch_requests = 0
+        self._batch_failures = 0
         self._metrics_lock = Lock()
 
         # Logger
@@ -105,6 +107,35 @@ class CppInferenceBridge:
                 self._failed_requests += 1
 
         return result_future
+
+    def batch_inference(self, positions: List[np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
+        """Run batched inference directly through the underlying worker.
+
+        Args:
+            positions: List of preprocessed feature tensors
+
+        Returns:
+            Tuple of (policies, values) numpy arrays
+        """
+        with self._metrics_lock:
+            self._batch_requests += 1
+
+        try:
+            policies, values = self.inference_worker.batch_inference(positions)
+            return policies, values
+        except Exception as error:
+            with self._metrics_lock:
+                self._batch_failures += 1
+
+            if self.enable_cpu_fallback and self._should_use_cpu_fallback(error):
+                try:
+                    return self._cpu_batch_fallback(positions)
+                except Exception as fallback_error:
+                    raise InferenceError(
+                        f"CPU batch fallback failed: {fallback_error}"
+                    ) from fallback_error
+
+            raise
 
     def _extract_features(self, game_state) -> np.ndarray:
         """Extract feature tensor from game state.
@@ -296,6 +327,20 @@ class CppInferenceBridge:
 
         return (policy, value)
 
+    def _cpu_batch_fallback(self, positions: List[np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
+        """Run batch inference on the CPU fallback worker when available."""
+        cpu_worker = getattr(self.inference_worker, '_cpu_fallback_worker', None)
+        if cpu_worker is None:
+            raise RuntimeError("CPU fallback worker unavailable for batch inference")
+
+        policies, values = cpu_worker.batch_inference(positions)
+
+        with self._metrics_lock:
+            self._cpu_fallback_requests += len(positions)
+            self._successful_requests += len(positions)
+
+        return policies, values
+
     def get_metrics(self) -> dict:
         """Get inference bridge metrics.
 
@@ -320,6 +365,8 @@ class CppInferenceBridge:
                 'failed_requests': self._failed_requests,
                 'timeout_requests': self._timeout_requests,
                 'cpu_fallback_requests': self._cpu_fallback_requests,
+                'batch_requests': self._batch_requests,
+                'batch_failures': self._batch_failures,
                 'success_rate': success_rate,
             }
 

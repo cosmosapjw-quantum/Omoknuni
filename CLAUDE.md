@@ -12,12 +12,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a high-performance AlphaZero-style reinforcement learning engine targeting board games (Gomoku, Chess, Go) on consumer hardware. The system achieves 30-40k simulations/second through a hybrid CPU/GPU architecture:
+This is a high-performance AlphaZero-style reinforcement learning engine targeting board games (Gomoku, Chess, Go) on consumer hardware. The system targets 30-40k simulations/second through a hybrid CPU/GPU architecture:
 
-- **CPU**: Shared-tree MCTS with 8-12 threads using Structure-of-Arrays memory layout
-- **GPU**: Asynchronous micro-batched neural network inference (32-64 positions, ≤3ms timeout)
+- **CPU**: Shared-tree MCTS with 2-4 threads using Structure-of-Arrays memory layout (optimal efficiency)
+- **GPU**: Asynchronous micro-batched neural network inference (batch size 64, 0.5-1.0ms timeout)
 - **Target Hardware**: AMD Ryzen 5900X + NVIDIA RTX 3060 Ti (8GB VRAM)
+- **Current Performance**: 3,831 sims/sec peak (12.8% of 30k target, Spec 003 complete)
 - **Performance Goals**: 80-92% GPU utilization, <1GB tree memory, 200-300 games/hour self-play
+- **Bottleneck**: MCTS overhead (67.2% of time) vs GPU inference (32.8%), requires architectural redesign
 
 ## Architecture Overview
 
@@ -352,14 +354,20 @@ See `docs/mcts_cpp_runner.md` for detailed architecture and `docs/performance/cp
 ### Performance Targets (from specs)
 | Metric | Target | Achieved | Status |
 |--------|--------|----------|--------|
-| Simulations/sec | 30-40k | 1,744 (7× Python) | 🔄 GPU integration pending |
-| GPU utilization | 80-92% | - | 📋 Next phase |
-| Average batch size | 32-64 | - | 📋 Next phase |
+| Simulations/sec | 30-40k | 3,831 (12.8% of target) | ⚠️ Architecture redesign needed |
+| GPU utilization | 80-92% | ~68% (batch 64) | ⚠️ Not the bottleneck |
+| Average batch size | 32-64 | 45-85 (optimal: 64) | ✅ Complete |
+| Batch timeout | ≤3ms | 0.5-1.0ms optimal | ✅ Complete |
+| Thread efficiency | ≥75% @ 12 threads | 62% @ 4 threads (peak) | ⚠️ Saturation @ 4 threads |
 | Tree memory | <1GB | ✅ 270MB (10M nodes) | ✅ Complete |
 | Move storage | <50MB | ✅ 20MB (10M nodes) | ✅ Complete |
 | Node footprint | <64 bytes | ✅ 27 bytes | ✅ Complete |
 | Thread safety | TSan clean | ✅ 6 races fixed | ✅ Complete |
-| Games/hour | 200-300 | - | 📋 End-to-end validation |
+| Games/hour | 200-300 | ~48 @ 3.8k sims/sec | ⚠️ Far below target |
+
+**Critical Finding (Spec 003)**: GPU inference is only 32.8% of total time. MCTS overhead (67.2%) from thread coordination, selection, and backup is the bottleneck. Current architecture can achieve max ~8k sims/sec even with full optimization. Achieving 30k requires fundamental architectural changes (virtual loss removal, lock-free queues, or GPU-accelerated MCTS).
+
+See `docs/performance/async_optimization_results.md` for detailed analysis.
 
 ## Common Pitfalls
 

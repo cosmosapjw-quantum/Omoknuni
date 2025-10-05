@@ -153,6 +153,20 @@ class TestCppInferenceBridge:
         assert metrics['failed_requests'] == 0
         assert metrics['success_rate'] == 1.0
 
+    def test_batch_inference_uses_worker(self, bridge):
+        """batch_inference delegates to the worker and updates metrics."""
+        positions = [np.random.randn(36, 15, 15).astype(np.float32) for _ in range(3)]
+
+        policies, values = bridge.batch_inference(positions)
+
+        assert policies.shape == (3, 225)
+        assert values.shape == (3,)
+        assert bridge.inference_worker.call_count == 1
+
+        metrics = bridge.get_metrics()
+        assert metrics['batch_requests'] == 1
+        assert metrics['batch_failures'] == 0
+
     def test_feature_extraction(self, bridge, game_state):
         """Test feature extraction from game state."""
         features = bridge._extract_features(game_state)
@@ -216,6 +230,20 @@ class TestCppInferenceBridge:
         metrics = bridge.get_metrics()
         assert metrics['failed_requests'] == 1
         assert metrics['cpu_fallback_requests'] == 0
+
+    def test_batch_inference_cpu_fallback(self, mock_worker):
+        """Batched CPU fallback is used when the GPU path fails."""
+        mock_worker.should_fail = True
+        mock_worker._cpu_fallback_worker = MockCPUWorker()
+
+        bridge = CppInferenceBridge(mock_worker, enable_cpu_fallback=True)
+
+        positions = [np.random.randn(36, 15, 15).astype(np.float32) for _ in range(2)]
+        policies, values = bridge.batch_inference(positions)
+
+        assert policies.shape == (2, 225)
+        assert values.shape == (2,)
+        assert mock_worker._cpu_fallback_worker.call_count == 1
 
     def test_cpu_fallback_on_oom(self, game_state):
         """Test CPU fallback triggers on CUDA OOM."""

@@ -38,6 +38,16 @@ except ImportError:
     sys.path.append(str(Path(__file__).parent.parent))
     from games.game_state import IGameState
 
+try:
+    from src.core.cpp_inference_bridge import CppInferenceBridge
+except Exception:  # pragma: no cover - optional dependency
+    CppInferenceBridge = None  # type: ignore
+
+try:
+    from src.neural.inference_worker import GPUInferenceWorker  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    GPUInferenceWorker = None  # type: ignore
+
 
 class MCTSEngine(ABC):
     """Interface for Monte Carlo Tree Search engine."""
@@ -110,10 +120,13 @@ class AlphaZeroMCTS(MCTSEngine):
             async_batch_size: Minimum batch size for async inference (32 optimal)
             async_timeout_ms: Maximum batch collection timeout in ms (2.0 optimal)
         """
-        self.inference_fn = inference_fn
         self.dirichlet_alpha = dirichlet_alpha
         self.dirichlet_epsilon = dirichlet_epsilon
         self.logger = logging.getLogger('AlphaZeroMCTS')
+        self.inference_fn = self._prepare_inference_callable(inference_fn)
+        self._supports_batch_inference = hasattr(self.inference_fn, 'batch_inference')
+        if self._supports_batch_inference:
+            self.logger.info("Async batch inference enabled (fast path)")
 
         # Initialize C++ MCTS tree with memory-efficient storage
         self.tree = mcts_py.MCTSTree(max_tree_size)
@@ -210,6 +223,17 @@ class AlphaZeroMCTS(MCTSEngine):
             self.tree.clear()
             self.root_state = root_state
             self.root_index = self.tree.add_root_node(0.5, root_state.get_current_player() - 1)
+
+            root_expanded = False
+            if add_noise:
+                try:
+                    self._expand_node(self.root_index, root_state)
+                    root_expanded = True
+                except Exception as exc:  # pragma: no cover - logged fallback
+                    self.logger.warning(f"Failed to pre-expand root for noise: {exc}")
+
+            if add_noise and (root_expanded or self.tree.get_num_children(self.root_index) > 0):
+                self._add_dirichlet_noise(self.root_index)
 
         # NOTE: Do NOT pre-expand root - let C++ SimulationRunner handle all expansion
         # The C++ runner will expand the root on the first simulation
@@ -397,6 +421,20 @@ class AlphaZeroMCTS(MCTSEngine):
 
         self.logger.debug("MCTS tree reset")
 
+    def _prepare_inference_callable(self, inference_fn: Any) -> Callable[[IGameState], Future]:
+        """Wrap inference backends to expose the expected callable interface."""
+        # Already suitable: callable that returns Future or provides batching
+        if isinstance(inference_fn, CppInferenceBridge):
+            return inference_fn
+
+        if GPUInferenceWorker is not None and isinstance(inference_fn, GPUInferenceWorker):
+            if CppInferenceBridge is None:
+                raise RuntimeError("CppInferenceBridge unavailable to wrap GPUInferenceWorker")
+            self.logger.info("Wrapping GPUInferenceWorker with CppInferenceBridge for batched inference")
+            return CppInferenceBridge(inference_fn)
+
+        return inference_fn
+
     @property
     def tree_size(self) -> int:
         """Get current number of nodes in C++ tree."""
@@ -514,7 +552,7 @@ class AlphaZeroMCTS(MCTSEngine):
         # Mark node as expanded
         flags = mcts_py.NodeFlags()
         flags.set_expanded(True)
-        flags.set_current_player(game_state.get_current_player())
+        flags.set_current_player(max(0, game_state.get_current_player() - 1))
         self.tree.set_flags(node_index, flags)
 
         return float(value)

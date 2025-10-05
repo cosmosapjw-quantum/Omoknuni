@@ -71,11 +71,13 @@ public:
      *
      * Processes up to 8 children simultaneously using SIMD instructions.
      * Handles remainder children with scalar operations.
+     * Excludes nodes marked as "expanding" by setting their PUCT to -infinity.
      *
      * @param visit_counts Pointer to visit count array
      * @param total_values Pointer to total value array
      * @param prior_probs Pointer to prior probability array
      * @param virtual_losses Pointer to virtual loss array
+     * @param flags Pointer to node flags array
      * @param first_child_index Index of first child
      * @param num_children Number of children to process
      * @param parent_visits Parent node visit count
@@ -87,6 +89,7 @@ public:
         const float* total_values,
         const float* prior_probs,
         const float* virtual_losses,
+        const NodeFlags* flags,
         NodeIndex first_child_index,
         std::uint16_t num_children,
         float parent_visits,

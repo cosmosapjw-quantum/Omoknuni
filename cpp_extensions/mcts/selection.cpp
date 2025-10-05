@@ -8,6 +8,7 @@
 #include <chrono>
 #include <random>
 #include <cstring>
+#include <limits>
 
 #ifdef _MSC_VER
 #include <intrin.h>
@@ -54,11 +55,13 @@ SelectionResult PUCTSelector::select_child(const MCTSTree& tree, NodeIndex paren
     std::vector<float> puct_values(num_children);
 
     // Compute PUCT values using vectorized implementation
+    // This will set -infinity for nodes marked as "expanding"
     compute_puct_vectorized(
         tree.get_visit_counts_ptr(),
         tree.get_total_values_ptr(),
         tree.get_prior_probs_ptr(),
         tree.get_virtual_losses_ptr(),
+        tree.get_flags_ptr(),
         first_child,
         num_children,
         parent_visits,
@@ -83,6 +86,7 @@ void PUCTSelector::compute_puct_vectorized(
     const float* total_values,
     const float* prior_probs,
     const float* virtual_losses,
+    const NodeFlags* flags,
     NodeIndex first_child_index,
     std::uint16_t num_children,
     float parent_visits,
@@ -97,6 +101,7 @@ void PUCTSelector::compute_puct_vectorized(
         const __m256 exploration_vec = _mm256_set1_ps(exploration_term);
         const __m256 ones_vec = _mm256_set1_ps(1.0f);
         const __m256 fpu_vec = _mm256_set1_ps(config_.fpu_value);
+        const __m256 neg_inf_vec = _mm256_set1_ps(-std::numeric_limits<float>::infinity());
 
         for (; processed + simd_batch_size <= num_children; processed += simd_batch_size) {
             NodeIndex base_index = first_child_index + processed;
@@ -106,6 +111,16 @@ void PUCTSelector::compute_puct_vectorized(
             __m256 values = _mm256_loadu_ps(&total_values[base_index]);
             __m256 priors = _mm256_loadu_ps(&prior_probs[base_index]);
             __m256 virtual_loss = _mm256_loadu_ps(&virtual_losses[base_index]);
+
+            // ✅ CRITICAL FIX: Check expanding flags (bit 3 of flags.flags)
+            // Load 8 flags and check if bit 3 is set
+            alignas(32) float expanding_mask_array[8];
+            for (int i = 0; i < 8; ++i) {
+                const uint8_t flag_byte = flags[base_index + i].flags;
+                const bool is_expanding = (flag_byte & 0x08) != 0;  // Check bit 3
+                expanding_mask_array[i] = is_expanding ? -1.0f : 0.0f;  // -1.0f = all bits set
+            }
+            __m256 expanding_mask = _mm256_load_ps(expanding_mask_array);
 
             // Adjust visit counts with virtual loss: visit_count + virtual_loss
             __m256 adjusted_visits = _mm256_add_ps(visits, virtual_loss);
@@ -131,6 +146,9 @@ void PUCTSelector::compute_puct_vectorized(
             // Final PUCT: Q + exploration
             __m256 puct = _mm256_add_ps(q_values, exploration);
 
+            // ✅ Set -infinity for expanding nodes (they should never be selected)
+            puct = _mm256_blendv_ps(puct, neg_inf_vec, expanding_mask);
+
             // Store results
             _mm256_storeu_ps(&puct_values[processed], puct);
         }
@@ -139,6 +157,12 @@ void PUCTSelector::compute_puct_vectorized(
     // Handle remaining children with scalar operations
     for (; processed < num_children; ++processed) {
         NodeIndex child_index = first_child_index + processed;
+
+        // ✅ CRITICAL FIX: Skip expanding nodes
+        if (flags[child_index].is_expanding()) {
+            puct_values[processed] = -std::numeric_limits<float>::infinity();
+            continue;
+        }
 
         float visit_count = visit_counts[child_index];
         float total_value = total_values[child_index];

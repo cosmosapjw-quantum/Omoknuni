@@ -83,9 +83,11 @@ PYBIND11_MODULE(mcts_py, m) {
         .def("is_expanded", &NodeFlags::is_expanded)
         .def("is_terminal", &NodeFlags::is_terminal)
         .def("current_player", &NodeFlags::current_player)
+        .def("is_expanding", &NodeFlags::is_expanding)
         .def("set_expanded", &NodeFlags::set_expanded)
         .def("set_terminal", &NodeFlags::set_terminal)
         .def("set_current_player", &NodeFlags::set_current_player)
+        .def("set_expanding", &NodeFlags::set_expanding)
         .def_readwrite("flags", &NodeFlags::flags);
 
     // Node Info
@@ -142,6 +144,13 @@ PYBIND11_MODULE(mcts_py, m) {
         .def("set_first_child_index", &MCTSTree::set_first_child_index, NoGil())
         .def("set_num_children", &MCTSTree::set_num_children, NoGil())
         .def("set_flags", &MCTSTree::set_flags, NoGil())
+        .def("atomic_try_set_expanded", &MCTSTree::atomic_try_set_expanded, NoGil(),
+            "Atomically try to set expanded flag. Returns true if successful (caller owns expansion), "
+            "false if already expanded by another thread.")
+        .def("atomic_try_mark_expanding", &MCTSTree::atomic_try_mark_expanding, NoGil(),
+            "Atomically mark a node as in-flight for expansion. Returns true if caller owns the request.")
+        .def("clear_expanding_flag", &MCTSTree::clear_expanding_flag, NoGil(),
+            "Clear the expanding flag after inference completes (success or failure).")
         // Memory and performance
         .def("get_memory_usage", &MCTSTree::get_memory_usage)
         .def("get_bytes_per_node", &MCTSTree::get_bytes_per_node)

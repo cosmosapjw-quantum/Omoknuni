@@ -54,25 +54,35 @@ std::vector<InferenceRequest> AsyncInferenceQueue::collect_batch(size_t min_batc
 
             // Check if we have enough requests
             if (pending_requests_.size() >= min_batch_size) {
-                // Move all pending requests to batch
-                batch.reserve(pending_requests_.size());
-                for (auto& req : pending_requests_) {
-                    batch.push_back(std::move(req));
+                // Cap batch size to avoid processing too many at once
+                // This prevents batch size explosion (observed 157-273 vs configured 64)
+                // Target: 1.5× min_batch_size for optimal GPU utilization without overload
+                size_t max_batch_size = min_batch_size + (min_batch_size / 2);
+                size_t batch_count = std::min(pending_requests_.size(), max_batch_size);
+
+                batch.reserve(batch_count);
+                auto it = pending_requests_.begin();
+                for (size_t i = 0; i < batch_count && it != pending_requests_.end(); ++i, ++it) {
+                    batch.push_back(std::move(*it));
                 }
-                pending_requests_.clear();
+                pending_requests_.erase(pending_requests_.begin(), it);
                 return batch;
             }
 
             // Check if timeout elapsed
             auto elapsed = steady_clock::now() - start_time;
             if (elapsed >= timeout_duration) {
-                // Return whatever we have (might be empty)
+                // Return whatever we have (might be empty), but cap at max_batch_size
                 if (!pending_requests_.empty()) {
-                    batch.reserve(pending_requests_.size());
-                    for (auto& req : pending_requests_) {
-                        batch.push_back(std::move(req));
+                    size_t max_batch_size = min_batch_size + (min_batch_size / 2);
+                    size_t batch_count = std::min(pending_requests_.size(), max_batch_size);
+
+                    batch.reserve(batch_count);
+                    auto it = pending_requests_.begin();
+                    for (size_t i = 0; i < batch_count && it != pending_requests_.end(); ++i, ++it) {
+                        batch.push_back(std::move(*it));
                     }
-                    pending_requests_.clear();
+                    pending_requests_.erase(pending_requests_.begin(), it);
                 }
                 return batch;
             }
@@ -140,6 +150,16 @@ size_t AsyncInferenceQueue::get_memory_usage() const {
     }
 
     return total;
+}
+
+std::vector<uint64_t> AsyncInferenceQueue::get_ready_request_ids() const {
+    std::lock_guard<std::mutex> lock(results_mutex_);
+    std::vector<uint64_t> ids;
+    ids.reserve(completed_results_.size());
+    for (const auto& entry : completed_results_) {
+        ids.push_back(entry.first);
+    }
+    return ids;
 }
 
 } // namespace mcts

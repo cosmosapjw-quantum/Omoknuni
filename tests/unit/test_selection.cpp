@@ -160,6 +160,7 @@ TEST_F(PUCTSelectionTest, VectorizedVsScalarConsistency) {
         tree->get_total_values_ptr(),
         tree->get_prior_probs_ptr(),
         tree->get_virtual_losses_ptr(),
+        tree->get_flags_ptr(),
         first_child,
         num_children,
         parent_visits,

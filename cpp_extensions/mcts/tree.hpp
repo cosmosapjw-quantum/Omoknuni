@@ -55,6 +55,7 @@ struct NodeFlags {
     bool is_expanded() const { return flags & 0x01; }
     bool is_terminal() const { return flags & 0x02; }
     std::uint8_t current_player() const { return (flags >> 2) & 0x01; }
+    bool is_expanding() const { return flags & 0x08; }
 
     void set_expanded(bool value) {
         flags = value ? (flags | 0x01) : (flags & ~0x01);
@@ -66,6 +67,10 @@ struct NodeFlags {
 
     void set_current_player(std::uint8_t player) {
         flags = (flags & ~0x04) | ((player & 0x01) << 2);
+    }
+
+    void set_expanding(bool value) {
+        flags = value ? (flags | 0x08) : (flags & static_cast<std::uint8_t>(~0x08));
     }
 
     NodeFlags() : flags(0) {}
@@ -370,6 +375,100 @@ public:
     }
 
     /**
+     * @brief Atomically try to set expanded flag (for race-free expansion)
+     *
+     * @param index Node index to update
+     * @return true if we successfully set expanded=true (we own expansion)
+     *         false if already expanded by another thread
+     */
+    bool atomic_try_set_expanded(NodeIndex index) {
+        assert(is_valid_index(index));
+
+        // Get pointer to flags byte for atomic operations
+        std::atomic<std::uint8_t>* atomic_flags =
+            reinterpret_cast<std::atomic<std::uint8_t>*>(&flags_[index].flags);
+
+        // Atomically check and set expanded bit (bit 0)
+        std::uint8_t expected, desired;
+        do {
+            expected = atomic_flags->load(std::memory_order_acquire);
+
+            // If already expanded, another thread won the race
+            if (expected & 0x01) {
+                return false;
+            }
+
+            // Set expanded bit while preserving other flags
+            desired = expected | 0x01;
+
+        } while (!atomic_flags->compare_exchange_weak(expected, desired,
+                                                      std::memory_order_release,
+                                                      std::memory_order_acquire));
+
+        return true;  // We successfully set expanded flag
+    }
+
+    /**
+     * @brief Atomically mark node as being expanded
+     *
+     * Prevents duplicate expansion requests by ensuring only one thread
+     * can submit inference work for a given leaf at a time.
+     *
+     * @param index Node index to update
+     * @return true if we successfully set expanding=true
+     */
+    bool atomic_try_mark_expanding(NodeIndex index) {
+        assert(is_valid_index(index));
+
+        std::atomic<std::uint8_t>* atomic_flags =
+            reinterpret_cast<std::atomic<std::uint8_t>*>(&flags_[index].flags);
+
+        std::uint8_t expected, desired;
+        do {
+            expected = atomic_flags->load(std::memory_order_acquire);
+
+            // If node already expanded or in-flight, do not mark again
+            if ((expected & 0x01) || (expected & 0x08)) {
+                return false;
+            }
+
+            desired = expected | 0x08;  // mark expanding bit (bit 3)
+
+        } while (!atomic_flags->compare_exchange_weak(expected, desired,
+                                                      std::memory_order_release,
+                                                      std::memory_order_acquire));
+
+        return true;
+    }
+
+    /**
+     * @brief Clear the expanding flag on a node
+     *
+     * Called after inference completes (success or failure) to allow
+     * other threads to select the node again.
+     */
+    void clear_expanding_flag(NodeIndex index) {
+        assert(is_valid_index(index));
+
+        std::atomic<std::uint8_t>* atomic_flags =
+            reinterpret_cast<std::atomic<std::uint8_t>*>(&flags_[index].flags);
+
+        std::uint8_t expected = atomic_flags->load(std::memory_order_acquire);
+        while (true) {
+            if ((expected & 0x08) == 0) {
+                return;  // Already cleared
+            }
+
+            std::uint8_t desired = expected & static_cast<std::uint8_t>(~0x08);
+            if (atomic_flags->compare_exchange_weak(expected, desired,
+                                                    std::memory_order_release,
+                                                    std::memory_order_acquire)) {
+                return;
+            }
+        }
+    }
+
+    /**
      * @brief Check if node index is valid (within allocated range)
      */
     bool is_valid_index(NodeIndex index) const {
@@ -399,6 +498,12 @@ public:
      */
     const float* get_virtual_losses_ptr() const { return virtual_losses_; }
     float* get_virtual_losses_ptr() { return virtual_losses_; }
+
+    /**
+     * @brief Get pointer to flags array (for SIMD operations)
+     */
+    const NodeFlags* get_flags_ptr() const { return flags_; }
+    NodeFlags* get_flags_ptr() { return flags_; }
 
     /**
      * @brief Get move index associated with a node

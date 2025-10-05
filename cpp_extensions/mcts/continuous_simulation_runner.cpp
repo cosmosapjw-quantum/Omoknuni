@@ -24,9 +24,21 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
                                                  int num_simulations) {
     int completed = 0;
     int submitted = 0;
+    pending_expansions_.clear();
+
+    auto release_virtual_loss = [this](const std::vector<NodeIndex>& path) {
+        if (path.size() <= 1) {
+            return;
+        }
+        for (size_t i = 1; i < path.size(); ++i) {
+            virtual_loss_.remove_virtual_loss(path[i]);
+        }
+    };
 
     // Continuous loop until quota reached
     while (completed < num_simulations) {
+        bool waiting_for_leaf = false;
+
         // Phase 1: Select to leaf and submit inference (NON-BLOCKING)
         if (submitted < num_simulations) {
             // Clone state for this simulation
@@ -52,40 +64,56 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
                 continue;
             }
 
-            // Check if already expanded
-            NodeFlags flags = tree_.get_flags(leaf);
-            if (flags.is_expanded()) {
-                // Already expanded - shouldn't happen often
-                // Backup neutral value and continue
-                std::reverse(path_buffer_.begin(), path_buffer_.end());
-                backup_value(path_buffer_, 0.0f);
-                completed++;
+            // Ensure only one in-flight expansion per node
+            bool submission_ready = true;
+            if (!tree_.atomic_try_mark_expanding(leaf)) {
+                release_virtual_loss(path_buffer_);
+                waiting_for_leaf = true;
+                submission_ready = false;
+            }
+
+            std::unique_ptr<IGameState> queue_state;
+            if (submission_ready) {
+                // Clone state for queue submission (queue takes ownership)
+                queue_state = current_state->clone();
+                if (!queue_state) {
+                    tree_.clear_expanding_flag(leaf);
+                    release_virtual_loss(path_buffer_);
+                    waiting_for_leaf = true;
+                    submission_ready = false;
+                }
+            }
+
+            if (submission_ready) {
+                constexpr std::size_t kMaxInFlight = 4096;
+                std::size_t backoff_loops = 0;
+                while (queue.pending_count() >= kMaxInFlight || pending_expansions_.size() >= kMaxInFlight) {
+                    waiting_for_leaf = true;
+                    int flushed = process_completed_results(queue);
+                    if (flushed == 0) {
+                        std::this_thread::sleep_for(std::chrono::microseconds(100));
+                    }
+                    if (++backoff_loops > 1024) {
+                        break;  // Prevent unbounded waiting
+                    }
+                }
+
+                // Submit request (NON-BLOCKING)
+                uint64_t request_id = queue.submit_request(
+                    std::move(queue_state),
+                    leaf,
+                    path_buffer_
+                );
+
+                // Track pending expansion (keep original state for expansion)
+                PendingExpansion pending;
+                pending.leaf_node = leaf;
+                pending.path = path_buffer_;  // Copy path
+                pending.state = std::move(current_state);  // Keep state for expansion
+                pending_expansions_[request_id] = std::move(pending);
+
                 submitted++;
-                continue;
             }
-
-            // Non-terminal unexpanded node - needs inference
-            // Clone state for queue submission (queue takes ownership)
-            std::unique_ptr<IGameState> queue_state = current_state->clone();
-            if (!queue_state) {
-                continue;  // Skip on clone failure
-            }
-
-            // Submit request (NON-BLOCKING)
-            uint64_t request_id = queue.submit_request(
-                std::move(queue_state),
-                leaf,
-                path_buffer_
-            );
-
-            // Track pending expansion (keep original state for expansion)
-            PendingExpansion pending;
-            pending.leaf_node = leaf;
-            pending.path = path_buffer_;  // Copy path
-            pending.state = std::move(current_state);  // Keep state for expansion
-            pending_expansions_[request_id] = std::move(pending);
-
-            submitted++;
         }
 
         // Phase 2: Process completed results (NON-BLOCKING)
@@ -93,62 +121,63 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
         completed += processed;
 
         // Yield briefly if no results available to avoid busy-waiting
-        if (processed == 0 && submitted >= num_simulations) {
-            // All submitted, just waiting for results
-            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        if (processed == 0) {
+            bool all_submitted = submitted >= num_simulations;
+            if (all_submitted || waiting_for_leaf) {
+                auto sleep_duration = waiting_for_leaf ? std::chrono::microseconds(50)
+                                                       : std::chrono::microseconds(100);
+                std::this_thread::sleep_for(sleep_duration);
+            }
         }
     }
 
+    pending_expansions_.clear();
     return completed;
 }
 
 int ContinuousSimulationRunner::process_completed_results(AsyncInferenceQueue& queue) {
     int processed = 0;
 
-    // Process all available results in a batch
     while (queue.has_results()) {
-        // Find a pending expansion with available result
-        bool found_result = false;
+        auto ready_ids = queue.get_ready_request_ids();
+        bool handled_any = false;
 
-        for (auto it = pending_expansions_.begin(); it != pending_expansions_.end(); ) {
-            uint64_t request_id = it->first;
-            auto& pending = it->second;
-
-            // Try to get result (non-blocking)
-            auto result_opt = queue.try_get_result(request_id);
-            if (!result_opt.has_value()) {
-                ++it;
+        for (uint64_t request_id : ready_ids) {
+            auto pending_it = pending_expansions_.find(request_id);
+            if (pending_it == pending_expansions_.end()) {
                 continue;
             }
 
-            found_result = true;
+            auto result_opt = queue.try_get_result(request_id);
+            if (!result_opt.has_value()) {
+                continue;
+            }
+
+            handled_any = true;
+            auto pending = std::move(pending_it->second);
+            pending_expansions_.erase(pending_it);
+
             const auto& result = result_opt.value();
 
-            // Expand node with result (we have the state stored)
             if (pending.state && expand_node_with_result(
                     pending.leaf_node,
                     *pending.state,
                     result.policy,
                     result.value)) {
-                // Expansion successful, backup value
                 std::vector<NodeIndex> path = pending.path;
                 std::reverse(path.begin(), path.end());
                 backup_value(path, result.value);
             } else {
-                // Expansion failed, backup neutral value
                 std::vector<NodeIndex> path = pending.path;
                 std::reverse(path.begin(), path.end());
-                backup_value(path, 0.0f);
+                backup_value(path, result.value);
             }
 
+            tree_.clear_expanding_flag(pending.leaf_node);
             processed++;
-
-            // Remove from pending
-            it = pending_expansions_.erase(it);
         }
 
-        if (!found_result) {
-            // No more results match our pending expansions
+        if (!handled_any) {
             break;
         }
     }
@@ -161,6 +190,14 @@ bool ContinuousSimulationRunner::expand_node_with_result(
     const IGameState& state,
     const std::vector<float>& policy,
     float value) {
+
+    // ✅ CRITICAL FIX: Check if already expanded (but don't claim yet)
+    // We'll claim after allocating children to avoid race where threads see
+    // expanded=true but num_children=0
+    NodeFlags flags = tree_.get_flags(leaf);
+    if (flags.is_expanded()) {
+        return false;  // Already expanded by another thread
+    }
 
     // Get legal moves
     std::vector<int> legal_moves = state.getLegalMoves();
@@ -224,14 +261,19 @@ bool ContinuousSimulationRunner::expand_node_with_result(
         tree_.set_flags(child_idx, child_flags);
     }
 
-    // Update parent
+    // Update parent with children info
     tree_.set_first_child_index(leaf, first_child);
     tree_.set_num_children(leaf, num_children);
 
-    // Mark as expanded
-    NodeFlags flags = tree_.get_flags(leaf);
-    flags.set_expanded(true);
-    tree_.set_flags(leaf, flags);
+    // ✅ CRITICAL: Atomically set expanded flag AFTER children are ready
+    // This ensures other threads see a fully initialized node
+    // If another thread wins this race, we wasted some work but tree stays consistent
+    if (!tree_.atomic_try_set_expanded(leaf)) {
+        // Another thread set expanded flag - this is very rare but can happen
+        // Our allocated children will be orphaned, but tree remains valid
+        // This is acceptable vs. the alternative of exposing partially initialized nodes
+        return false;
+    }
 
     return true;
 }

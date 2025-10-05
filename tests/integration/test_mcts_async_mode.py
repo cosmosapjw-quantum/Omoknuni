@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../src'))
 
 from core.mcts import AlphaZeroMCTS
 import alphazero_py
+import mcts_py
 
 
 def create_mock_inference_fn():
@@ -56,8 +57,9 @@ def test_async_mode_initialization():
     # Verify async components created
     assert mcts.use_async_inference is True
     assert mcts.async_queue is not None
-    assert isinstance(mcts.simulation_runner.__class__.__name__, str)
-    # Note: Can't easily check type in Python, but should be ContinuousSimulationRunner
+    assert hasattr(mcts, 'simulation_runners')
+    assert len(mcts.simulation_runners) == mcts.num_threads
+    assert all(runner is not None for runner in mcts.simulation_runners)
     assert mcts.coordinator is None  # Not created until search
 
 def test_sync_mode_backward_compatibility():
@@ -145,6 +147,33 @@ def test_async_and_sync_produce_valid_policies():
     assert np.all(policy_sync >= 0.0)
 
 
+def test_dirichlet_noise_applied_to_root():
+    """Dirichlet noise should perturb root priors when requested."""
+    inference_fn = create_mock_inference_fn()
+
+    mcts = AlphaZeroMCTS(
+        inference_fn=inference_fn,
+        use_async_inference=False
+    )
+
+    state = alphazero_py.GomokuState()
+    np.random.seed(42)
+
+    mcts.search(state, simulations=1, add_noise=True)
+
+    first_child = mcts.tree.get_first_child_index(mcts.root_index)
+    num_children = mcts.tree.get_num_children(mcts.root_index)
+    priors = np.array([
+        mcts.tree.get_prior_prob(first_child + i)
+        for i in range(num_children)
+        if mcts.tree.is_valid_index(first_child + i)
+    ], dtype=np.float32)
+
+    assert priors.size == num_children
+    assert np.isclose(priors.sum(), 1.0, atol=1e-5)
+    assert priors.std() > 1e-4  # Noise should introduce variance
+
+
 def test_coordinator_cleanup_on_exception():
     """Test that coordinator is properly cleaned up even if search fails."""
     def failing_inference_fn(state) -> Future:
@@ -195,6 +224,94 @@ def test_async_performance_improvement():
     # Verify simulations completed (check root visits)
     root_visits = mcts.tree.get_visit_count(mcts.root_index)
     assert root_visits == 100.0, f"Expected 100 root visits, got {root_visits}"
+
+
+def test_async_fast_path_uses_batch_inference():
+    """Ensure that async mode uses batch_inference when available."""
+
+    class BatchInferenceStub:
+        def __init__(self):
+            self.batch_calls = 0
+            self.single_calls = 0
+            self._policy = np.ones(225, dtype=np.float32) / 225.0
+
+        def batch_inference(self, positions):
+            self.batch_calls += 1
+            batch_size = len(positions)
+            policies = np.stack([self._policy for _ in positions], axis=0)
+            values = np.zeros(batch_size, dtype=np.float32)
+            return policies, values
+
+        def __call__(self, state):
+            self.single_calls += 1
+            future = Future()
+            action_space = state.get_action_space_size()
+            policy = np.ones(action_space, dtype=np.float32) / action_space
+            future.set_result((policy, 0.0))
+            return future
+
+    stub = BatchInferenceStub()
+
+    mcts = AlphaZeroMCTS(
+        inference_fn=stub,
+        use_async_inference=True,
+        async_batch_size=4,
+        async_timeout_ms=2.0,
+        num_threads=1
+    )
+
+    state = alphazero_py.GomokuState()
+    mcts.search(state, simulations=32)
+
+    assert stub.batch_calls > 0
+    assert stub.single_calls == 0
+    assert getattr(mcts, '_supports_batch_inference', False) is True
+
+
+def test_async_search_deepens_tree():
+    """Ensure async runner explores beyond immediate children."""
+    inference_fn = create_mock_inference_fn()
+
+    mcts = AlphaZeroMCTS(
+        inference_fn=inference_fn,
+        use_async_inference=True,
+        num_threads=4,
+        async_batch_size=8,
+        async_timeout_ms=5.0
+    )
+
+    state = alphazero_py.GomokuState()
+    mcts.search(state, simulations=256)
+
+    tree = mcts.tree
+    root = mcts.root_index
+    first_child = tree.get_first_child_index(root)
+    num_children = tree.get_num_children(root)
+
+    assert first_child != mcts_py.NULL_NODE_INDEX
+    visited_grandchildren = 0
+
+    for i in range(num_children):
+        child = first_child + i
+        if not tree.is_valid_index(child):
+            continue
+        if tree.get_visit_count(child) <= 0.0:
+            continue
+
+        grand_first = tree.get_first_child_index(child)
+        grand_num = tree.get_num_children(child)
+        if grand_first == mcts_py.NULL_NODE_INDEX or grand_num == 0:
+            continue
+
+        for j in range(grand_num):
+            grandchild = grand_first + j
+            if not tree.is_valid_index(grandchild):
+                continue
+            if tree.get_visit_count(grandchild) > 0.0:
+                visited_grandchildren += 1
+                break
+
+    assert visited_grandchildren > 0, "Async search did not explore beyond depth 1"
 
 
 def test_async_batch_settings():
