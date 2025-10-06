@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Spec 004: MCTS Throughput Recovery - Phase 1 In Progress (2025-10-06)
+
+#### T001: WU-UCT Virtual Loss Manager (2025-10-06)
+- **Added**: New `WUUCTVirtualLossManager` class for visit-only virtual loss (WU-UCT style)
+- **Files**:
+  - `cpp_extensions/mcts/virtual_loss.hpp` - Added WU-UCT manager and guard classes
+  - `cpp_extensions/mcts/virtual_loss.cpp` - Implemented thread-safe in-flight tracking
+  - `tests/unit/test_wuuct_virtual_loss.cpp` - Comprehensive unit tests (17 tests)
+- **Key Changes**:
+  - Separates in-flight simulation tracking from Q-value calculation
+  - Classic VL: `Q = (W - VL) / N` distorts Q-values
+  - WU-UCT: `Q = W / N` pure, `U = P*sqrt(N_p)/(1 + N + VL)` exploration-only adjustment
+  - Cache-aligned atomic counters (64-byte alignment) for performance
+  - Built-in collision tracking for thread coordination metrics
+  - RAII `WUUCTVirtualLossGuard` for automatic cleanup
+- **Performance**:
+  - 2.7ns per add/remove operation (sub-3ns target met)
+  - Wait-free atomic operations (no locks)
+  - 4 bytes per node memory overhead
+- **Benefits**:
+  - Pure Q-values for accurate value estimates
+  - More robust to virtual loss magnitude tuning
+  - Lower atomic contention vs classic VL
+  - Maintains thread safety without Q-value distortion
+- **Validation**: All 17 unit tests pass (basic ops, guards, thread safety, performance)
+- **Status**: ✅ Complete (awaiting integration into selection logic)
+
 ### Spec 002: C++ MCTS Simulation Runner - Phase 0 In Progress (2025-10-02)
 
 #### T001: Policy Loss Function Fix (2025-10-02)

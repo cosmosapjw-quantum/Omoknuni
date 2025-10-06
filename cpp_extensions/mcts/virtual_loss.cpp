@@ -209,4 +209,137 @@ void VirtualLossGuard::release() {
     }
 }
 
+// ============================================================================
+// WU-UCT Virtual Loss Manager Implementation
+// ============================================================================
+
+WUUCTVirtualLossManager::WUUCTVirtualLossManager(
+    std::size_t max_nodes,
+    float virtual_loss_magnitude
+) : max_nodes_(max_nodes), magnitude_(virtual_loss_magnitude) {
+    // Allocate cache-aligned array of atomic counters
+    // Note: We can't use std::vector because std::atomic is not copyable
+    in_flight_ = new (std::align_val_t{64}) std::atomic<std::uint32_t>[max_nodes];
+
+    // Initialize all counters to zero
+    for (std::size_t i = 0; i < max_nodes_; ++i) {
+        in_flight_[i].store(0, std::memory_order_relaxed);
+    }
+}
+
+void WUUCTVirtualLossManager::add_in_flight(NodeIndex node_index) {
+    if (!is_valid_index(node_index)) {
+        return;  // Invalid index, silently ignore
+    }
+
+    // Atomic increment - wait-free operation
+    std::uint32_t old_count = in_flight_[node_index].fetch_add(
+        1, std::memory_order_relaxed
+    );
+
+    // Track collisions (when multiple threads visit same node)
+    if (old_count > 0) {
+        collision_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Instrumentation for performance tracking
+    Instrumentation::instance().increment_counter(InstrumentationMetric::VirtualLossApply);
+}
+
+void WUUCTVirtualLossManager::remove_in_flight(NodeIndex node_index) {
+    if (!is_valid_index(node_index)) {
+        return;  // Invalid index, silently ignore
+    }
+
+    // Atomic decrement - wait-free operation
+    std::uint32_t old_count = in_flight_[node_index].fetch_sub(
+        1, std::memory_order_relaxed
+    );
+
+    // Safety check: ensure we don't underflow
+    if (old_count == 0) {
+        // This indicates a bug - removing virtual loss that wasn't applied
+        // Re-increment to prevent underflow
+        in_flight_[node_index].fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+
+    // Instrumentation for performance tracking
+    Instrumentation::instance().increment_counter(InstrumentationMetric::VirtualLossRemove);
+}
+
+float WUUCTVirtualLossManager::get_exploration_adjustment(NodeIndex node_index) const {
+    if (!is_valid_index(node_index)) {
+        return 0.0f;
+    }
+
+    // Get in-flight count and scale by magnitude
+    std::uint32_t count = in_flight_[node_index].load(std::memory_order_relaxed);
+    return static_cast<float>(count) * magnitude_;
+}
+
+bool WUUCTVirtualLossManager::is_busy(NodeIndex node_index) const {
+    if (!is_valid_index(node_index)) {
+        return false;
+    }
+
+    return in_flight_[node_index].load(std::memory_order_relaxed) > 0;
+}
+
+std::uint32_t WUUCTVirtualLossManager::get_in_flight_count(NodeIndex node_index) const {
+    if (!is_valid_index(node_index)) {
+        return 0;
+    }
+
+    return in_flight_[node_index].load(std::memory_order_relaxed);
+}
+
+WUUCTVirtualLossManager::~WUUCTVirtualLossManager() {
+    // Free aligned memory
+    operator delete[](in_flight_, std::align_val_t{64});
+}
+
+void WUUCTVirtualLossManager::clear_all() {
+    // Reset all in-flight counts to zero
+    for (std::size_t i = 0; i < max_nodes_; ++i) {
+        in_flight_[i].store(0, std::memory_order_relaxed);
+    }
+
+    // Reset collision counter
+    collision_count_.store(0, std::memory_order_relaxed);
+}
+
+// ============================================================================
+// WU-UCT Virtual Loss Guard Implementation
+// ============================================================================
+
+WUUCTVirtualLossGuard::WUUCTVirtualLossGuard(
+    WUUCTVirtualLossManager& manager,
+    const std::vector<NodeIndex>& path
+) : manager_(manager), path_(path), released_(false) {
+    // Apply virtual loss to entire path
+    for (NodeIndex node : path_) {
+        manager_.add_in_flight(node);
+    }
+}
+
+WUUCTVirtualLossGuard::~WUUCTVirtualLossGuard() {
+    if (!released_) {
+        release();
+    }
+}
+
+void WUUCTVirtualLossGuard::release() {
+    if (released_) {
+        return;  // Already released
+    }
+
+    // Remove virtual loss from entire path
+    for (NodeIndex node : path_) {
+        manager_.remove_in_flight(node);
+    }
+
+    released_ = true;
+}
+
 } // namespace mcts

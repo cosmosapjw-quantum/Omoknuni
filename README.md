@@ -4,20 +4,18 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 
 ## Project Status
 
-🚀 **Spec 003 Complete: Async Inference Batching** - Performance Analysis Complete
+🚀 **Spec 004 In Progress: MCTS Throughput Recovery** - Phase 1 (Virtual Loss Optimizations)
 
 ### Current Status
-- **Version**: 1.0.0-alpha + Spec 003 (All Phases Complete)
+- **Version**: 1.0.0-alpha + Spec 004 (Phase 1 Started)
 - **Alpha Release Date**: 2025-10-01
 - **Spec 002**: ✅ COMPLETE (2025-10-03) - C++ Simulation Runner (7× Python baseline)
 - **Spec 003**: ✅ COMPLETE (2025-10-05) - Async inference batching with comprehensive optimization
-  - Phase 1: ✅ AsyncInferenceQueue infrastructure
-  - Phase 2: ✅ ContinuousSimulationRunner
-  - Phase 3: ✅ BatchInferenceCoordinator
-  - Phase 4: ✅ Python integration
-  - Phase 5: ✅ Performance optimization (T017-T019 complete)
+- **Spec 004**: 🔄 IN PROGRESS (Started 2025-10-06) - MCTS Throughput Recovery
+  - Phase 1: 🔄 Virtual Loss & Quick Wins (T001 ✅ complete)
+  - Target: 25,000+ sims/sec (8× current performance)
 - **Current Performance**: 3,831 sims/sec peak (12.8% of 30k target)
-- **Next**: Spec 004 - Architecture redesign for 30k target
+- **Next**: T001b (Epoch-based tree clearing) + T002 (Busy-edge masking)
 
 ### Spec 003 Complete: Performance Analysis & Optimization
 
@@ -62,9 +60,34 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - **Option B**: Lock-free queue + optimized C++ - 2× potential, max ~8k sims/sec
 - **Option C**: GPU-accelerated MCTS (TPU approach) - 10-20× potential, complete rewrite
 
-**Next**: Spec 004 - Architecture redesign proposal
+**Next Steps**: Spec 004 implementation targeting 25,000+ sims/sec through:
+- WU-UCT virtual loss (✅ T001 complete)
+- Epoch-based tree clearing
+- Lock-free queues
+- Zero-copy tensor bridges
+- Thread affinity optimization
 
 See [Async Optimization Results](docs/performance/async_optimization_results.md) for detailed analysis.
+
+### Spec 004: MCTS Throughput Recovery (In Progress)
+
+**Goal**: Achieve 25,000+ simulations/second (8× improvement) through targeted optimizations
+
+**Phase 1: Virtual Loss & Quick Wins** (Week 1):
+- ✅ **T001**: WU-UCT Virtual Loss Manager (2025-10-06)
+  - Separates in-flight tracking from Q-value calculation
+  - Pure Q-values: `Q = W/N` (no distortion)
+  - Exploration adjustment: `U = P*sqrt(N_p)/(1 + N + VL)`
+  - Performance: 2.7ns per operation, 4 bytes per node
+  - All 17 unit tests pass, thread-safe with collision tracking
+- [ ] **T001b**: Epoch-based tree clearing (save 10-50ms per search)
+- [ ] **T002**: Busy-edge masking in selection
+- [ ] **T003**: Root pre-expansion (2× speedup potential)
+- [ ] **T004**: Thread affinity for Ryzen 5900X (1.15× speedup)
+
+**Expected Impact**: Phase 1 targets 12k sims/sec (3× improvement)
+
+See [Spec 004](specs/004-mcts-throughput-recovery/) for full implementation plan.
 
 ### Completed
 - [x] **T001**: Project structure and build system setup

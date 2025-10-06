@@ -210,4 +210,188 @@ private:
     bool released_;
 };
 
+/**
+ * @brief WU-UCT style virtual loss manager (visit-only, no Q-value distortion)
+ *
+ * Unlike classic virtual loss which modifies Q-values during selection,
+ * WU-UCT only tracks in-flight simulations and adjusts the exploration
+ * term's denominator. This prevents Q-value distortion while still
+ * providing effective thread coordination.
+ *
+ * Formula change:
+ * - Classic: Q = (W - VL) / (N + 1), U = P * sqrt(N_parent) / (1 + N)
+ * - WU-UCT:  Q = W / N,              U = P * sqrt(N_parent) / (1 + N + VL)
+ *
+ * Benefits:
+ * - Pure Q-values for accurate value estimates
+ * - Virtual loss only discourages re-selection via exploration term
+ * - More robust to virtual loss magnitude tuning
+ * - Lower atomic contention (single counter vs value accumulation)
+ */
+class WUUCTVirtualLossManager {
+public:
+    /**
+     * @brief Initialize WU-UCT virtual loss manager
+     *
+     * @param max_nodes Maximum number of tree nodes to support
+     * @param virtual_loss_magnitude Scaling factor for virtual loss (default 1.0)
+     */
+    explicit WUUCTVirtualLossManager(
+        std::size_t max_nodes,
+        float virtual_loss_magnitude = 1.0f
+    );
+
+    /**
+     * @brief Destructor - free allocated memory
+     */
+    ~WUUCTVirtualLossManager();
+
+    // Disable copy/move (contains raw pointers)
+    WUUCTVirtualLossManager(const WUUCTVirtualLossManager&) = delete;
+    WUUCTVirtualLossManager& operator=(const WUUCTVirtualLossManager&) = delete;
+    WUUCTVirtualLossManager(WUUCTVirtualLossManager&&) = delete;
+    WUUCTVirtualLossManager& operator=(WUUCTVirtualLossManager&&) = delete;
+
+    /**
+     * @brief Apply virtual loss when thread starts exploring a node
+     *
+     * Thread-safe atomic increment of in-flight counter.
+     * Does not modify node's Q-value.
+     *
+     * @param node_index Index of node being visited
+     */
+    void add_in_flight(NodeIndex node_index);
+
+    /**
+     * @brief Remove virtual loss when simulation completes
+     *
+     * Thread-safe atomic decrement of in-flight counter.
+     *
+     * @param node_index Index of node to update
+     */
+    void remove_in_flight(NodeIndex node_index);
+
+    /**
+     * @brief Get exploration term adjustment for PUCT calculation
+     *
+     * Returns the value to add to visit count in exploration denominator:
+     * exploration = c_puct * P * sqrt(N_parent) / (1 + N + adjustment)
+     *
+     * @param node_index Node to query
+     * @return Adjustment value (in_flight_count * magnitude)
+     */
+    float get_exploration_adjustment(NodeIndex node_index) const;
+
+    /**
+     * @brief Check if node is currently being explored (busy-edge masking)
+     *
+     * @param node_index Node to check
+     * @return True if node has active in-flight simulations
+     */
+    bool is_busy(NodeIndex node_index) const;
+
+    /**
+     * @brief Get number of in-flight simulations for a node
+     *
+     * @param node_index Node to query
+     * @return Current in-flight count
+     */
+    std::uint32_t get_in_flight_count(NodeIndex node_index) const;
+
+    /**
+     * @brief Get total selection collision count
+     *
+     * Tracks how many times threads selected same path
+     *
+     * @return Total collision count since creation
+     */
+    std::uint64_t get_collision_count() const {
+        return collision_count_.load(std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief Reset collision tracking statistics
+     */
+    void reset_statistics() {
+        collision_count_.store(0, std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief Update virtual loss magnitude
+     *
+     * @param new_magnitude New scaling factor
+     */
+    void set_magnitude(float new_magnitude) {
+        magnitude_ = new_magnitude;
+    }
+
+    /**
+     * @brief Get current virtual loss magnitude
+     */
+    float get_magnitude() const {
+        return magnitude_;
+    }
+
+    /**
+     * @brief Clear all in-flight counts (for tree reuse)
+     */
+    void clear_all();
+
+private:
+    // In-flight simulation counts (cache-aligned for performance)
+    // Note: Using raw array with manual allocation to avoid std::atomic copy issues
+    std::atomic<std::uint32_t>* in_flight_;  // One per node
+    std::size_t max_nodes_;                   // Size of in_flight_ array
+    float magnitude_;                         // Virtual loss scaling factor
+    std::atomic<std::uint64_t> collision_count_{0};  // Collision tracking
+
+    /**
+     * @brief Validate node index
+     */
+    bool is_valid_index(NodeIndex node_index) const {
+        return node_index >= 0 && static_cast<std::size_t>(node_index) < max_nodes_;
+    }
+};
+
+/**
+ * @brief RAII guard for automatic WU-UCT virtual loss management
+ *
+ * Applies virtual loss on construction and removes on destruction.
+ * Handles paths of nodes for simulation traversal.
+ */
+class WUUCTVirtualLossGuard {
+public:
+    /**
+     * @brief Apply virtual loss to entire path
+     *
+     * @param manager WU-UCT manager instance
+     * @param path Vector of nodes from leaf to root
+     */
+    WUUCTVirtualLossGuard(
+        WUUCTVirtualLossManager& manager,
+        const std::vector<NodeIndex>& path
+    );
+
+    /**
+     * @brief Remove virtual loss from path
+     */
+    ~WUUCTVirtualLossGuard();
+
+    // Disable copy/move
+    WUUCTVirtualLossGuard(const WUUCTVirtualLossGuard&) = delete;
+    WUUCTVirtualLossGuard& operator=(const WUUCTVirtualLossGuard&) = delete;
+    WUUCTVirtualLossGuard(WUUCTVirtualLossGuard&&) = delete;
+    WUUCTVirtualLossGuard& operator=(WUUCTVirtualLossGuard&&) = delete;
+
+    /**
+     * @brief Manually remove virtual loss (called automatically by destructor)
+     */
+    void release();
+
+private:
+    WUUCTVirtualLossManager& manager_;
+    std::vector<NodeIndex> path_;
+    bool released_;
+};
+
 } // namespace mcts
