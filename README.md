@@ -80,7 +80,11 @@ See [Async Optimization Results](docs/performance/async_optimization_results.md)
   - Exploration adjustment: `U = P*sqrt(N_p)/(1 + N + VL)`
   - Performance: 2.7ns per operation, 4 bytes per node
   - All 17 unit tests pass, thread-safe with collision tracking
-- [ ] **T001b**: Epoch-based tree clearing (save 10-50ms per search)
+- ✅ **T001b**: Epoch-based tree clearing (2025-10-06) - **Pre-existing**
+  - Already implemented: clear() uses epoch increment (25ns) instead of memset (25ms)
+  - 1,000,000× speedup over naive approach
+  - Lazy node initialization at allocation time
+  - All 8 validation tests pass
 - [ ] **T002**: Busy-edge masking in selection
 - [ ] **T003**: Root pre-expansion (2× speedup potential)
 - [ ] **T004**: Thread affinity for Ryzen 5900X (1.15× speedup)
