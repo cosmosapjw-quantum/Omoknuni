@@ -4,6 +4,7 @@
  */
 
 #include "simulation_runner.hpp"
+#include "instrumentation.hpp"
 #include "../utils/igamestate.h"
 #include <stdexcept>
 #include <algorithm>  // for std::reverse
@@ -65,6 +66,7 @@ bool SimulationRunner::run_simulation(IGameState& root_state,
 NodeIndex SimulationRunner::select_leaf(NodeIndex root,
                                         IGameState& current_state,
                                         std::vector<NodeIndex>& path) {
+    ScopedMetric metric(InstrumentationMetric::Selection);
     // Clear path and start from root
     path.clear();
     path.push_back(root);
@@ -112,6 +114,7 @@ NodeIndex SimulationRunner::select_leaf(NodeIndex root,
 float SimulationRunner::expand_node(NodeIndex leaf,
                                     IGameState& state,
                                     InferenceCallback& inference_fn) {
+    ScopedMetric metric(InstrumentationMetric::Expansion);
     // Check if the state is terminal
     if (state.isTerminal()) {
         // Mark node as terminal and return the game result value
@@ -143,7 +146,9 @@ float SimulationRunner::expand_node(NodeIndex leaf,
 
     // Apply legal move masking and renormalize
     float policy_sum = 0.0f;
-    std::vector<float> masked_policy(legal_moves.size());
+    thread_local std::vector<float> masked_policy_buffer;
+    masked_policy_buffer.resize(legal_moves.size());
+    auto& masked_policy = masked_policy_buffer;
 
     for (size_t i = 0; i < legal_moves.size(); ++i) {
         int move = legal_moves[i];
@@ -157,12 +162,13 @@ float SimulationRunner::expand_node(NodeIndex leaf,
 
     // Normalize the masked policy
     if (policy_sum > 0.0f) {
+        const float inv_sum = 1.0f / policy_sum;
         for (float& p : masked_policy) {
-            p /= policy_sum;
+            p *= inv_sum;
         }
     } else {
         // Uniform distribution if all priors were zero
-        float uniform_prob = 1.0f / legal_moves.size();
+        const float uniform_prob = 1.0f / static_cast<float>(legal_moves.size());
         for (float& p : masked_policy) {
             p = uniform_prob;
         }
@@ -216,6 +222,7 @@ float SimulationRunner::expand_node(NodeIndex leaf,
 
 void SimulationRunner::backup_value(const std::vector<NodeIndex>& path,
                                     float leaf_value) {
+    ScopedMetric metric(InstrumentationMetric::Backup);
     // Delegate to BackupManager which handles:
     // - Value sign flipping at each tree level (alternating player perspective)
     // - Atomic visit count and value updates for thread safety

@@ -547,6 +547,9 @@ private:
     // Atomic to allow lock-free reads from is_valid_index() and get_available_nodes()
     std::atomic<std::size_t> next_free_index_;
 
+    // Allocation epoch used to invalidate thread-local caches on clear()
+    std::atomic<std::uint64_t> allocation_epoch_{0};
+
     // Mutex to protect allocation/deallocation operations
     // Needed for thread-safe concurrent node allocation in MCTS search
     mutable std::mutex allocation_mutex_;

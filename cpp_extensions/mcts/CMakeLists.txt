@@ -35,6 +35,8 @@ add_library(mcts_core STATIC
     virtual_loss.hpp
     backup.cpp
     backup.hpp
+    instrumentation.cpp
+    instrumentation.hpp
     simulation_runner.cpp
     simulation_runner.hpp
     async_inference_queue.cpp
@@ -87,6 +89,7 @@ add_executable(mcts_compile_test
     virtual_loss.cpp
     backup.cpp
     simulation_runner.cpp
+    instrumentation.cpp
 )
 
 # Create minimal main function for compilation test

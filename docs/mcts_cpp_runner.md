@@ -1,7 +1,7 @@
 # MCTS C++ Simulation Runner Guide
 
 **Version:** 1.0
-**Last Updated:** 2025-10-03
+**Last Updated:** 2025-10-07
 **Spec:** `specs/002-cpp-simulation-runner/`
 
 This guide documents the C++ MCTS simulation runner implementation, which replaces the Python simulation loop to achieve 30-40k simulations/second (vs 246 sims/sec Python baseline).
@@ -211,42 +211,44 @@ std::pair<std::vector<float>, float> PyInferenceCallback::request_inference(IGam
 
 ## Memory Management
 
-### Node Allocation
+### Node Allocation (Generation 2)
 
 ```cpp
-// Pre-allocated pools with free list
 class MCTSTree {
     std::size_t max_nodes_;
     std::atomic<std::size_t> node_count_{0};
     std::atomic<std::size_t> next_free_index_{0};
+    std::atomic<std::uint64_t> allocation_epoch_{0};
     std::vector<NodeIndex> free_nodes_;
-    std::mutex allocation_mutex_;  // Protects allocation/deallocation
+    std::mutex allocation_mutex_;
 
     // SoA arrays (64-byte aligned)
-    alignas(64) float* priors_;
-    alignas(64) std::atomic<float>* visit_counts_;
-    alignas(64) std::atomic<float>* value_sums_;
-    alignas(64) uint16_t* moves_;  // Move storage
-    // ... other fields
+    alignas(64) float* visit_counts_;
+    alignas(64) float* total_values_;
+    alignas(64) float* prior_probs_;
+    alignas(64) float* virtual_losses_;
+    alignas(64) NodeIndex* parent_indices_;
+    alignas(64) NodeIndex* first_child_indices_;
+    alignas(64) std::uint16_t* num_children_;
+    alignas(64) NodeFlags* flags_;
+    alignas(64) std::uint16_t* moves_;
 };
 ```
 
 ### Allocation Strategy
 
-1. **Batch Allocation**: `allocate_nodes(count)` for expansion
-2. **Free List Reuse**: Deallocated nodes added to `free_nodes_`
-3. **O(1) Operations**: Index-based access, no malloc in hot path
-4. **Thread-Safe**: Mutex protects allocation, atomics for data
+1. **Thread-Local Node Blocks** – each worker caches up to 64 fresh nodes, refilling under a mutex only when the local slab is empty. Blocks are invalidated automatically when `allocation_epoch_` changes (e.g., after `clear()`), so no stale indices leak between searches.
+2. **Free-List Reuse** – explicit deallocations (rare in practice) still push indices onto `free_nodes_` and are reclaimed before touching the contiguous pool.
+3. **Lazy Tree Reset** – `clear()` now increments `allocation_epoch_`, resets counters, and skips the `memset` over previously used ranges. Per-node zeroing happens when nodes are handed out (`initialize_node_range`). This keeps reset cost sub-millisecond even for large trees.
+4. **Instrumentation-Aware** – every allocation path emits `tree_allocate_node` / `tree_allocate_nodes` metrics (see `docs/performance/mcts_cpp_runner_metrics.md`) so we can profile allocator pressure when tuning block sizes.
 
 ### Memory Footprint
 
-- **10M nodes**: 270MB total
-  - Visit counts: 40MB (float32)
-  - Value sums: 40MB (float32)
-  - Priors: 40MB (float32)
-  - Moves: 20MB (uint16_t)
-  - Other fields: 130MB
-- **Well under 1GB target** ✅
+- **10M nodes**: ~270 MB total
+  - Visit counts / value sums / priors: ~120 MB combined (float32)
+  - Moves + structural indices: ~80 MB
+  - Flags, virtual loss, padding: ~70 MB
+- **Well under 1 GB target** ✅
 
 ---
 
@@ -298,6 +300,43 @@ All critical operations use proper synchronization:
 - ✅ 6 data races detected and fixed
 - ✅ All tests pass with TSan (clang++-18 on Ubuntu 24.04)
 - ✅ No data races in production code
+
+### Selection & Backup Optimizations
+
+- **Thread-Local Scratch Buffers** – both the SIMD and scalar PUCT paths reuse per-thread storage for score computation, eliminating repeated heap allocations in `PUCTSelector::select_child`.
+- **Normalized Mask Reuse** – expansion routines now reuse per-thread `masked_policy` buffers, cutting the cost of legal-move masking and normalization inside both synchronous and async runners.
+- **Instrumentation Visibility** – the `tree_allocate_node/tree_allocate_nodes/selection/expansion/backup` counters highlight per-phase CPU time once instrumentation is enabled (see `docs/performance/mcts_cpp_runner_metrics.md`).
+
+### Async Queue Coordination
+
+- **Condition-Variable Batching** – the inference queue now blocks the coordinator on a `std::condition_variable` instead of busy-polling, waking immediately when either the batch size threshold or timeout is satisfied.
+- **Result Consumption in Bulk** – simulation threads drain completed inference results via a single call (`consume_ready_results()`), eliminating per-result lookups and reducing mutex churn in `ContinuousSimulationRunner::process_completed_results`.
+- **Configurable Caps** – batches remain capped at 1.5× the configured minimum to protect GPU latency; tests reflect the guarded sizing and relaxed timing tolerances.
+
+### Python Orchestration
+
+- **Persistent Thread Pool** – `AlphaZeroMCTS` now creates a single `ThreadPoolExecutor` per instance and reuses it across searches (both async and sync paths). This avoids repeated thread start/shutdown overhead; a public `close()` helper shuts the pool down when the engine is no longer needed.
+- **Copy-Avoiding Inference Path** – batch callbacks use `np.asarray(..., dtype=np.float32)` to minimise tensor copies when the underlying game state already exposes NumPy data.
+
+### Parallel Mode Benchmark (Prototype)
+
+Use `scripts/benchmark_parallel_modes.py` to compare parallel configurations. Sample output on the reference workstation (Ryzen 5900X, 4 threads, 256 simulations × 3 runs):
+
+```
+Mode                       Avg sims/sec    Std dev
+--------------------------------------------------
+shared-sync-2t                   3723.0        0.0
+virtual_loss_free-sync-2t         3485.8        0.0
+thread_local_prototype-sync-2t          226.3        0.0
+shared-sync-4t                   3588.8        0.0
+virtual_loss_free-sync-4t         3651.3        0.0
+thread_local_prototype-sync-4t          440.5        0.0
+shared-sync-8t                   3558.5        0.0
+virtual_loss_free-sync-8t         3564.6        0.0
+thread_local_prototype-sync-8t          132.5        0.0
+```
+
+Virtual-loss-free shared trees deliver a modest throughput improvement over the baseline; the Python-level thread-local prototype remains far slower, confirming it is not viable without a native implementation. Async-inference benchmarking is still pending (GPU worker not exercised here).
 
 **Build with TSan**:
 ```bash

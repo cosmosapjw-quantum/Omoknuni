@@ -22,6 +22,7 @@
 #include "async_inference_queue.hpp"
 #include "continuous_simulation_runner.hpp"
 #include "batch_inference_coordinator.hpp"
+#include "instrumentation.hpp"
 
 namespace py = pybind11;
 
@@ -433,6 +434,40 @@ PYBIND11_MODULE(mcts_py, m) {
              "Get memory usage estimate in bytes\n\n"
              "Returns:\n"
              "    int: Estimated memory usage");
+
+    // Instrumentation controls
+    m.def("set_instrumentation_enabled",
+          [](bool enabled) {
+              Instrumentation::instance().set_enabled(enabled);
+          },
+          py::arg("enabled"),
+          "Enable or disable instrumentation metrics collection");
+
+    m.def("reset_instrumentation_metrics",
+          []() {
+              Instrumentation::instance().reset();
+          },
+          "Reset instrumentation counters and timers");
+
+    m.def("get_instrumentation_snapshot",
+          []() {
+              py::dict result;
+              const auto snapshot = Instrumentation::instance().snapshot();
+              for (const auto& entry : snapshot) {
+                  const auto metric = entry.first;
+                  const auto& data = entry.second;
+                  py::dict payload;
+                  payload["calls"] = data.call_count;
+                  payload["total_ns"] = py::int_(data.total_elapsed_ns);
+                  const double avg_ns = (data.call_count > 0)
+                      ? static_cast<double>(data.total_elapsed_ns) / static_cast<double>(data.call_count)
+                      : 0.0;
+                  payload["avg_ns"] = avg_ns;
+                  result[py::str(metric_to_string(metric))] = payload;
+              }
+              return result;
+          },
+          "Get snapshot of instrumentation metrics as a dictionary");
 
     // ContinuousSimulationRunner - Async MCTS runner for 30k+ sims/sec
     py::class_<ContinuousSimulationRunner, SimulationRunner>(m, "ContinuousSimulationRunner",

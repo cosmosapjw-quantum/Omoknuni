@@ -38,9 +38,27 @@ endif()
 
 gtest_discover_tests(test_selection)
 
+# Instrumentation tests
+add_executable(test_instrumentation_metrics
+    test_instrumentation_metrics.cpp
+)
+
+target_link_libraries(test_instrumentation_metrics
+    PRIVATE
+    mcts_core
+    gtest_main
+    gtest
+)
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    target_compile_options(test_instrumentation_metrics PRIVATE -O2 -mavx2)
+endif()
+
+gtest_discover_tests(test_instrumentation_metrics)
+
 # Create a simple test runner for all unit tests
 add_custom_target(run_unit_tests
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --parallel 4
-    DEPENDS test_node_pool test_selection
+    DEPENDS test_node_pool test_selection test_instrumentation_metrics
     COMMENT "Running all unit tests"
 )

@@ -402,6 +402,24 @@ class TestSimulationRunnerPerformance:
             f"Target: {TARGET_THREAD_EFFICIENCY:.1%}"
         )
 
+    def test_instrumentation_metrics_available(self, mcts_engine, gomoku_game):
+        """Ensure instrumentation metrics are exposed when enabled."""
+        if not hasattr(mcts_engine, 'set_instrumentation_enabled'):
+            pytest.skip("Instrumentation not supported")
+
+        mcts_engine.set_instrumentation_enabled(True)
+        mcts_engine.reset_instrumentation_metrics()
+
+        mcts_engine.search(gomoku_game, simulations=32)
+        stats = mcts_engine.get_statistics()
+        instrumentation = stats.get('instrumentation', {})
+
+        assert instrumentation, "Instrumentation metrics should be collected when enabled"
+        metric_keys = set(instrumentation.keys())
+        assert 'selection' in metric_keys or 'expansion' in metric_keys
+
+        mcts_engine.set_instrumentation_enabled(False)
+
     @pytest.mark.skipif(not PYNVML_AVAILABLE, reason="GPU monitoring not available")
     def test_gpu_utilization(self, mcts_engine, gomoku_game, mock_inference_worker):
         """Test GPU utilization during search operations.

@@ -51,8 +51,12 @@ SelectionResult PUCTSelector::select_child(const MCTSTree& tree, NodeIndex paren
     // Pre-compute exploration term: c_puct * sqrt(parent_visits)
     float exploration_term = config_.cpuct * std::sqrt(parent_visits);
 
-    // Allocate temporary array for PUCT values
-    std::vector<float> puct_values(num_children);
+    // Reuse thread-local buffer for PUCT values to avoid reallocations
+    thread_local std::vector<float> puct_values_buffer;
+    if (puct_values_buffer.size() < num_children) {
+        puct_values_buffer.resize(num_children);
+    }
+    float* puct_values = puct_values_buffer.data();
 
     // Compute PUCT values using vectorized implementation
     // This will set -infinity for nodes marked as "expanding"
@@ -64,13 +68,12 @@ SelectionResult PUCTSelector::select_child(const MCTSTree& tree, NodeIndex paren
         tree.get_flags_ptr(),
         first_child,
         num_children,
-        parent_visits,
         exploration_term,
-        puct_values.data()
+        puct_values
     );
 
     // Find child with maximum PUCT value
-    auto [max_value, max_index] = find_max_vectorized(puct_values.data(), num_children);
+    auto [max_value, max_index] = find_max_vectorized(puct_values, num_children);
 
     // Populate result
     result.selected_child = first_child + max_index;
@@ -89,7 +92,6 @@ void PUCTSelector::compute_puct_vectorized(
     const NodeFlags* flags,
     NodeIndex first_child_index,
     std::uint16_t num_children,
-    float parent_visits,
     float exploration_term,
     float* puct_values
 ) const {
@@ -182,10 +184,7 @@ float PUCTSelector::compute_puct_scalar(
     float virtual_loss,
     float exploration_term
 ) const {
-    // Adjust visit count with virtual loss
-    float adjusted_visits = visit_count + virtual_loss;
-
-    // Compute Q-value
+    // Compute Q-value accounting for virtual loss
     float q_value = compute_q_value(visit_count, total_value, virtual_loss);
 
     // Handle First Play Urgency for unvisited nodes
@@ -227,7 +226,6 @@ std::pair<float, std::uint16_t> PUCTSelector::find_max_vectorized(
 float PUCTSelector::compute_q_value(float visit_count, float total_value, float virtual_loss) const {
     // Adjust for virtual loss
     float adjusted_visits = visit_count + virtual_loss;
-
     if (adjusted_visits <= 0.0f) {
         return 0.0f;  // Unvisited node
     }

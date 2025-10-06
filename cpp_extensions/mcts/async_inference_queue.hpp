@@ -30,6 +30,7 @@
 #include <optional>
 #include <memory>
 #include <mutex>
+#include <condition_variable>
 #include <atomic>
 #include <cstdint>
 
@@ -170,6 +171,16 @@ public:
     std::optional<InferenceResult> try_get_result(uint64_t request_id);
 
     /**
+     * @brief Consume all ready results in a single batch.
+     *
+     * Moves the completed results into a vector and clears the internal map.
+     *
+     * Thread Safety: Safe to call from multiple threads; typically used by
+     * the async coordinator / simulation runners.
+     */
+    std::vector<InferenceResult> consume_ready_results();
+
+    /**
      * @brief Check if any results are available
      *
      * Quick check before calling try_get_result() to avoid unnecessary polling.
@@ -218,6 +229,7 @@ public:
      *
      * @return Vector of request IDs currently ready for retrieval
      */
+    [[deprecated("Use consume_ready_results() instead")]]
     std::vector<uint64_t> get_ready_request_ids() const;
 
 private:
@@ -227,10 +239,12 @@ private:
     // Pending requests queue
     mutable std::mutex pending_mutex_;
     std::deque<InferenceRequest> pending_requests_;
+    std::condition_variable pending_cv_;
 
     // Completed results map
     mutable std::mutex results_mutex_;
     std::unordered_map<uint64_t, InferenceResult> completed_results_;
+    std::condition_variable results_cv_;
 };
 
 } // namespace mcts

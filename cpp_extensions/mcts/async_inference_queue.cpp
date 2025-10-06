@@ -4,8 +4,9 @@
  */
 
 #include "async_inference_queue.hpp"
+#include "instrumentation.hpp"
 #include <chrono>
-#include <thread>
+#include <limits>
 
 namespace mcts {
 
@@ -21,6 +22,7 @@ AsyncInferenceQueue::~AsyncInferenceQueue() {
 uint64_t AsyncInferenceQueue::submit_request(std::unique_ptr<IGameState> state,
                                                NodeIndex node_index,
                                                std::vector<NodeIndex> path) {
+    ScopedMetric metric(InstrumentationMetric::QueueSubmit);
     // Generate unique request ID
     uint64_t request_id = next_request_id_.fetch_add(1, std::memory_order_relaxed);
 
@@ -36,61 +38,57 @@ uint64_t AsyncInferenceQueue::submit_request(std::unique_ptr<IGameState> state,
         std::lock_guard<std::mutex> lock(pending_mutex_);
         pending_requests_.push_back(std::move(request));
     }
+    pending_cv_.notify_one();
 
     return request_id;
 }
 
 std::vector<InferenceRequest> AsyncInferenceQueue::collect_batch(size_t min_batch_size,
                                                                    double timeout_ms) {
+    ScopedMetric metric(InstrumentationMetric::QueueCollect);
     using namespace std::chrono;
-    auto start_time = steady_clock::now();
-    auto timeout_duration = duration<double, std::milli>(timeout_ms);
 
     std::vector<InferenceRequest> batch;
 
-    while (true) {
-        {
-            std::lock_guard<std::mutex> lock(pending_mutex_);
+    std::unique_lock<std::mutex> lock(pending_mutex_);
 
-            // Check if we have enough requests
-            if (pending_requests_.size() >= min_batch_size) {
-                // Cap batch size to avoid processing too many at once
-                // This prevents batch size explosion (observed 157-273 vs configured 64)
-                // Target: 1.5× min_batch_size for optimal GPU utilization without overload
-                size_t max_batch_size = min_batch_size + (min_batch_size / 2);
-                size_t batch_count = std::min(pending_requests_.size(), max_batch_size);
+    const auto max_batch_size = (min_batch_size > 0)
+        ? (min_batch_size + (min_batch_size / 2))
+        : std::numeric_limits<std::size_t>::max();
 
-                batch.reserve(batch_count);
-                auto it = pending_requests_.begin();
-                for (size_t i = 0; i < batch_count && it != pending_requests_.end(); ++i, ++it) {
-                    batch.push_back(std::move(*it));
-                }
-                pending_requests_.erase(pending_requests_.begin(), it);
-                return batch;
+    const auto timeout_duration = duration<double, std::milli>(timeout_ms);
+    const auto deadline = steady_clock::now() + timeout_duration;
+
+    auto has_enough = [&]() {
+        return min_batch_size > 0 && pending_requests_.size() >= min_batch_size;
+    };
+
+    if (min_batch_size > 0) {
+        while (!has_enough()) {
+            if (timeout_ms <= 0.0) {
+                break;
             }
 
-            // Check if timeout elapsed
-            auto elapsed = steady_clock::now() - start_time;
-            if (elapsed >= timeout_duration) {
-                // Return whatever we have (might be empty), but cap at max_batch_size
-                if (!pending_requests_.empty()) {
-                    size_t max_batch_size = min_batch_size + (min_batch_size / 2);
-                    size_t batch_count = std::min(pending_requests_.size(), max_batch_size);
-
-                    batch.reserve(batch_count);
-                    auto it = pending_requests_.begin();
-                    for (size_t i = 0; i < batch_count && it != pending_requests_.end(); ++i, ++it) {
-                        batch.push_back(std::move(*it));
-                    }
-                    pending_requests_.erase(pending_requests_.begin(), it);
-                }
-                return batch;
+            if (pending_cv_.wait_until(lock, deadline) == std::cv_status::timeout) {
+                break;
             }
         }
-
-        // Brief sleep to avoid busy-waiting
-        std::this_thread::sleep_for(microseconds(100));
     }
+
+    const std::size_t available = pending_requests_.size();
+    if (available == 0) {
+        return batch;
+    }
+
+    const std::size_t batch_count = std::min(available, max_batch_size);
+    batch.reserve(batch_count);
+
+    for (std::size_t i = 0; i < batch_count; ++i) {
+        batch.push_back(std::move(pending_requests_.front()));
+        pending_requests_.pop_front();
+    }
+
+    return batch;
 }
 
 void AsyncInferenceQueue::submit_results(const std::vector<InferenceResult>& results) {
@@ -100,9 +98,12 @@ void AsyncInferenceQueue::submit_results(const std::vector<InferenceResult>& res
         // Insert result into map (keyed by request_id)
         completed_results_[result.request_id] = result;
     }
+
+    results_cv_.notify_all();
 }
 
 std::optional<InferenceResult> AsyncInferenceQueue::try_get_result(uint64_t request_id) {
+    ScopedMetric metric(InstrumentationMetric::QueueTryGetResult);
     std::lock_guard<std::mutex> lock(results_mutex_);
 
     auto it = completed_results_.find(request_id);
@@ -120,6 +121,17 @@ std::optional<InferenceResult> AsyncInferenceQueue::try_get_result(uint64_t requ
 bool AsyncInferenceQueue::has_results() const {
     std::lock_guard<std::mutex> lock(results_mutex_);
     return !completed_results_.empty();
+}
+
+std::vector<InferenceResult> AsyncInferenceQueue::consume_ready_results() {
+    std::lock_guard<std::mutex> lock(results_mutex_);
+    std::vector<InferenceResult> results;
+    results.reserve(completed_results_.size());
+    for (auto& entry : completed_results_) {
+        results.push_back(std::move(entry.second));
+    }
+    completed_results_.clear();
+    return results;
 }
 
 size_t AsyncInferenceQueue::pending_count() const {

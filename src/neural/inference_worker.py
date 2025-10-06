@@ -10,6 +10,7 @@ input queue and distributing results to thread-specific output queues.
 """
 
 import torch
+import torch.nn.functional as F
 import numpy as np
 import time
 import threading
@@ -60,7 +61,7 @@ class GPUInferenceWorker(InferenceWorker):
     """
 
     def __init__(self,
-                 model_path: str,
+                 model_path: Optional[str] = None,
                  device: str = 'cuda:0',
                  batch_size: int = 64,
                  timeout_ms: float = 3.0,
@@ -145,73 +146,62 @@ class GPUInferenceWorker(InferenceWorker):
     def _load_model(self) -> None:
         """Load and initialize the neural network model."""
         try:
-            if not os.path.exists(self.model_path):
-                raise FileNotFoundError(f"Model not found: {self.model_path}")
-
-            # Load model state dict
-            # If device is CUDA but CUDA is not available, fallback to CPU loading
-            load_device = self.device
-            if str(self.device).startswith('cuda') and not torch.cuda.is_available():
-                load_device = 'cpu'
-                self.logger.warning(f"CUDA device {self.device} requested but CUDA not available, loading model on CPU")
-
-            # Try to load the model directly first (full model save)
-            model_data = torch.load(self.model_path, map_location=load_device, weights_only=False)
-
-            # Check if it's a full model or state_dict
-            if hasattr(model_data, 'state_dict'):  # It's a full model
-                self.model = model_data.to(self.device)
+            if self.model_path is None:
+                self.logger.warning("No model_path provided. Initializing default AlphaZeroNet weights for benchmark use.")
+                game_type = 'gomoku'
+                input_shape = (36, 15, 15)
+                self.model = create_model_for_game(game_type)
+                self.model = self.model.to(self.device)
                 self.model.eval()
-                self.logger.info("Model loaded successfully (full model)")
-            elif isinstance(model_data, dict):  # It's a state_dict
-                # Detect game type from state dict
-                first_conv_weight = None
-                for key, tensor in model_data.items():
-                    if 'conv' in key.lower() and 'weight' in key:
-                        first_conv_weight = tensor
-                        break
+            else:
+                if not os.path.exists(self.model_path):
+                    raise FileNotFoundError(f"Model not found: {self.model_path}")
 
-                if first_conv_weight is not None:
-                    input_channels = first_conv_weight.shape[1]
-                    if input_channels == 36:
-                        game_type = 'gomoku'
-                        input_shape = (36, 15, 15)
-                    elif input_channels == 30:
-                        game_type = 'chess'
-                        input_shape = (30, 8, 8)
-                    elif input_channels == 25:
-                        game_type = 'go'
-                        input_shape = (25, 19, 19)
+                load_device = self.device
+                if str(self.device).startswith('cuda') and not torch.cuda.is_available():
+                    load_device = 'cpu'
+                    self.logger.warning(f"CUDA device {self.device} requested but unavailable, loading on CPU")
+
+                model_data = torch.load(self.model_path, map_location=load_device, weights_only=False)
+
+                if hasattr(model_data, 'state_dict'):
+                    self.model = model_data.to(self.device)
+                    self.model.eval()
+                    self.logger.info("Model loaded successfully (full model)")
+                elif isinstance(model_data, dict):
+                    first_conv_weight = next((tensor for key, tensor in model_data.items()
+                                              if 'conv' in key.lower() and 'weight' in key), None)
+                    if first_conv_weight is not None:
+                        input_channels = first_conv_weight.shape[1]
+                        if input_channels == 36:
+                            game_type = 'gomoku'
+                            input_shape = (36, 15, 15)
+                        elif input_channels == 30:
+                            game_type = 'chess'
+                            input_shape = (30, 8, 8)
+                        elif input_channels == 25:
+                            game_type = 'go'
+                            input_shape = (25, 19, 19)
+                        else:
+                            game_type = 'gomoku'
+                            input_shape = (36, 15, 15)
                     else:
                         game_type = 'gomoku'
                         input_shape = (36, 15, 15)
+
+                    self.model = create_model_for_game(game_type)
+                    self.model = self.model.to(self.device)
+                    self.model.eval()
+                    self._initialize_model_layers(input_shape)
+                    self.model.load_state_dict(model_data)
+                    self.logger.info(f"Model loaded successfully (state_dict, game: {game_type})")
                 else:
-                    game_type = 'gomoku'
-                    input_shape = (36, 15, 15)
+                    self.model = model_data.to(self.device)
+                    self.model.eval()
+                    self.logger.info("Model loaded successfully (direct model)")
 
-                # Create model with detected game type
-                self.model = create_model_for_game(game_type)
-
-                # Move to device first
-                self.model = self.model.to(self.device)
-                self.model.eval()
-
-                # Initialize lazy layers with dummy forward pass before loading state dict
-                self._initialize_model_layers(input_shape)
-
-                # Load the model weights
-                self.model.load_state_dict(model_data)
-
-                self.logger.info(f"Model loaded successfully (state_dict, game: {game_type})")
-            else:  # It's a direct model instance
-                self.model = model_data.to(self.device)
-                self.model.eval()
-                self.logger.info("Model loaded successfully (direct model)")
-
-            # Enable mixed precision with enhanced validation
             self._setup_mixed_precision()
-
-            self.logger.info(f"Model loaded successfully on {self.device}")
+            self.logger.info(f"Model ready on {self.device}")
 
         except Exception as e:
             self.logger.error(f"Failed to load model: {e}")
@@ -262,12 +252,11 @@ class GPUInferenceWorker(InferenceWorker):
             self._cpu_fallback_worker = CPUInferenceWorker(
                 model_path=self.model_path,
                 device='cpu',
-                batch_size=min(4, self.batch_size),  # Smaller batches for CPU
-                timeout_ms=max(10.0, self.timeout_ms * 1000),  # More lenient timeout
-                use_mixed_precision=False  # No mixed precision on CPU
+                batch_size=min(4, self.batch_size),
+                timeout_ms=max(10.0, self.timeout_ms * 1000),
+                use_mixed_precision=False
             )
 
-            # Warmup CPU fallback if we have input shape
             if self.input_shape is not None:
                 self._cpu_fallback_worker.warmup(self.input_shape)
 
@@ -954,6 +943,12 @@ class GPUInferenceWorker(InferenceWorker):
         # Record start time for metrics
         start_time = time.time()
 
+        if positions:
+            sample_shape = tuple(positions[0].shape)
+            if self.input_shape is None:
+                self.input_shape = sample_shape
+                self._setup_pinned_memory_buffers(self.batch_size, sample_shape)
+
         # Try GPU inference first if available and not permanently failed (T018)
         if self._should_attempt_gpu_retry():
             try:
@@ -968,6 +963,7 @@ class GPUInferenceWorker(InferenceWorker):
 
                     # Convert to probabilities
                     policies = torch.softmax(policy_logits, dim=1)
+                    values = torch.tanh(values)
 
                 # Transfer outputs using pinned memory optimization
                 policies_np, values_np = self._transfer_outputs_optimized(policies, values)

@@ -103,7 +103,9 @@ class AlphaZeroMCTS(MCTSEngine):
                  num_threads: int = 8,
                  use_async_inference: bool = True,
                  async_batch_size: int = 32,
-                 async_timeout_ms: float = 2.0):
+                 async_timeout_ms: float = 2.0,
+                 enable_instrumentation: bool = False,
+                 parallel_mode: str = "shared"):
         """Initialize high-performance MCTS engine.
 
         Args:
@@ -120,6 +122,12 @@ class AlphaZeroMCTS(MCTSEngine):
             async_batch_size: Minimum batch size for async inference (32 optimal)
             async_timeout_ms: Maximum batch collection timeout in ms (2.0 optimal)
         """
+        valid_parallel_modes = {"shared", "virtual_loss_free"}
+        if parallel_mode not in valid_parallel_modes:
+            raise ValueError(
+                f"Unsupported parallel_mode '{parallel_mode}'. Supported modes: {sorted(valid_parallel_modes)}"
+            )
+
         self.dirichlet_alpha = dirichlet_alpha
         self.dirichlet_epsilon = dirichlet_epsilon
         self.logger = logging.getLogger('AlphaZeroMCTS')
@@ -140,8 +148,12 @@ class AlphaZeroMCTS(MCTSEngine):
         self.selector = mcts_py.create_puct_selector(puct_config)
 
         # Initialize C++ virtual loss manager for thread coordination
-        vl_config = mcts_py.VirtualLossConfig(virtual_loss_magnitude, enable_virtual_loss)
+        self._virtual_loss_requested = enable_virtual_loss
+        desired_virtual_loss_enabled = self._virtual_loss_requested and parallel_mode != "virtual_loss_free"
+        vl_config = mcts_py.VirtualLossConfig(virtual_loss_magnitude, desired_virtual_loss_enabled)
         self.virtual_loss_manager = mcts_py.create_test_virtual_loss_manager(self.tree, vl_config)
+        self._virtual_loss_magnitude = virtual_loss_magnitude
+        self._virtual_loss_enabled = desired_virtual_loss_enabled
 
         # Initialize C++ backup manager for value propagation
         backup_config = mcts_py.BackupConfig(enable_value_clipping, True, -1.0, 1.0)
@@ -152,6 +164,13 @@ class AlphaZeroMCTS(MCTSEngine):
         self.async_batch_size = async_batch_size
         self.async_timeout_ms = async_timeout_ms
         self.num_threads = num_threads  # Number of parallel simulation threads
+        self.parallel_mode = parallel_mode
+        self._instrumentation_enabled = enable_instrumentation
+
+        if hasattr(mcts_py, 'set_instrumentation_enabled'):
+            mcts_py.set_instrumentation_enabled(enable_instrumentation)
+        if enable_instrumentation and hasattr(mcts_py, 'reset_instrumentation_metrics'):
+            mcts_py.reset_instrumentation_metrics()
 
         # Initialize async components if enabled
         if self.use_async_inference:
@@ -187,6 +206,9 @@ class AlphaZeroMCTS(MCTSEngine):
         self.root_state = None
         self.root_index = mcts_py.NULL_NODE_INDEX
         self._lock = Lock()
+        self._executor_lock = Lock()
+        self._executor: Optional[ThreadPoolExecutor]
+        self._executor = ThreadPoolExecutor(max_workers=self.num_threads) if self.num_threads > 1 else None
 
         # Performance statistics
         self._simulations_completed = 0
@@ -200,10 +222,11 @@ class AlphaZeroMCTS(MCTSEngine):
         self.logger.info(f"  Tree capacity: {max_tree_size:,} nodes (~{max_tree_size * 32 // 1024 // 1024}MB)")
         self.logger.info(f"  AVX2 support: {mcts_py.PUCTSelector.is_avx2_supported()}")
         self.logger.info(f"  PUCT constant: {c_puct}")
-        self.logger.info(f"  Virtual loss: {virtual_loss_magnitude} (enabled: {enable_virtual_loss})")
+        self.logger.info(f"  Virtual loss: {self._virtual_loss_magnitude} (enabled: {self._virtual_loss_enabled})")
         self.logger.info(f"  Parallel threads: {num_threads}")
         if self.use_async_inference:
             self.logger.info(f"  Async batching: batch_size={async_batch_size}, timeout={async_timeout_ms}ms")
+        self.logger.info(f"  Parallel mode: {self.parallel_mode}")
 
     def search(self, root_state: IGameState, simulations: int, add_noise: bool = False) -> Dict[int, float]:
         """Run high-performance MCTS search with C++ SimulationRunner.
@@ -254,33 +277,27 @@ class AlphaZeroMCTS(MCTSEngine):
             try:
                 # Multi-threaded search: Distribute simulations across threads
                 if self.num_threads > 1:
-                    # Distribute simulations evenly across threads
                     sims_per_thread = simulations // self.num_threads
                     remainder = simulations % self.num_threads
 
                     def worker_thread(thread_id: int) -> int:
                         """Worker thread running continuous simulations."""
-                        # First thread gets remainder simulations
                         thread_sims = sims_per_thread + (remainder if thread_id == 0 else 0)
-
-                        # Each thread uses its own runner (thread-safe)
                         runner = self.simulation_runners[thread_id]
-                        completed = runner.run_continuous(
-                            root_state, self.root_index, self.async_queue, thread_sims
-                        )
-                        return completed
+                        return runner.run_continuous(root_state, self.root_index, self.async_queue, thread_sims)
 
-                    # Run threads in parallel
-                    with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
-                        futures = [executor.submit(worker_thread, i) for i in range(self.num_threads)]
-                        thread_results = [f.result() for f in futures]
+                    with self._executor_lock:
+                        if self._executor is None:
+                            self._executor = ThreadPoolExecutor(max_workers=self.num_threads)
+                        executor = self._executor
+                    futures = [executor.submit(worker_thread, i) for i in range(self.num_threads)]
+                    thread_results = [f.result() for f in futures]
 
                     successful_simulations = sum(thread_results)
 
                     self.logger.info(f"Multi-threaded search: {self.num_threads} threads, "
                                      f"{successful_simulations}/{simulations} sims completed")
                 else:
-                    # Single-threaded mode - use first runner
                     successful_simulations = self.simulation_runners[0].run_continuous(
                         root_state, self.root_index, self.async_queue, simulations
                     )
@@ -294,13 +311,40 @@ class AlphaZeroMCTS(MCTSEngine):
             callback = mcts_py.PyInferenceCallback(self._create_inference_callback())
 
             # Run MCTS simulations using synchronous loop
-            for _ in range(simulations):
-                if self.tree.get_node_count() >= self.tree.get_max_nodes():
-                    break
-                if self.simulation_runner.run_simulation(root_state, self.root_index, callback):
-                    successful_simulations += 1
-                else:
-                    failed_simulations += 1
+            if self.num_threads > 1:
+                sims_per_thread = simulations // self.num_threads
+                remainder = simulations % self.num_threads
+
+                def sync_worker(thread_id: int) -> Tuple[int, int]:
+                    local_success = 0
+                    local_fail = 0
+                    local_total = sims_per_thread + (remainder if thread_id == 0 else 0)
+                    for _ in range(local_total):
+                        if self.tree.get_node_count() >= self.tree.get_max_nodes():
+                            break
+                        if self.simulation_runner.run_simulation(root_state, self.root_index, callback):
+                            local_success += 1
+                        else:
+                            local_fail += 1
+                    return local_success, local_fail
+
+                with self._executor_lock:
+                    if self._executor is None:
+                        self._executor = ThreadPoolExecutor(max_workers=self.num_threads)
+                    executor = self._executor
+                futures = [executor.submit(sync_worker, i) for i in range(self.num_threads)]
+                for future in futures:
+                    success, failure = future.result()
+                    successful_simulations += success
+                    failed_simulations += failure
+            else:
+                for _ in range(simulations):
+                    if self.tree.get_node_count() >= self.tree.get_max_nodes():
+                        break
+                    if self.simulation_runner.run_simulation(root_state, self.root_index, callback):
+                        successful_simulations += 1
+                    else:
+                        failed_simulations += 1
 
             if failed_simulations > 0:
                 self.logger.warning(f"Failed simulations: {failed_simulations}/{simulations}")
@@ -453,6 +497,8 @@ class AlphaZeroMCTS(MCTSEngine):
                 self._simulations_completed / self._total_search_time
                 if self._total_search_time > 0 else 0
             ),
+            'parallel_mode': self.parallel_mode,
+            'virtual_loss_enabled': self._virtual_loss_enabled,
             'virtual_loss_stats': self.virtual_loss_manager.get_statistics(),
             'backup_stats': self.backup_manager.get_statistics(),
             'selector_config': {
@@ -463,7 +509,62 @@ class AlphaZeroMCTS(MCTSEngine):
                 'avx2_supported': mcts_py.PUCTSelector.is_avx2_supported()
             }
         }
+
+        instrumentation_snapshot: Dict[str, Any] = {}
+        if hasattr(mcts_py, 'get_instrumentation_snapshot') and self._instrumentation_enabled:
+            instrumentation_snapshot = mcts_py.get_instrumentation_snapshot()
+        stats['instrumentation'] = instrumentation_snapshot
         return stats
+
+    def set_instrumentation_enabled(self, enabled: bool) -> None:
+        """Enable or disable instrumentation metrics collection."""
+        if hasattr(mcts_py, 'set_instrumentation_enabled'):
+            mcts_py.set_instrumentation_enabled(enabled)
+        if enabled and hasattr(mcts_py, 'reset_instrumentation_metrics'):
+            mcts_py.reset_instrumentation_metrics()
+        self._instrumentation_enabled = enabled
+
+    def reset_instrumentation_metrics(self) -> None:
+        """Reset instrumentation counters when instrumentation is enabled."""
+        if self._instrumentation_enabled and hasattr(mcts_py, 'reset_instrumentation_metrics'):
+            mcts_py.reset_instrumentation_metrics()
+
+    def close(self) -> None:
+        """Release any background resources (thread pools)."""
+        with self._executor_lock:
+            if self._executor is not None:
+                self._executor.shutdown(wait=True)
+                self._executor = None
+
+    def __del__(self):  # pragma: no cover - defensive cleanup
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def set_parallel_mode(self, mode: str) -> None:
+        """Switch parallel execution mode (experimental)."""
+        valid_parallel_modes = {"shared", "virtual_loss_free"}
+        if mode not in valid_parallel_modes:
+            raise ValueError(
+                f"Unsupported parallel_mode '{mode}'. Supported modes: {sorted(valid_parallel_modes)}"
+            )
+
+        if mode == self.parallel_mode:
+            return
+
+        self.parallel_mode = mode
+        if mode == "virtual_loss_free":
+            desired_virtual_loss_enabled = False
+        else:
+            desired_virtual_loss_enabled = self._virtual_loss_requested
+
+        if desired_virtual_loss_enabled != self._virtual_loss_enabled:
+            self.virtual_loss_manager.set_config(
+                mcts_py.VirtualLossConfig(self._virtual_loss_magnitude, desired_virtual_loss_enabled)
+            )
+            self._virtual_loss_enabled = desired_virtual_loss_enabled
+        self.logger.info("Parallel mode switched to %s (virtual loss enabled=%s)", mode, desired_virtual_loss_enabled)
 
     def _expand_node(self, node_index: int, game_state: IGameState) -> float:
         """Expand node using neural network evaluation.
@@ -649,7 +750,7 @@ class AlphaZeroMCTS(MCTSEngine):
                     positions = []
                     for state in game_states:
                         tensor = state.get_enhanced_tensor_representation()
-                        positions.append(np.array(tensor, dtype=np.float32))
+                        positions.append(np.asarray(tensor, dtype=np.float32))
 
                     # ✅ SINGLE batched GPU call
                     policies, values = self.inference_fn.batch_inference(positions)

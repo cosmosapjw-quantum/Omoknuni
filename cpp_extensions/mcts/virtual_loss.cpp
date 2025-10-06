@@ -4,6 +4,7 @@
  */
 
 #include "virtual_loss.hpp"
+#include "instrumentation.hpp"
 #include <algorithm>
 #include <cmath>
 #include <atomic>
@@ -68,6 +69,7 @@ bool VirtualLossManager::apply_virtual_loss(NodeIndex node_index, float magnitud
     float actual_magnitude = (magnitude < 0.0f) ? config_.magnitude : magnitude;
 
     if (atomic_add_virtual_loss(node_index, actual_magnitude)) {
+        Instrumentation::instance().increment_counter(InstrumentationMetric::VirtualLossApply);
         total_applications_.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
@@ -88,6 +90,7 @@ bool VirtualLossManager::remove_virtual_loss(NodeIndex node_index, float magnitu
     float actual_magnitude = (magnitude < 0.0f) ? config_.magnitude : magnitude;
 
     if (atomic_add_virtual_loss(node_index, -actual_magnitude)) {
+        Instrumentation::instance().increment_counter(InstrumentationMetric::VirtualLossRemove);
         total_removals_.fetch_add(1, std::memory_order_relaxed);
         return true;
     }

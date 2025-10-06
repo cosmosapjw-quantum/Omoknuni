@@ -4,6 +4,7 @@
  */
 
 #include "tree.hpp"
+#include "instrumentation.hpp"
 #include <stdexcept>
 #include <algorithm>
 #include <cmath>
@@ -15,6 +16,21 @@
 #endif
 
 namespace mcts {
+
+namespace {
+
+constexpr std::uint32_t kThreadBlockSize = 64;
+
+struct ThreadLocalBlock {
+    MCTSTree* tree = nullptr;
+    NodeIndex next = NULL_NODE_INDEX;
+    std::uint32_t remaining = 0;
+    std::uint64_t epoch = 0;
+};
+
+thread_local ThreadLocalBlock thread_block;
+
+}  // namespace
 
 MCTSTree::MCTSTree(std::size_t max_nodes)
     : max_nodes_(max_nodes)
@@ -99,7 +115,7 @@ void MCTSTree::initialize_arrays() {
 
     // Initialize counts, flags, and moves to zero
     std::memset(num_children_, 0, max_nodes_ * sizeof(std::uint16_t));
-    std::memset(flags_, 0, max_nodes_ * sizeof(NodeFlags));
+    std::fill_n(flags_, max_nodes_, NodeFlags());
     std::memset(moves_, 0, max_nodes_ * sizeof(std::uint16_t));
 }
 
@@ -125,23 +141,11 @@ std::size_t MCTSTree::get_memory_usage() const {
 }
 
 void MCTSTree::clear() {
-    std::size_t used = next_free_index_.load(std::memory_order_relaxed);
-    if (used > 0) {
-        std::memset(visit_counts_, 0, used * sizeof(float));
-        std::memset(total_values_, 0, used * sizeof(float));
-        std::memset(prior_probs_, 0, used * sizeof(float));
-        std::memset(virtual_losses_, 0, used * sizeof(float));
-
-        std::fill_n(parent_indices_, used, NULL_NODE_INDEX);
-        std::fill_n(first_child_indices_, used, NULL_NODE_INDEX);
-        std::memset(num_children_, 0, used * sizeof(std::uint16_t));
-        std::memset(flags_, 0, used * sizeof(NodeFlags));
-        std::memset(moves_, 0, used * sizeof(std::uint16_t));
-    }
-
+    ScopedMetric metric(InstrumentationMetric::TreeClear);
     node_count_.store(0, std::memory_order_relaxed);
     next_free_index_.store(0, std::memory_order_relaxed);
     free_nodes_.clear();
+    allocation_epoch_.fetch_add(1, std::memory_order_acq_rel);
 }
 
 NodeIndex MCTSTree::add_root_node(float prior_prob, std::uint8_t current_player) {
@@ -313,28 +317,80 @@ TreeMemoryStats get_tree_memory_stats(const MCTSTree& tree) {
 }
 
 NodeIndex MCTSTree::allocate_node() {
-    std::lock_guard<std::mutex> lock(allocation_mutex_);
+    ScopedMetric metric(InstrumentationMetric::TreeAllocateNode);
+    const auto current_epoch = allocation_epoch_.load(std::memory_order_acquire);
+    auto& block = thread_block;
 
-    // First try to reuse a node from the free list
-    if (!free_nodes_.empty()) {
-        NodeIndex index = free_nodes_.back();
-        free_nodes_.pop_back();
-        initialize_node(index);
-        node_count_.fetch_add(1, std::memory_order_relaxed);  // Increment active node count
+    if (block.tree != this || block.epoch != current_epoch) {
+        block.tree = this;
+        block.next = NULL_NODE_INDEX;
+        block.remaining = 0;
+        block.epoch = current_epoch;
+    }
+
+    auto take_from_block = [&]() -> NodeIndex {
+        if (block.remaining == 0) {
+            return NULL_NODE_INDEX;
+        }
+        NodeIndex index = block.next;
+        ++block.next;
+        --block.remaining;
         return index;
+    };
+
+    NodeIndex index = take_from_block();
+
+    if (index == NULL_NODE_INDEX) {
+        auto refill_block = [&]() -> NodeIndex {
+            std::lock_guard<std::mutex> lock(allocation_mutex_);
+
+            if (!free_nodes_.empty()) {
+                NodeIndex reused = free_nodes_.back();
+                free_nodes_.pop_back();
+                initialize_node(reused);
+                block.next = NULL_NODE_INDEX;
+                block.remaining = 0;
+                block.epoch = current_epoch;
+                block.tree = this;
+                return reused;
+            }
+
+            std::size_t start = next_free_index_.load(std::memory_order_relaxed);
+            if (start >= max_nodes_) {
+                block.next = NULL_NODE_INDEX;
+                block.remaining = 0;
+                block.epoch = current_epoch;
+                block.tree = this;
+                return NULL_NODE_INDEX;
+            }
+
+            const std::size_t capacity = max_nodes_ - start;
+            const std::size_t block_size = std::min<std::size_t>(kThreadBlockSize, capacity);
+
+            NodeIndex first_index = static_cast<NodeIndex>(start);
+            next_free_index_.fetch_add(block_size, std::memory_order_relaxed);
+            initialize_node_range(first_index, static_cast<std::uint16_t>(block_size));
+
+            block.tree = this;
+            block.epoch = current_epoch;
+            if (block_size > 1) {
+                block.next = static_cast<NodeIndex>(first_index + 1);
+                block.remaining = static_cast<std::uint32_t>(block_size - 1);
+            } else {
+                block.next = NULL_NODE_INDEX;
+                block.remaining = 0;
+            }
+
+            return first_index;
+        };
+
+        index = refill_block();
+        if (index == NULL_NODE_INDEX) {
+            return NULL_NODE_INDEX;
+        }
     }
 
-    // If no free nodes, allocate from the contiguous pool
-    if (next_free_index_.load(std::memory_order_relaxed) >= max_nodes_) {
-        return NULL_NODE_INDEX;  // Pool exhausted
-    }
-
-    NodeIndex index = static_cast<NodeIndex>(next_free_index_.load(std::memory_order_relaxed));
-    next_free_index_.fetch_add(1, std::memory_order_relaxed);
     node_count_.fetch_add(1, std::memory_order_relaxed);
-
-    initialize_node(index);
-
     return index;
 }
 
@@ -347,6 +403,7 @@ NodeIndex MCTSTree::allocate_nodes(std::uint16_t count) {
         return allocate_node();
     }
 
+    ScopedMetric metric(InstrumentationMetric::TreeAllocateNodes);
     std::lock_guard<std::mutex> lock(allocation_mutex_);
 
     // For multiple nodes, we need contiguous allocation

@@ -92,7 +92,6 @@ public:
         const NodeFlags* flags,
         NodeIndex first_child_index,
         std::uint16_t num_children,
-        float parent_visits,
         float exploration_term,
         float* puct_values
     ) const;

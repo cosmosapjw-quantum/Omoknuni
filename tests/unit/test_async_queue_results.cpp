@@ -12,6 +12,7 @@
 
 #include "mcts/async_inference_queue.hpp"
 #include <cassert>
+#include <algorithm>
 #include <iostream>
 
 using namespace mcts;
@@ -159,6 +160,42 @@ void test_has_results_check() {
     std::cout << " PASS" << std::endl;
 }
 
+// Test 6: Consume ready results in bulk
+void test_consume_ready_results() {
+    std::cout << "Test 6: Consume ready results..." << std::flush;
+
+    AsyncInferenceQueue queue;
+
+    std::vector<InferenceResult> results;
+    for (int i = 0; i < 3; ++i) {
+        InferenceResult result;
+        result.request_id = i;
+        result.policy = std::vector<float>(4, static_cast<float>(i));
+        result.value = static_cast<float>(i);
+        results.push_back(result);
+    }
+
+    queue.submit_results(results);
+
+    auto consumed = queue.consume_ready_results();
+    assert(consumed.size() == 3);
+    assert(queue.results_count() == 0);
+    assert(!queue.has_results());
+
+    // Results should match submitted order (unordered_map -> arbitrary order, so just verify IDs exist)
+    std::vector<uint64_t> ids;
+    ids.reserve(consumed.size());
+    for (const auto& res : consumed) {
+        ids.push_back(res.request_id);
+    }
+    std::sort(ids.begin(), ids.end());
+    for (int i = 0; i < 3; ++i) {
+        assert(ids[i] == static_cast<uint64_t>(i));
+    }
+
+    std::cout << " PASS" << std::endl;
+}
+
 int main() {
     std::cout << "=== AsyncInferenceQueue Results Tests ===" << std::endl;
 
@@ -167,7 +204,8 @@ int main() {
     test_submit_multiple_results();
     test_result_consumed_after_retrieval();
     test_has_results_check();
+    test_consume_ready_results();
 
-    std::cout << "\nAll 5/5 tests passed!" << std::endl;
+    std::cout << "\nAll 6/6 tests passed!" << std::endl;
     return 0;
 }

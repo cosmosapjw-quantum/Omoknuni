@@ -4,6 +4,7 @@
  */
 
 #include "continuous_simulation_runner.hpp"
+#include "instrumentation.hpp"
 #include "../utils/igamestate.h"
 #include <algorithm>
 #include <thread>
@@ -136,28 +137,23 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
 }
 
 int ContinuousSimulationRunner::process_completed_results(AsyncInferenceQueue& queue) {
+    ScopedMetric metric(InstrumentationMetric::QueueProcessResults);
     int processed = 0;
 
-    while (queue.has_results()) {
-        auto ready_ids = queue.get_ready_request_ids();
-        bool handled_any = false;
+    while (true) {
+        auto results = queue.consume_ready_results();
+        if (results.empty()) {
+            break;
+        }
 
-        for (uint64_t request_id : ready_ids) {
-            auto pending_it = pending_expansions_.find(request_id);
+        for (auto& result : results) {
+            auto pending_it = pending_expansions_.find(result.request_id);
             if (pending_it == pending_expansions_.end()) {
                 continue;
             }
 
-            auto result_opt = queue.try_get_result(request_id);
-            if (!result_opt.has_value()) {
-                continue;
-            }
-
-            handled_any = true;
             auto pending = std::move(pending_it->second);
             pending_expansions_.erase(pending_it);
-
-            const auto& result = result_opt.value();
 
             if (pending.state && expand_node_with_result(
                     pending.leaf_node,
@@ -175,10 +171,6 @@ int ContinuousSimulationRunner::process_completed_results(AsyncInferenceQueue& q
 
             tree_.clear_expanding_flag(pending.leaf_node);
             processed++;
-        }
-
-        if (!handled_any) {
-            break;
         }
     }
 
@@ -213,7 +205,9 @@ bool ContinuousSimulationRunner::expand_node_with_result(
 
     // Mask and normalize policy
     float policy_sum = 0.0f;
-    std::vector<float> masked_policy(legal_moves.size());
+    thread_local std::vector<float> masked_policy_buffer;
+    masked_policy_buffer.resize(legal_moves.size());
+    auto& masked_policy = masked_policy_buffer;
 
     for (size_t i = 0; i < legal_moves.size(); ++i) {
         int move = legal_moves[i];
@@ -227,11 +221,12 @@ bool ContinuousSimulationRunner::expand_node_with_result(
 
     // Normalize
     if (policy_sum > 0.0f) {
+        const float inv_sum = 1.0f / policy_sum;
         for (float& p : masked_policy) {
-            p /= policy_sum;
+            p *= inv_sum;
         }
     } else {
-        float uniform_prob = 1.0f / legal_moves.size();
+        const float uniform_prob = 1.0f / static_cast<float>(legal_moves.size());
         for (float& p : masked_policy) {
             p = uniform_prob;
         }
