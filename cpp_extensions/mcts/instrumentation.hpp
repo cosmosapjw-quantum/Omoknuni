@@ -25,6 +25,8 @@ enum class InstrumentationMetric : std::uint8_t {
     QueueCollect,
     QueueProcessResults,
     QueueTryGetResult,
+    ExpansionConflict,        // Node already being expanded by another thread
+    BusyEdgeMasked,           // Node skipped due to expanding flag (busy-edge masking)
     Count
 };
 

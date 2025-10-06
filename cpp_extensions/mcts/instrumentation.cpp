@@ -105,6 +105,10 @@ std::string_view metric_to_string(InstrumentationMetric metric) {
             return "queue_process_results";
         case InstrumentationMetric::QueueTryGetResult:
             return "queue_try_get_result";
+        case InstrumentationMetric::ExpansionConflict:
+            return "expansion_conflict";
+        case InstrumentationMetric::BusyEdgeMasked:
+            return "busy_edge_masked";
         case InstrumentationMetric::Count:
         default:
             return "unknown";

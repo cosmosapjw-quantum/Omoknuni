@@ -3,16 +3,14 @@ name: implement-next
 description: Implement the next READY task safely
 ---
 
-Pick the next task in `specs/002-cpp-simulation-runner/tasks.md` (topmost not done), implement it *safely*, and update task status + artifacts. Respect SDD: the spec and plan are source of truth.
+Pick the next task in `specs/004-mcts-throughput-recovery/tasks.md` (topmost not done), implement it *safely*, and update task status + artifacts. Respect SDD: the spec and plan are source of truth.
 
 **Inputs**
-- `specs/002-cpp-simulation-runner/spec.md`
-- `specs/002-cpp-simulation-runner/plan.md`
-- `specs/002-cpp-simulation-runner/tasks.md`
-- `specs/002-cpp-simulation-runner/data-model.md`
-- `specs/002-cpp-simulation-runner/research.md`
-- `specs/002-cpp-simulation-runner/quickstart.md`
-- `specs/002-cpp-simulation-runner/MIGRATION.md`
+- `specs/004-mcts-throughput-recovery/spec.md`
+- `specs/004-mcts-throughput-recovery/plan.md`
+- `specs/004-mcts-throughput-recovery/tasks.md`
+- `specs/004-mcts-throughput-recovery/data-model.md`
+- `specs/004-mcts-throughput-recovery/research.md`
 
 **Rules**
 - Never overwrite existing code without explaining the change and creating a backup (`.bak` or git commit).
@@ -31,6 +29,6 @@ Pick the next task in `specs/002-cpp-simulation-runner/tasks.md` (topmost not do
 
 **Outputs**
 - Modified code/tests/docs.
-- Updated `specs/002-cpp-simulation-runner/tasks.md` for the implemented task:
+- Updated `specs/004-mcts-throughput-recovery/tasks.md` for the implemented task:
   - Add a ✅ to the Acceptance line(s) that pass.
   - Timestamp, author, and commit hash (if available).

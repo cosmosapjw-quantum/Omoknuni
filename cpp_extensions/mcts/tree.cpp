@@ -21,8 +21,12 @@ namespace {
 
 constexpr std::uint32_t kThreadBlockSize = 64;
 
+// Global counter for generating unique tree instance IDs
+std::atomic<std::uint64_t> next_tree_id{1};
+
 struct ThreadLocalBlock {
     MCTSTree* tree = nullptr;
+    std::uint64_t tree_id = 0;  // Unique instance ID to detect tree changes
     NodeIndex next = NULL_NODE_INDEX;
     std::uint32_t remaining = 0;
     std::uint64_t epoch = 0;
@@ -36,6 +40,7 @@ MCTSTree::MCTSTree(std::size_t max_nodes)
     : max_nodes_(max_nodes)
     , node_count_(0)
     , next_free_index_(0)
+    , instance_id_(next_tree_id.fetch_add(1, std::memory_order_relaxed))
     , visit_counts_(nullptr)
     , total_values_(nullptr)
     , prior_probs_(nullptr)
@@ -321,8 +326,10 @@ NodeIndex MCTSTree::allocate_node() {
     const auto current_epoch = allocation_epoch_.load(std::memory_order_acquire);
     auto& block = thread_block;
 
-    if (block.tree != this || block.epoch != current_epoch) {
+    // Check if this is a different tree instance or epoch changed
+    if (block.tree_id != instance_id_ || block.epoch != current_epoch) {
         block.tree = this;
+        block.tree_id = instance_id_;
         block.next = NULL_NODE_INDEX;
         block.remaining = 0;
         block.epoch = current_epoch;
@@ -352,6 +359,7 @@ NodeIndex MCTSTree::allocate_node() {
                 block.remaining = 0;
                 block.epoch = current_epoch;
                 block.tree = this;
+                block.tree_id = instance_id_;
                 return reused;
             }
 
@@ -361,6 +369,7 @@ NodeIndex MCTSTree::allocate_node() {
                 block.remaining = 0;
                 block.epoch = current_epoch;
                 block.tree = this;
+                block.tree_id = instance_id_;
                 return NULL_NODE_INDEX;
             }
 
@@ -372,6 +381,7 @@ NodeIndex MCTSTree::allocate_node() {
             initialize_node_range(first_index, static_cast<std::uint16_t>(block_size));
 
             block.tree = this;
+            block.tree_id = instance_id_;
             block.epoch = current_epoch;
             if (block_size > 1) {
                 block.next = static_cast<NodeIndex>(first_index + 1);

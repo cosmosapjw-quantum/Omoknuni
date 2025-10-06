@@ -68,6 +68,8 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
             // Ensure only one in-flight expansion per node
             bool submission_ready = true;
             if (!tree_.atomic_try_mark_expanding(leaf)) {
+                // Track expansion conflicts (busy-edge prevented duplicate expansion)
+                Instrumentation::instance().increment_counter(InstrumentationMetric::ExpansionConflict);
                 release_virtual_loss(path_buffer_);
                 waiting_for_leaf = true;
                 submission_ready = false;

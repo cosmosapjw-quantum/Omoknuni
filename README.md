@@ -12,10 +12,10 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 - **Spec 002**: ✅ COMPLETE (2025-10-03) - C++ Simulation Runner (7× Python baseline)
 - **Spec 003**: ✅ COMPLETE (2025-10-05) - Async inference batching with comprehensive optimization
 - **Spec 004**: 🔄 IN PROGRESS (Started 2025-10-06) - MCTS Throughput Recovery
-  - Phase 1: 🔄 Virtual Loss & Quick Wins (T001 ✅ complete)
+  - Phase 1: 🔄 Virtual Loss & Quick Wins (T001 ✅ T001b ✅ T002 ✅ complete)
   - Target: 25,000+ sims/sec (8× current performance)
 - **Current Performance**: 3,831 sims/sec peak (12.8% of 30k target)
-- **Next**: T001b (Epoch-based tree clearing) + T002 (Busy-edge masking)
+- **Next**: T003 (Root pre-expansion) + T004 (Thread affinity)
 
 ### Spec 003 Complete: Performance Analysis & Optimization
 
@@ -85,7 +85,12 @@ See [Async Optimization Results](docs/performance/async_optimization_results.md)
   - 1,000,000× speedup over naive approach
   - Lazy node initialization at allocation time
   - All 8 validation tests pass
-- [ ] **T002**: Busy-edge masking in selection
+- ✅ **T002**: Busy-edge masking validation + critical bug fix (2025-10-07)
+  - Validated existing busy-edge masking (PUCT = -∞ for expanding nodes)
+  - Fixed critical thread-local block caching bug (instance_id_ solution)
+  - Added ExpansionConflict and BusyEdgeMasked instrumentation metrics
+  - Performance: -6ns overhead (masking is actually faster!)
+  - All 17 unit tests pass (thread safety verified)
 - [ ] **T003**: Root pre-expansion (2× speedup potential)
 - [ ] **T004**: Thread affinity for Ryzen 5900X (1.15× speedup)
 

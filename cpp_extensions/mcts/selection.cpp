@@ -4,6 +4,7 @@
  */
 
 #include "selection.hpp"
+#include "instrumentation.hpp"
 #include <algorithm>
 #include <chrono>
 #include <random>
@@ -160,8 +161,9 @@ void PUCTSelector::compute_puct_vectorized(
     for (; processed < num_children; ++processed) {
         NodeIndex child_index = first_child_index + processed;
 
-        // ✅ CRITICAL FIX: Skip expanding nodes
+        // ✅ CRITICAL FIX: Skip expanding nodes (busy-edge masking)
         if (flags[child_index].is_expanding()) {
+            Instrumentation::instance().increment_counter(InstrumentationMetric::BusyEdgeMasked);
             puct_values[processed] = -std::numeric_limits<float>::infinity();
             continue;
         }

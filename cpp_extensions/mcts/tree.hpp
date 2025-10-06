@@ -550,6 +550,9 @@ private:
     // Allocation epoch used to invalidate thread-local caches on clear()
     std::atomic<std::uint64_t> allocation_epoch_{0};
 
+    // Unique instance ID to distinguish different tree instances (even at same address)
+    std::uint64_t instance_id_;
+
     // Mutex to protect allocation/deallocation operations
     // Needed for thread-safe concurrent node allocation in MCTS search
     mutable std::mutex allocation_mutex_;
