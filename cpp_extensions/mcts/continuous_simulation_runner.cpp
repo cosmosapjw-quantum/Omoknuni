@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <thread>
 #include <chrono>
+#include <random>
 
 namespace mcts {
 
@@ -26,6 +27,12 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
     int completed = 0;
     int submitted = 0;
     pending_expansions_.clear();
+
+    // PRE-EXPAND ROOT: Eliminates N-1 thread idle problem where threads
+    // race to expand root but only one succeeds. By expanding synchronously
+    // before threading, all threads can immediately start productive work.
+    // Expected impact: 2× speedup (eliminates initial serialization bottleneck)
+    ensure_root_expanded(root_state, root_index, queue);
 
     auto release_virtual_loss = [this](const std::vector<NodeIndex>& path) {
         if (path.size() <= 1) {
@@ -273,6 +280,116 @@ bool ContinuousSimulationRunner::expand_node_with_result(
     }
 
     return true;
+}
+
+bool ContinuousSimulationRunner::ensure_root_expanded(IGameState& root_state,
+                                                       NodeIndex root_index,
+                                                       AsyncInferenceQueue& queue) {
+    // Check if root is already expanded
+    NodeFlags flags = tree_.get_flags(root_index);
+    if (flags.is_expanded()) {
+        return false;  // Already expanded, nothing to do
+    }
+
+    // Check if we can mark it for expansion atomically
+    if (!tree_.atomic_try_mark_expanding(root_index)) {
+        // Another thread is already expanding it, wait for completion
+        while (!tree_.get_flags(root_index).is_expanded()) {
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
+        return false;
+    }
+
+    // We won the race - perform synchronous expansion
+    try {
+        // Submit inference request and wait for result
+        std::unique_ptr<IGameState> state_copy = root_state.clone();
+        if (!state_copy) {
+            tree_.clear_expanding_flag(root_index);
+            return false;
+        }
+
+        uint64_t request_id = queue.submit_request(std::move(state_copy), root_index, {root_index});
+
+        // Wait for result (synchronous for root expansion only)
+        std::optional<InferenceResult> result;
+        const auto start_time = std::chrono::steady_clock::now();
+        const auto timeout = std::chrono::seconds(5);  // 5 second timeout
+
+        while (!result.has_value()) {
+            result = queue.try_get_result(request_id);
+            if (!result.has_value()) {
+                // Check timeout
+                auto elapsed = std::chrono::steady_clock::now() - start_time;
+                if (elapsed > timeout) {
+                    tree_.clear_expanding_flag(root_index);
+                    return false;  // Timeout
+                }
+                std::this_thread::sleep_for(std::chrono::microseconds(100));
+            }
+        }
+
+        // Expand root with the result
+        bool expanded = expand_node_with_result(root_index, root_state, result->policy, result->value);
+        tree_.clear_expanding_flag(root_index);
+
+        if (expanded) {
+            // Add Dirichlet noise for exploration (AlphaZero approach)
+            // Use alpha=0.3 for Go-like games (can be made configurable later)
+            add_dirichlet_noise(root_index, 0.3f);
+        }
+
+        return expanded;
+
+    } catch (const std::exception& e) {
+        tree_.clear_expanding_flag(root_index);
+        return false;
+    }
+}
+
+void ContinuousSimulationRunner::add_dirichlet_noise(NodeIndex root_index, float alpha) {
+    std::uint16_t num_children = tree_.get_num_children(root_index);
+    if (num_children == 0) {
+        return;  // No children to add noise to
+    }
+
+    // Sample from Gamma distribution to create Dirichlet noise
+    // Dir(α) can be generated as: η_i = Gamma(α, 1) / Σ Gamma(α, 1)
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::gamma_distribution<float> gamma_dist(alpha, 1.0f);
+
+    std::vector<float> noise(num_children);
+    float sum = 0.0f;
+
+    for (std::uint16_t i = 0; i < num_children; ++i) {
+        noise[i] = gamma_dist(gen);
+        sum += noise[i];
+    }
+
+    // Normalize Dirichlet samples
+    if (sum > 0.0f) {
+        for (float& n : noise) {
+            n /= sum;
+        }
+    } else {
+        // Fallback to uniform if all zeros (extremely rare)
+        float uniform = 1.0f / num_children;
+        for (float& n : noise) {
+            n = uniform;
+        }
+    }
+
+    // Mix with priors: P'(a) = (1 - ε) * P(a) + ε * η_a
+    const float epsilon = 0.25f;  // AlphaZero uses 0.25
+    NodeIndex first_child = tree_.get_first_child_index(root_index);
+
+    for (std::uint16_t i = 0; i < num_children; ++i) {
+        NodeIndex child = first_child + i;
+        float original_prior = tree_.get_prior_prob(child);
+        float mixed_prior = (1.0f - epsilon) * original_prior + epsilon * noise[i];
+        tree_.set_prior_prob(child, mixed_prior);
+    }
 }
 
 } // namespace mcts
