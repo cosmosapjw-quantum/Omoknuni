@@ -187,51 +187,47 @@ int ContinuousSimulationRunner::process_completed_results(AsyncInferenceQueue& q
     ScopedMetric metric(InstrumentationMetric::QueueProcessResults);
     int processed = 0;
 
-    while (true) {
-        auto results = queue.consume_ready_results();
-        if (results.empty()) {
-            break;
+    // Check each pending slot for completed results
+    // This avoids the race where consume_ready_results() steals other threads' results
+    for (size_t i = 0; i < PENDING_BUFFER_CAPACITY; ++i) {
+        PendingSlot& slot = pending_buffer_[i];
+
+        // Check if slot is occupied
+        if (!slot.occupied.load(std::memory_order_acquire)) {
+            continue;
         }
 
-        for (auto& result : results) {
-            // O(1) lookup using ring buffer (request_id % capacity)
-            size_t slot_index = result.request_id % PENDING_BUFFER_CAPACITY;
-            PendingSlot& slot = pending_buffer_[slot_index];
-
-            // Check if slot is occupied (acquire to ensure data is visible)
-            if (!slot.occupied.load(std::memory_order_acquire)) {
-                continue;  // Slot empty or already processed
-            }
-
-            // Verify request_id matches (handle collisions)
-            if (slot.request_id != result.request_id) {
-                continue;  // Different request in this slot
-            }
-
-            // Extract pending data
-            PendingExpansion pending = std::move(slot.data);
-
-            // Mark slot as free
-            slot.occupied.store(false, std::memory_order_release);
-            pending_count_.fetch_sub(1, std::memory_order_relaxed);
-
-            if (pending.state && expand_node_with_result(
-                    pending.leaf_node,
-                    *pending.state,
-                    result.policy,
-                    result.value)) {
-                std::vector<NodeIndex> path = pending.path;
-                std::reverse(path.begin(), path.end());
-                backup_value(path, result.value);
-            } else {
-                std::vector<NodeIndex> path = pending.path;
-                std::reverse(path.begin(), path.end());
-                backup_value(path, result.value);
-            }
-
-            tree_.clear_expanding_flag(pending.leaf_node);
-            processed++;
+        // Try to get result for this specific request
+        auto result_opt = queue.try_get_result(slot.request_id);
+        if (!result_opt.has_value()) {
+            continue;  // Result not ready yet
         }
+
+        auto& result = result_opt.value();
+
+        // Extract pending data
+        PendingExpansion pending = std::move(slot.data);
+
+        // Mark slot as free
+        slot.occupied.store(false, std::memory_order_release);
+        pending_count_.fetch_sub(1, std::memory_order_relaxed);
+
+        if (pending.state && expand_node_with_result(
+                pending.leaf_node,
+                *pending.state,
+                result.policy,
+                result.value)) {
+            std::vector<NodeIndex> path = pending.path;
+            std::reverse(path.begin(), path.end());
+            backup_value(path, result.value);
+        } else {
+            std::vector<NodeIndex> path = pending.path;
+            std::reverse(path.begin(), path.end());
+            backup_value(path, result.value);
+        }
+
+        tree_.clear_expanding_flag(pending.leaf_node);
+        processed++;
     }
 
     return processed;

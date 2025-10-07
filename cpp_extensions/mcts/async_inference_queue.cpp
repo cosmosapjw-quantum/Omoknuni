@@ -176,6 +176,13 @@ size_t AsyncInferenceQueue::get_memory_usage() const {
     return total;
 }
 
+void AsyncInferenceQueue::shutdown() {
+    // Wake up any threads waiting in collect_batch()
+    // This ensures coordinator thread can check running flag and exit
+    pending_cv_.notify_all();
+    results_cv_.notify_all();
+}
+
 std::vector<uint64_t> AsyncInferenceQueue::get_ready_request_ids() const {
     std::lock_guard<std::mutex> lock(results_mutex_);
     std::vector<uint64_t> ids;

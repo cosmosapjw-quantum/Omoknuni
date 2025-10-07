@@ -223,6 +223,17 @@ public:
     size_t get_memory_usage() const;
 
     /**
+     * @brief Wake up threads waiting in collect_batch()
+     *
+     * This is called during coordinator shutdown to ensure threads waiting
+     * on condition variables are woken up so they can check the running flag
+     * and exit cleanly.
+     *
+     * Thread Safety: Safe to call from any thread
+     */
+    void shutdown();
+
+    /**
      * @brief Snapshot the request IDs with completed inference results.
      *
      * Thread Safety: Safe to call from any thread.

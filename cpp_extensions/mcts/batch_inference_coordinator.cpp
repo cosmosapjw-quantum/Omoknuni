@@ -90,6 +90,11 @@ void BatchInferenceCoordinator::stop() {
     // Signal thread to stop
     running_.store(false, std::memory_order_release);
 
+    // Wake up coordinator thread if it's waiting in collect_batch()
+    if (queue_) {
+        queue_->shutdown();
+    }
+
     // Wait for thread to finish
     if (worker_thread_.joinable()) {
         worker_thread_.join();
