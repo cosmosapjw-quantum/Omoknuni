@@ -75,9 +75,28 @@ endif()
 
 gtest_discover_tests(test_root_pre_expansion)
 
+# Thread affinity tests
+add_executable(test_thread_affinity
+    test_thread_affinity.cpp
+)
+
+target_link_libraries(test_thread_affinity
+    PRIVATE
+    mcts_core
+    gtest_main
+    gtest
+    pthread
+)
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    target_compile_options(test_thread_affinity PRIVATE -O2 -mavx2)
+endif()
+
+gtest_discover_tests(test_thread_affinity)
+
 # Create a simple test runner for all unit tests
 add_custom_target(run_unit_tests
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --parallel 4
-    DEPENDS test_node_pool test_selection test_instrumentation_metrics test_root_pre_expansion
+    DEPENDS test_node_pool test_selection test_instrumentation_metrics test_root_pre_expansion test_thread_affinity
     COMMENT "Running all unit tests"
 )

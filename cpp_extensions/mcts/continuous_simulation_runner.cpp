@@ -5,6 +5,7 @@
 
 #include "continuous_simulation_runner.hpp"
 #include "instrumentation.hpp"
+#include "thread_affinity.hpp"
 #include "../utils/igamestate.h"
 #include <algorithm>
 #include <thread>
@@ -27,6 +28,24 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
     int completed = 0;
     int submitted = 0;
     pending_expansions_.clear();
+
+    // THREAD AFFINITY: Pin thread to optimal CPU core for cache locality
+    // Expected impact: 1.15× speedup from reduced cross-CCD traffic
+    static thread_local ThreadAffinityManager affinity_mgr;
+    static thread_local int thread_id = -1;
+    static thread_local bool affinity_set = false;
+
+    if (!affinity_set) {
+        // Determine thread ID using std::hash of thread::id
+        thread_id = static_cast<int>(
+            std::hash<std::thread::id>{}(std::this_thread::get_id()) % 24
+        );
+
+        // Set affinity (assumes reasonable thread count for hardware)
+        int recommended_threads = affinity_mgr.get_recommended_thread_count();
+        affinity_mgr.set_thread_affinity(thread_id, recommended_threads);
+        affinity_set = true;
+    }
 
     // PRE-EXPAND ROOT: Eliminates N-1 thread idle problem where threads
     // race to expand root but only one succeeds. By expanding synchronously

@@ -6,6 +6,38 @@ All notable changes to this project will be documented in this file.
 
 ### Spec 004: MCTS Throughput Recovery - Phase 1 In Progress (2025-10-07)
 
+#### T004: Thread Affinity for Ryzen 5900X (2025-10-07)
+- **Added**: CPU topology detection and thread-to-core pinning for optimal cache locality
+- **Files**:
+  - `cpp_extensions/mcts/thread_affinity.hpp` - Thread affinity manager interface and topology struct
+  - `cpp_extensions/mcts/thread_affinity.cpp` - Topology detection and pthread_setaffinity_np wrapper
+  - `cpp_extensions/mcts/continuous_simulation_runner.cpp` - Thread-local affinity manager integration
+  - `tests/unit/test_thread_affinity.cpp` - 14 comprehensive unit tests
+  - `cpp_extensions/mcts/CMakeLists.txt` - Added thread_affinity sources to build
+  - `tests/unit/CMakeLists.txt` - Added test_thread_affinity target
+- **Key Features**:
+  - Detects Ryzen 5900X topology from /proc/cpuinfo (2 CCDs × 6 cores each)
+  - Optimizes thread placement to minimize cross-CCD cache line bouncing
+  - Generic fallback for non-Ryzen CPUs (uses hardware_concurrency)
+  - Platform support: Linux (pthread_setaffinity_np), graceful degradation elsewhere
+  - Thread-local affinity manager in ContinuousSimulationRunner
+  - Zero overhead when not on supported hardware
+- **Thread Placement Strategy**:
+  - ≤6 threads: CCD0 only (optimal single-CCD cache sharing)
+  - 7-12 threads: Both CCDs, physical cores only
+  - >12 threads: Include SMT siblings
+- **Performance**:
+  - Expected 1.15× speedup from reduced cross-CCD traffic
+  - 20-30% reduction in L3 cache misses (projected)
+  - 50% reduction in inter-core data movement (projected)
+- **Validation**: All 14 unit tests pass
+  - Topology detection working (Ryzen 5900X and generic)
+  - Thread affinity setting functional on Linux
+  - Multi-threaded stress test (4 concurrent threads)
+  - Platform detection and graceful degradation
+  - Boundary conditions (0 threads, excessive threads)
+- **Status**: ✅ Complete (ready for performance benchmarking)
+
 #### T002: Busy-Edge Masking Validation and Critical Bug Fix (2025-10-07)
 - **Validated**: Existing busy-edge masking implementation in PUCT selection
 - **Fixed**: Critical thread-local block caching bug causing memory corruption

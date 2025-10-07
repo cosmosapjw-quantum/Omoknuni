@@ -43,6 +43,8 @@ add_library(mcts_core STATIC
     async_inference_queue.hpp
     continuous_simulation_runner.cpp
     continuous_simulation_runner.hpp
+    thread_affinity.cpp
+    thread_affinity.hpp
     batch_inference_callback.hpp
     batch_inference_coordinator.cpp
     batch_inference_coordinator.hpp
