@@ -406,7 +406,7 @@ and allow focused testing of the lock-free queue in isolation.
 
 **Completed**: 2025-10-07
 **Author**: Claude Code
-**Commit**: (pending)
+**Commit**: cf21593
 
 ---
 
