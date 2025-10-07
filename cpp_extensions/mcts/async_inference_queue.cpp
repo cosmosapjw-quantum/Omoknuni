@@ -7,6 +7,7 @@
 #include "instrumentation.hpp"
 #include <chrono>
 #include <limits>
+#include <unordered_set>
 
 namespace mcts {
 
@@ -83,10 +84,21 @@ std::vector<InferenceRequest> AsyncInferenceQueue::collect_batch(size_t min_batc
     const std::size_t batch_count = std::min(available, max_batch_size);
     batch.reserve(batch_count);
 
+    // Track unique node indices in batch for diversity metrics
+    std::unordered_set<NodeIndex> unique_nodes;
+
     for (std::size_t i = 0; i < batch_count; ++i) {
-        batch.push_back(std::move(pending_requests_.front()));
+        auto& request = pending_requests_.front();
+        unique_nodes.insert(request.node_index);
+        batch.push_back(std::move(request));
         pending_requests_.pop_front();
     }
+
+    // Record batch diversity metric
+    Instrumentation::instance().increment_counter(
+        InstrumentationMetric::UniqueBatchPositions,
+        unique_nodes.size()
+    );
 
     return batch;
 }

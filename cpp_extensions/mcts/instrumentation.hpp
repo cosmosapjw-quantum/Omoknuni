@@ -27,6 +27,8 @@ enum class InstrumentationMetric : std::uint8_t {
     QueueTryGetResult,
     ExpansionConflict,        // Node already being expanded by another thread
     BusyEdgeMasked,           // Node skipped due to expanding flag (busy-edge masking)
+    UniqueBatchPositions,     // Number of unique positions in each inference batch
+    SelectionRetry,           // Selection restarted due to conflicts
     Count
 };
 

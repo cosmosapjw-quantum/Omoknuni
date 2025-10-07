@@ -109,6 +109,10 @@ std::string_view metric_to_string(InstrumentationMetric metric) {
             return "expansion_conflict";
         case InstrumentationMetric::BusyEdgeMasked:
             return "busy_edge_masked";
+        case InstrumentationMetric::UniqueBatchPositions:
+            return "unique_batch_positions";
+        case InstrumentationMetric::SelectionRetry:
+            return "selection_retry";
         case InstrumentationMetric::Count:
         default:
             return "unknown";
