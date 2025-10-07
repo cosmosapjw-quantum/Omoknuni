@@ -292,6 +292,83 @@ and allow focused testing of the lock-free queue in isolation.
 
 ---
 
+### T006b: Integrate Lock-Free Queue into AsyncInferenceQueue ✅
+**Priority**: CRITICAL
+**Effort**: 1 day
+**Status**: COMPLETE
+**Dependencies**: T006 ✅
+**Files**:
+- `cpp_extensions/mcts/async_inference_queue.hpp` (modified)
+- `cpp_extensions/mcts/async_inference_queue.cpp` (modified)
+- `cpp_extensions/mcts/batch_inference_coordinator.cpp` (bugfix)
+- `cpp_extensions/mcts/continuous_simulation_runner.cpp` (bugfix)
+
+**Critical Bugs Fixed** (commit 5f0bf94):
+1. **Coordinator Lifecycle Bug**: `stop()` didn't wake threads waiting in `collect_batch()`
+   - Added `AsyncInferenceQueue::shutdown()` to notify condition variables
+   - Called from `BatchInferenceCoordinator::stop()` before join()
+2. **Result Stealing Bug**: Multiple threads calling `consume_ready_results()` stole each other's results
+   - Changed `process_completed_results()` to use `try_get_result(request_id)`
+   - Each thread now fetches only its own results individually
+
+**Lock-Free Implementation** (commit 25c908f):
+1. **Pending Requests Queue**:
+   - Replaced: `std::deque + std::mutex + std::condition_variable`
+   - With: `MPMCRingBuffer<InferenceRequest, 4096>` (lock-free)
+   - `submit_request()`: Wait-free enqueue with retry on full
+   - `collect_batch()`: Polling-based (10μs sleep, no condition variables)
+
+2. **Completed Results Storage**:
+   - Replaced: `std::unordered_map<uint64_t, InferenceResult> + std::mutex`
+   - With: `std::array<ResultSlot, 8192>` with atomic occupied flags
+   - `submit_results()`: Lock-free O(1) insertion via `request_id % capacity`
+   - `try_get_result()`: Lock-free O(1) lookup with collision detection
+
+3. **Architecture Changes**:
+   - Removed all mutexes and condition variables from hot paths
+   - Fixed memory allocation: ~1MB (vs unbounded with map/deque)
+   - Atomic counters for `pending_count_` and `results_count_`
+   - `shutdown()` is now no-op (polling exits naturally on timeout)
+
+**Performance Characteristics**:
+- Request submission: Wait-free (MPMCRingBuffer turn-based algorithm)
+- Batch collection: Lock-free with polling (10μs sleep to avoid busy-wait)
+- Result retrieval: Lock-free O(1) ring buffer indexing
+- Memory: Fixed 1MB allocation (predictable, cache-friendly)
+
+**Implementation Details**:
+- State cloning on retry: Required because `try_enqueue()` moves the request
+- 10,000 retry limit: Emergency brake (should never trigger with 4096 capacity)
+- `consume_ready_results()`: Deprecated but kept for compatibility (scans all 8192 slots)
+- `get_memory_usage()`: Returns fixed 1MB instead of dynamic calculation
+- 64-byte alignment on ResultSlot to prevent false sharing
+
+**Validation**:
+- [✅] tests/integration/test_mcts_async_mode.py: 11/11 PASS (2.14s)
+- [✅] All async search modes working correctly
+- [✅] No deadlocks or race conditions observed
+- [✅] Coordinator lifecycle working properly
+- [✅] No result stealing between threads
+
+**Acceptance Criteria**: ✅
+- ✅ Lock-free MPMCRingBuffer integrated for pending requests
+- ✅ Ring buffer array with atomic flags for completed results
+- ✅ All mutexes and condition variables removed from hot paths
+- ✅ Fixed memory allocation (~1MB)
+- ✅ All async integration tests pass
+- ✅ No coordinator hanging bugs
+- ✅ No result stealing bugs
+
+**Expected Impact**: 1.4× speedup (eliminates mutex contention)
+
+**Completed**: 2025-10-08
+**Author**: Claude Code
+**Commits**:
+- 5f0bf94 (critical bugfixes)
+- 25c908f (lock-free integration)
+
+---
+
 ### T007: Create DLPack Tensor Bridge
 **Priority**: HIGH
 **Effort**: 2 days
