@@ -27,7 +27,12 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
                                                  int num_simulations) {
     int completed = 0;
     int submitted = 0;
-    pending_expansions_.clear();
+
+    // Clear pending buffer
+    for (auto& slot : pending_buffer_) {
+        slot.occupied.store(false, std::memory_order_relaxed);
+    }
+    pending_count_.store(0, std::memory_order_relaxed);
 
     // THREAD AFFINITY: Pin thread to optimal CPU core for cache locality
     // Expected impact: 1.15× speedup from reduced cross-CCD traffic
@@ -116,7 +121,8 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
             if (submission_ready) {
                 constexpr std::size_t kMaxInFlight = 4096;
                 std::size_t backoff_loops = 0;
-                while (queue.pending_count() >= kMaxInFlight || pending_expansions_.size() >= kMaxInFlight) {
+                size_t pending = pending_count_.load(std::memory_order_relaxed);
+                while (queue.pending_count() >= kMaxInFlight || pending >= kMaxInFlight) {
                     waiting_for_leaf = true;
                     int flushed = process_completed_results(queue);
                     if (flushed == 0) {
@@ -125,6 +131,7 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
                     if (++backoff_loops > 1024) {
                         break;  // Prevent unbounded waiting
                     }
+                    pending = pending_count_.load(std::memory_order_relaxed);
                 }
 
                 // Submit request (NON-BLOCKING)
@@ -134,12 +141,19 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
                     path_buffer_
                 );
 
-                // Track pending expansion (keep original state for expansion)
-                PendingExpansion pending;
-                pending.leaf_node = leaf;
-                pending.path = path_buffer_;  // Copy path
-                pending.state = std::move(current_state);  // Keep state for expansion
-                pending_expansions_[request_id] = std::move(pending);
+                // Track pending expansion using ring buffer (O(1) direct indexing)
+                size_t slot_index = request_id % PENDING_BUFFER_CAPACITY;
+                PendingSlot& slot = pending_buffer_[slot_index];
+
+                // Store request data
+                slot.request_id = request_id;
+                slot.data.leaf_node = leaf;
+                slot.data.path = path_buffer_;  // Copy path
+                slot.data.state = std::move(current_state);  // Keep state for expansion
+
+                // Mark slot as occupied (release to ensure data is visible)
+                slot.occupied.store(true, std::memory_order_release);
+                pending_count_.fetch_add(1, std::memory_order_relaxed);
 
                 submitted++;
             }
@@ -160,7 +174,12 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
         }
     }
 
-    pending_expansions_.clear();
+    // Clear pending buffer
+    for (auto& slot : pending_buffer_) {
+        slot.occupied.store(false, std::memory_order_relaxed);
+    }
+    pending_count_.store(0, std::memory_order_relaxed);
+
     return completed;
 }
 
@@ -175,13 +194,26 @@ int ContinuousSimulationRunner::process_completed_results(AsyncInferenceQueue& q
         }
 
         for (auto& result : results) {
-            auto pending_it = pending_expansions_.find(result.request_id);
-            if (pending_it == pending_expansions_.end()) {
-                continue;
+            // O(1) lookup using ring buffer (request_id % capacity)
+            size_t slot_index = result.request_id % PENDING_BUFFER_CAPACITY;
+            PendingSlot& slot = pending_buffer_[slot_index];
+
+            // Check if slot is occupied (acquire to ensure data is visible)
+            if (!slot.occupied.load(std::memory_order_acquire)) {
+                continue;  // Slot empty or already processed
             }
 
-            auto pending = std::move(pending_it->second);
-            pending_expansions_.erase(pending_it);
+            // Verify request_id matches (handle collisions)
+            if (slot.request_id != result.request_id) {
+                continue;  // Different request in this slot
+            }
+
+            // Extract pending data
+            PendingExpansion pending = std::move(slot.data);
+
+            // Mark slot as free
+            slot.occupied.store(false, std::memory_order_release);
+            pending_count_.fetch_sub(1, std::memory_order_relaxed);
 
             if (pending.state && expand_node_with_result(
                     pending.leaf_node,

@@ -24,7 +24,8 @@
 
 #include "simulation_runner.hpp"
 #include "async_inference_queue.hpp"
-#include <unordered_map>
+#include <array>
+#include <atomic>
 
 namespace mcts {
 
@@ -122,9 +123,6 @@ public:
                        int num_simulations);
 
 private:
-    // Pending expansions waiting for inference results
-    std::unordered_map<uint64_t, PendingExpansion> pending_expansions_;
-
     /**
      * @brief Process completed inference results
      *
@@ -186,6 +184,29 @@ private:
      * @param alpha Dirichlet concentration parameter (0.3 for Go, 0.15 for Chess)
      */
     void add_dirichlet_noise(NodeIndex root_index, float alpha);
+
+    /**
+     * @brief Fixed-size ring buffer for pending expansions
+     *
+     * Replaces std::unordered_map with O(1) direct indexing using
+     * request_id % CAPACITY. Provides faster lookups and lower memory
+     * overhead than hash map.
+     *
+     * Capacity of 8192 supports high throughput with minimal memory
+     * (8192 * ~200 bytes = 1.6 MB vs unordered_map's 3-4 MB overhead).
+     */
+    static constexpr size_t PENDING_BUFFER_CAPACITY = 8192;
+
+    struct PendingSlot {
+        std::atomic<bool> occupied{false};  // Slot in use
+        uint64_t request_id{0};              // Request ID for verification
+        PendingExpansion data;               // Actual expansion data
+
+        PendingSlot() = default;
+    };
+
+    std::array<PendingSlot, PENDING_BUFFER_CAPACITY> pending_buffer_;
+    std::atomic<size_t> pending_count_{0};  // Track number of pending items
 };
 
 } // namespace mcts

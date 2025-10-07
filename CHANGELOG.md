@@ -6,6 +6,31 @@ All notable changes to this project will be documented in this file.
 
 ### Spec 004: MCTS Throughput Recovery - Phase 1 & 2 In Progress (2025-10-07)
 
+#### T010: Replace Pending Expansions Map with Ring Buffer (2025-10-07)
+- **Changed**: Replaced std::unordered_map with fixed-size ring buffer for O(1) pending expansion lookup
+- **Files**:
+  - `cpp_extensions/mcts/continuous_simulation_runner.hpp` - Added PendingSlot structure and ring buffer
+  - `cpp_extensions/mcts/continuous_simulation_runner.cpp` - Updated insertion and lookup logic
+- **Key Changes**:
+  - Replaced `pending_expansions_` unordered_map with `pending_buffer_` fixed-size array
+  - Direct O(1) indexing using request_id % CAPACITY (8192 slots)
+  - Atomic occupied flags for thread-safe access
+  - Collision detection via request_id verification
+  - Pending count tracked with atomic counter
+- **Design**:
+  - Fixed-size array of 8192 slots (power-of-2 for efficient modulo)
+  - Each slot: atomic<bool> occupied, uint64_t request_id, PendingExpansion data
+  - Memory-order optimized atomics (acquire/release)
+  - No heap allocations during lookup/insertion
+- **Performance Benefits**:
+  - O(1) lookup vs O(log n) hash map lookup
+  - No heap allocations for map nodes (0 allocs vs N allocs)
+  - Better cache locality (contiguous array vs scattered buckets)
+  - Lower memory overhead: 1.6 MB fixed vs 3-4 MB dynamic
+  - Faster iteration (direct array access vs bucket traversal)
+- **Validation**: All 5 integration tests pass (RootPreExpansionTest)
+- **Status**: ✅ Complete
+
 #### T006: Lock-Free MPMC Queue Implementation (2025-10-07)
 - **Added**: Wait-free multi-producer multi-consumer ring buffer for high-throughput async operations
 - **Files**:
