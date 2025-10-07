@@ -1,36 +1,40 @@
 /**
  * @file async_inference_queue.hpp
- * @brief Async inference queue for non-blocking MCTS simulation
+ * @brief Lock-free async inference queue for non-blocking MCTS simulation
  *
- * This module implements a thread-safe queue system that decouples MCTS simulation
+ * This module implements a wait-free queue system that decouples MCTS simulation
  * threads from neural network inference. Simulations submit inference requests
  * asynchronously and continue working, while a background coordinator batches
  * requests and calls Python inference once per batch.
  *
  * Performance targets:
- * - Request submission: <0.1ms (non-blocking)
+ * - Request submission: <0.1ms (wait-free with MPMCRingBuffer)
  * - Batch collection: triggered by count (≥32) OR timeout (≤2ms)
- * - Result retrieval: <0.1ms (lock-free read)
- * - Memory: <10MB for 10k pending requests
+ * - Result retrieval: <0.1ms (lock-free O(1) ring buffer lookup)
+ * - Memory: Fixed 8MB allocation (4096 requests + 8192 results)
  *
  * Key design principles:
- * - Non-blocking request submission (threads never wait)
- * - Timeout-based batch collection (prevent idle GPU)
- * - Thread-safe with mutex protection
- * - Minimal memory footprint with automatic cleanup
+ * - Wait-free request submission (no locks, no blocking)
+ * - Lock-free result retrieval with O(1) ring buffer indexing
+ * - Timeout-based batch collection via polling (no condition variables)
+ * - Fixed memory footprint with predictable allocation
+ *
+ * Architecture (T006b):
+ * - Lock-free MPMCRingBuffer for pending requests (capacity 4096)
+ * - Ring buffer array for completed results (capacity 8192)
+ * - Atomic counters for queue depth monitoring
+ * - No mutexes or condition variables in hot paths
  */
 
 #pragma once
 
 #include "tree.hpp"
+#include "lock_free_queue.hpp"
 #include "../utils/igamestate.h"
 #include <vector>
-#include <deque>
-#include <unordered_map>
+#include <array>
 #include <optional>
 #include <memory>
-#include <mutex>
-#include <condition_variable>
 #include <atomic>
 #include <cstdint>
 
@@ -240,22 +244,28 @@ public:
      *
      * @return Vector of request IDs currently ready for retrieval
      */
-    [[deprecated("Use consume_ready_results() instead")]]
+    [[deprecated("Use try_get_result() instead - no bulk operations needed")]]
     std::vector<uint64_t> get_ready_request_ids() const;
 
 private:
     // Request ID generation
     std::atomic<uint64_t> next_request_id_{0};
 
-    // Pending requests queue
-    mutable std::mutex pending_mutex_;
-    std::deque<InferenceRequest> pending_requests_;
-    std::condition_variable pending_cv_;
+    // Lock-free pending requests queue (T006b)
+    MPMCRingBuffer<InferenceRequest, 4096> pending_requests_;
+    std::atomic<size_t> pending_count_{0};
 
-    // Completed results map
-    mutable std::mutex results_mutex_;
-    std::unordered_map<uint64_t, InferenceResult> completed_results_;
-    std::condition_variable results_cv_;
+    // Lock-free completed results ring buffer (T006b)
+    static constexpr size_t RESULTS_BUFFER_CAPACITY = 8192;
+
+    struct alignas(64) ResultSlot {
+        std::atomic<bool> occupied{false};
+        uint64_t request_id{0};
+        InferenceResult data;
+    };
+
+    std::array<ResultSlot, RESULTS_BUFFER_CAPACITY> results_buffer_;
+    std::atomic<size_t> results_count_{0};
 };
 
 } // namespace mcts
