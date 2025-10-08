@@ -5,6 +5,9 @@ project(mcts_core)
 # Find OpenMP
 find_package(OpenMP REQUIRED)
 
+# Find CUDA (optional, for pinned memory in dlpack_bridge)
+find_package(CUDAToolkit QUIET)
+
 # Sanitizer configuration (optional, enabled via cmake args)
 option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
 option(ENABLE_TSAN "Enable ThreadSanitizer" OFF)
@@ -48,6 +51,8 @@ add_library(mcts_core STATIC
     batch_inference_callback.hpp
     batch_inference_coordinator.cpp
     batch_inference_coordinator.hpp
+    dlpack_bridge.cpp
+    dlpack_bridge.hpp
 )
 
 # Set compile features and flags
@@ -59,6 +64,14 @@ target_include_directories(mcts_core PUBLIC
 
 # Link with OpenMP
 target_link_libraries(mcts_core PUBLIC OpenMP::OpenMP_CXX)
+
+# Link with CUDA runtime if available (for pinned memory)
+if(CUDAToolkit_FOUND)
+    target_link_libraries(mcts_core PUBLIC CUDA::cudart)
+    message(STATUS "CUDA runtime found, enabling pinned memory support")
+else()
+    message(STATUS "CUDA runtime not found, using malloc fallback")
+endif()
 
 # Add compiler-specific optimizations
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")

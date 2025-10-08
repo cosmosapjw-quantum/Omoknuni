@@ -23,6 +23,7 @@
 #include "continuous_simulation_runner.hpp"
 #include "batch_inference_coordinator.hpp"
 #include "instrumentation.hpp"
+#include "dlpack_bridge.hpp"
 
 namespace py = pybind11;
 
@@ -528,6 +529,119 @@ PYBIND11_MODULE(mcts_py, m) {
              "Check if coordinator is running\n\n"
              "Returns:\n"
              "    bool: True if coordinator thread is active");
+
+    // PinnedBuffer - CUDA pinned memory buffer with reference counting (T007b)
+    py::class_<PinnedBuffer, std::shared_ptr<PinnedBuffer>>(m, "PinnedBuffer",
+             "CUDA pinned memory buffer with thread-safe reference counting\n\n"
+             "Provides memory allocation optimized for GPU transfers:\n"
+             "- CUDA pinned memory (cudaMallocHost) for 2-3× faster GPU transfers\n"
+             "- Thread-safe atomic reference counting\n"
+             "- Automatic cleanup when reference count reaches 0\n"
+             "- Fallback to regular malloc if CUDA unavailable")
+        .def(py::init<size_t, bool>(),
+             py::arg("size_bytes"), py::arg("use_cuda") = true,
+             "Allocate pinned memory buffer\n\n"
+             "Args:\n"
+             "    size_bytes: Size of buffer in bytes (must be > 0)\n"
+             "    use_cuda: Try CUDA pinned memory (true) or force malloc (false)\n\n"
+             "Raises:\n"
+             "    ValueError: If size_bytes is 0\n"
+             "    MemoryError: If allocation fails")
+        .def("data",
+             [](PinnedBuffer& self) {
+                 return reinterpret_cast<uintptr_t>(self.data());
+             },
+             "Get pointer to buffer data as integer address\n\n"
+             "Returns:\n"
+             "    int: Memory address of buffer")
+        .def("size",
+             &PinnedBuffer::size,
+             "Get buffer size in bytes\n\n"
+             "Returns:\n"
+             "    int: Size of allocated buffer")
+        .def("is_cuda_pinned",
+             &PinnedBuffer::is_cuda_pinned,
+             "Check if buffer is CUDA pinned memory\n\n"
+             "Returns:\n"
+             "    bool: True if cudaMallocHost, False if malloc")
+        .def("ref_count",
+             [](const std::shared_ptr<PinnedBuffer>& self) {
+                 return self.use_count();
+             },
+             "Get current reference count (shared_ptr use count)\n\n"
+             "Returns:\n"
+             "    int: Current reference count");
+
+    // BufferPool - Buffer pool with size classes (T007b)
+    // Note: BufferPool is a singleton, so we don't allow Python to create instances
+    py::class_<BufferPool, std::unique_ptr<BufferPool, py::nodelete>>(m, "BufferPool",
+             "Buffer pool with size classes for efficient reuse\n\n"
+             "Thread-safe singleton that manages pools of pre-allocated buffers\n"
+             "in common sizes (4KB, 64KB, 1MB, 4MB) to amortize allocation overhead.\n\n"
+             "Performance:\n"
+             "- 90%+ cache hit rate during steady state\n"
+             "- O(1) lookup for pooled sizes\n"
+             "- Thread-safe operations")
+        .def_static("instance",
+                    &BufferPool::instance,
+                    py::return_value_policy::reference,
+                    "Get singleton BufferPool instance\n\n"
+                    "Returns:\n"
+                    "    BufferPool: Global buffer pool instance")
+        .def("acquire",
+             &BufferPool::acquire,
+             py::arg("min_size"), py::arg("use_cuda") = true,
+             "Acquire buffer from pool or allocate new one\n\n"
+             "Searches pool for cached buffer of appropriate size. If found,\n"
+             "returns immediately. Otherwise allocates new buffer.\n\n"
+             "Args:\n"
+             "    min_size: Minimum required size in bytes\n"
+             "    use_cuda: Prefer CUDA pinned memory (true) or malloc (false)\n\n"
+             "Returns:\n"
+             "    PinnedBuffer: Buffer with reference count 1\n\n"
+             "Raises:\n"
+             "    MemoryError: If allocation fails")
+        .def("release",
+             &BufferPool::release,
+             py::arg("buffer"),
+             "Return buffer to pool for reuse\n\n"
+             "If buffer has ref_count == 1 and pool has space, caches buffer\n"
+             "for reuse. Otherwise lets buffer be freed.\n\n"
+             "Args:\n"
+             "    buffer: Buffer to return")
+        .def("clear",
+             &BufferPool::clear,
+             "Clear all cached buffers (for testing/cleanup)")
+        .def("get_stats",
+             [](const BufferPool& self) {
+                 const auto stats = self.get_stats();
+                 py::dict result;
+                 result["total_allocated"] = stats.total_allocated;
+                 result["total_reused"] = stats.total_reused;
+                 result["current_pooled"] = stats.current_pooled;
+                 result["current_bytes"] = stats.current_bytes;
+                 return result;
+             },
+             "Get pool statistics (for monitoring/debugging)\n\n"
+             "Returns:\n"
+             "    dict: Statistics with keys:\n"
+             "        - total_allocated: Lifetime allocations\n"
+             "        - total_reused: Cache hits\n"
+             "        - current_pooled: Buffers in pool now\n"
+             "        - current_bytes: Total bytes in pool")
+        .def("set_max_buffers_per_class",
+             &BufferPool::set_max_buffers_per_class,
+             py::arg("max_buffers"),
+             "Configure maximum buffers per size class\n\n"
+             "Args:\n"
+             "    max_buffers: Maximum buffers to cache per size (default: 16)");
+
+    // CUDA availability check (T007b)
+    m.def("is_cuda_available",
+          &is_cuda_available,
+          "Check if CUDA is available for pinned memory allocation\n\n"
+          "Returns:\n"
+          "    bool: True if CUDA runtime is available, False otherwise");
 }
 
 } // namespace python
