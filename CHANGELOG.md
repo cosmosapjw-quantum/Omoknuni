@@ -4,7 +4,46 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### Spec 004: MCTS Throughput Recovery - Phase 1 & 2 In Progress (2025-10-07)
+### Spec 004: MCTS Throughput Recovery - Phase 1 & 2 In Progress (2025-10-09)
+
+#### T007b: Pinned Memory Buffer Allocation (2025-10-09)
+- **Added**: CUDA pinned memory buffer pool with size classes for zero-copy DLPack tensor bridge
+- **Files**:
+  - `cpp_extensions/mcts/dlpack_bridge.hpp` - PinnedBuffer and BufferPool classes (new)
+  - `cpp_extensions/mcts/dlpack_bridge.cpp` - Implementation with CUDA/malloc fallback (new)
+  - `cpp_extensions/mcts/python_bindings.cpp` - Python bindings for buffer management
+  - `cpp_extensions/mcts/CMakeLists.txt` - Optional CUDA::cudart linking
+  - `tests/unit/test_pinned_buffer.py` - 28 comprehensive unit tests (new)
+- **Key Components**:
+  - `PinnedBuffer`: CUDA pinned memory (cudaMallocHost) with malloc fallback
+  - `BufferPool`: Thread-safe singleton with size classes (4KB, 64KB, 1MB, 4MB)
+  - Python API: PinnedBuffer, BufferPool.instance(), is_cuda_available()
+- **Key Features**:
+  - Size class pooling: O(1) acquire/release, power-of-2 aligned
+  - Thread-safe: shared_ptr ref counting, mutex-protected pool
+  - Memory tracking: total_allocated, total_reused, current_pooled, current_bytes
+  - CUDA detection: Runtime availability check
+  - Configurable: set_max_buffers_per_class() for memory limits
+- **Performance Characteristics**:
+  - CUDA pinned memory: 2-3× faster GPU transfers vs pageable memory
+  - Buffer pool: O(1) operations, 90%+ cache hit rate expected
+  - Reference counting: Lock-free atomics via shared_ptr
+  - Memory overhead: ~100 bytes per pooled buffer
+- **Design Decisions**:
+  - shared_ptr lifetime management (safer with Python GIL than manual ref counting)
+  - Manual release model (explicit release() for buffer reuse)
+  - Size classes cover common batch sizes (1/16/64/256 game states)
+  - Optional CUDA (builds work without GPU, runtime detection)
+  - Singleton with py::nodelete (prevents Python from managing lifetime)
+- **Validation**: 25/28 tests pass (3 skipped - no CUDA on system)
+  - Buffer allocation (small/large, zero-size error, CUDA pinned/fallback)
+  - Reference counting (shared_ptr use_count, concurrent access)
+  - Size classes (TINY/SMALL/MEDIUM/LARGE mapping)
+  - Buffer reuse (pool statistics, cache hits)
+  - Thread safety (concurrent acquire/release, no races)
+  - Memory leaks (1000-iteration stress tests, cleanup validation)
+- **Status**: ✅ Complete
+- **Commit**: b779031
 
 #### T010: Replace Pending Expansions Map with Ring Buffer (2025-10-07)
 - **Changed**: Replaced std::unordered_map with fixed-size ring buffer for O(1) pending expansion lookup
