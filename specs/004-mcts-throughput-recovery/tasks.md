@@ -369,72 +369,513 @@ and allow focused testing of the lock-free queue in isolation.
 
 ---
 
-### T007: Create DLPack Tensor Bridge
+### T007: Create DLPack Tensor Bridge (SPLIT INTO SUBTASKS)
 **Priority**: HIGH
-**Effort**: 2 days
+**Effort**: 2 days → Split into 7 subtasks (4-6 hours each)
 **Dependencies**: None
+**Status**: NOT STARTED (broken down into T007a-T007g)
+
+**Rationale for Splitting**:
+DLPack integration is complex and involves multiple independent components that can be developed and tested in isolation. Splitting allows for incremental progress, easier debugging, and better test coverage at each step.
+
+---
+
+#### T007a: Research DLPack Specification and Design API
+**Effort**: 4 hours
+**Dependencies**: None
+**Deliverables**:
+- [ ] Read DLPack specification documentation
+- [ ] Understand DLPack capsule structure and lifetime management
+- [ ] Design C++ API for tensor bridge (`create_batch_tensor`, `get_tensor_info`)
+- [ ] Document memory ownership semantics
+- [ ] Create design document in `specs/004-mcts-throughput-recovery/contracts/dlpack-api.md`
+
+**Acceptance Criteria**:
+- DLPack specification understood and documented
+- API design reviewed and approved
+- Memory ownership model clearly defined
+
+---
+
+#### T007b: Implement Pinned Memory Buffer Allocation
+**Effort**: 4 hours
+**Dependencies**: T007a
 **Files**:
 - `cpp_extensions/mcts/dlpack_bridge.hpp` (new)
 - `cpp_extensions/mcts/dlpack_bridge.cpp` (new)
+
+**Implementation**:
+- [ ] Create `PinnedBufferAllocator` class with CUDA pinned memory support
+- [ ] Implement buffer pool with pre-allocated blocks (4KB, 64KB, 1MB sizes)
+- [ ] Add reference counting for buffer lifetime management
+- [ ] Implement fallback to regular malloc if CUDA unavailable
+- [ ] Add memory usage tracking and limits
+
+**Validation**:
+- [ ] Unit tests for allocation/deallocation
+- [ ] Test buffer pool exhaustion and reuse
+- [ ] Verify pinned memory with `cudaHostGetDevicePointer()`
+- [ ] Benchmark allocation speed vs malloc
+
+**Acceptance Criteria**:
+- Pinned memory buffers allocate successfully
+- Buffer pool reuses freed buffers
+- Memory usage stays within limits
+- All unit tests pass
+
+---
+
+#### T007c: Create DLPack Tensor Capsule Structure
+**Effort**: 5 hours
+**Dependencies**: T007b
+**Files**:
+- `cpp_extensions/mcts/dlpack_bridge.cpp`
+
+**Implementation**:
+- [ ] Implement `DLManagedTensor` structure following spec
+- [ ] Create deleter function for capsule cleanup
+- [ ] Implement `DLTensor` metadata (shape, strides, dtype)
+- [ ] Add support for float32 tensors with proper alignment
+- [ ] Handle CPU-only and CPU+CUDA contexts
+
+**Validation**:
+- [ ] Test capsule creation and destruction
+- [ ] Verify metadata correctness
+- [ ] Test with PyTorch `torch.from_dlpack()`
+- [ ] Verify no memory leaks with valgrind
+
+**Acceptance Criteria**:
+- DLPack capsules created correctly
+- PyTorch can consume capsules
+- No memory leaks detected
+- Metadata matches tensor contents
+
+---
+
+#### T007d: Implement Batch Tensor Creation
+**Effort**: 6 hours
+**Dependencies**: T007c
+**Files**:
+- `cpp_extensions/mcts/dlpack_bridge.cpp`
+
+**Implementation**:
+- [ ] Implement `create_batch_tensor(states, game_type)` function
+- [ ] Allocate batch tensor: `[batch_size, num_planes, height, width]`
+- [ ] Handle different game types (Gomoku 36 planes, Chess 30 planes, Go 25 planes)
+- [ ] Implement row-major layout for PyTorch compatibility
+- [ ] Add error handling for invalid inputs
+
+**Validation**:
+- [ ] Test with single state
+- [ ] Test with batch of 64 states
+- [ ] Verify tensor shape and strides
+- [ ] Test all three game types
+- [ ] Benchmark creation time
+
+**Acceptance Criteria**:
+- Batch tensors created with correct shape
+- All game types supported
+- Tensor data layout matches PyTorch expectations
+- Creation time < 0.5ms for batch of 64
+
+---
+
+#### T007e: Add Direct Feature Extraction to Game States
+**Effort**: 5 hours
+**Dependencies**: T007d
+**Files**:
+- `cpp_extensions/games/gomoku/gomoku_state.h`
+- `cpp_extensions/games/gomoku/gomoku_state.cpp`
+- Similar for Chess and Go
+
+**Implementation**:
+- [ ] Add `extract_features_to_buffer(float* buffer)` method to each game state
+- [ ] Implement direct write to pre-allocated buffer (no intermediate allocations)
+- [ ] Use SIMD instructions where possible for feature extraction
+- [ ] Ensure thread-safe operation (read-only state access)
+
+**Validation**:
+- [ ] Test feature extraction correctness vs existing Python implementation
+- [ ] Verify no memory allocations during extraction
+- [ ] Benchmark extraction speed (target < 10μs per state)
+- [ ] Test with concurrent calls from multiple threads
+
+**Acceptance Criteria**:
+- Feature extraction writes directly to buffer
+- Output matches existing implementation
+- No allocations in hot path
+- All game types supported
+
+---
+
+#### T007f: Update Python Bindings
+**Effort**: 4 hours
+**Dependencies**: T007e
+**Files**:
 - `cpp_extensions/mcts/python_bindings.cpp`
 
 **Implementation**:
-- [ ] Allocate pinned memory buffers
-- [ ] Implement `create_batch_tensor()` for DLPack
-- [ ] Add direct feature extraction to game states
-- [ ] Update Python bindings
+- [ ] Expose `create_batch_tensor()` to Python via pybind11
+- [ ] Return PyCapsule object compatible with `torch.from_dlpack()`
+- [ ] Add proper error handling and exception conversion
+- [ ] Document Python API usage
 
 **Validation**:
-- Verify zero-copy with memory profiler
-- Test PyTorch compatibility
-- Benchmark vs numpy conversion
+- [ ] Test Python can call C++ function
+- [ ] Test `torch.from_dlpack()` consumes capsule
+- [ ] Verify tensor data correctness in Python
+- [ ] Test error handling (invalid inputs, CUDA errors)
 
-**Expected Impact**: 1.25× speedup (eliminates copy overhead)
+**Acceptance Criteria**:
+- Python bindings work correctly
+- PyTorch integration functional
+- Errors properly propagated to Python
+- Documentation complete
 
 ---
 
-### T008: Update Python Inference Bridge
-**Priority**: HIGH
-**Effort**: 1 day
-**Dependencies**: T007
+#### T007g: Validation and Benchmarking
+**Effort**: 4 hours
+**Dependencies**: T007f
 **Files**:
-- `src/core/dlpack_inference_bridge.py` (new)
-- `src/core/cpp_inference_bridge.py`
+- `tests/integration/test_dlpack_tensor_bridge.py` (new)
+- `tests/performance/test_dlpack_vs_numpy.py` (new)
 
 **Implementation**:
-- [ ] Create `DLPackInferenceBridge` class
-- [ ] Implement `torch.from_dlpack()` conversion
-- [ ] Pre-allocate GPU buffers
-- [ ] Add non-blocking GPU transfers
+- [ ] Create comprehensive integration tests
+- [ ] Verify zero-copy with memory profiler (no memcpy calls)
+- [ ] Test PyTorch compatibility with training loop
+- [ ] Benchmark vs current numpy conversion pipeline
+- [ ] Test with different batch sizes (1, 16, 32, 64, 128)
 
 **Validation**:
-- Verify tensor correctness
-- Measure GPU transfer time
-- Test with various batch sizes
+- [ ] Zero-copy verified with profiler
+- [ ] PyTorch forward/backward pass works
+- [ ] Benchmark shows expected speedup
+- [ ] All integration tests pass
+
+**Acceptance Criteria**:
+- Zero-copy confirmed (no memcpy in hot path)
+- 1.25× speedup achieved vs numpy baseline
+- All tests pass
+- PyTorch integration validated
+
+**Expected Total Impact**: 1.25× speedup (eliminates copy overhead)
 
 ---
 
-### T009: Implement Per-Thread Memory Arenas
+### T008: Update Python Inference Bridge (SPLIT INTO SUBTASKS)
+**Priority**: HIGH
+**Effort**: 1 day → Split into 5 subtasks (2-3 hours each)
+**Dependencies**: T007 (specifically T007f, T007g)
+**Status**: NOT STARTED (broken down into T008a-T008e)
+
+**Rationale for Splitting**:
+Python bridge integration involves distinct phases: design, implementation, optimization, and validation. Each can be tested independently.
+
+---
+
+#### T008a: Design DLPackInferenceBridge Class Interface
+**Effort**: 2 hours
+**Dependencies**: T007g
+**Deliverables**:
+- [ ] Design class interface and method signatures
+- [ ] Define buffer management strategy (pre-allocation, reuse)
+- [ ] Plan GPU transfer pipeline (host→GPU→host)
+- [ ] Document integration with existing BatchInferenceCoordinator
+- [ ] Create design document in `specs/004-mcts-throughput-recovery/contracts/python-bridge-api.md`
+
+**Acceptance Criteria**:
+- Interface design complete and reviewed
+- Buffer management strategy defined
+- Integration plan documented
+
+---
+
+#### T008b: Implement torch.from_dlpack() Conversion
+**Effort**: 3 hours
+**Dependencies**: T008a
+**Files**:
+- `src/core/dlpack_inference_bridge.py` (new)
+
+**Implementation**:
+- [ ] Create `DLPackInferenceBridge` class with `batch_inference()` method
+- [ ] Convert DLPack capsule to PyTorch tensor using `torch.from_dlpack()`
+- [ ] Handle tensor device placement (CPU vs CUDA)
+- [ ] Add error handling for conversion failures
+- [ ] Implement fallback to numpy if DLPack unavailable
+
+**Validation**:
+- [ ] Test conversion with various batch sizes
+- [ ] Verify tensor device and dtype
+- [ ] Test error handling
+- [ ] Benchmark conversion overhead
+
+**Acceptance Criteria**:
+- DLPack→PyTorch conversion working
+- Tensors have correct shape and device
+- Error handling functional
+- Conversion overhead < 50μs
+
+---
+
+#### T008c: Pre-Allocate GPU Buffers
+**Effort**: 3 hours
+**Dependencies**: T008b
+**Files**:
+- `src/core/dlpack_inference_bridge.py`
+
+**Implementation**:
+- [ ] Create `BufferPool` class for GPU tensor caching
+- [ ] Pre-allocate tensors for common batch sizes (16, 32, 64)
+- [ ] Implement buffer reuse with reference counting
+- [ ] Add automatic cleanup for unused buffers
+- [ ] Handle OOM gracefully with fallback to dynamic allocation
+
+**Validation**:
+- [ ] Test buffer reuse across multiple batches
+- [ ] Verify no memory leaks over 1000 iterations
+- [ ] Test OOM handling
+- [ ] Measure allocation overhead reduction
+
+**Acceptance Criteria**:
+- Buffers pre-allocated successfully
+- Reuse working correctly
+- No memory leaks
+- Allocation overhead eliminated for common sizes
+
+---
+
+#### T008d: Add Non-Blocking GPU Transfers
+**Effort**: 3 hours
+**Dependencies**: T008c
+**Files**:
+- `src/core/dlpack_inference_bridge.py`
+
+**Implementation**:
+- [ ] Use CUDA streams for non-blocking H2D transfers
+- [ ] Implement stream pool management
+- [ ] Add synchronization points before inference
+- [ ] Optimize D2H transfers for results
+- [ ] Add profiling for transfer times
+
+**Validation**:
+- [ ] Test non-blocking behavior with concurrent CPU work
+- [ ] Measure transfer time with different batch sizes
+- [ ] Verify correctness with stream synchronization
+- [ ] Benchmark overall inference pipeline
+
+**Acceptance Criteria**:
+- Non-blocking transfers implemented
+- Stream management working
+- Transfer times measured and acceptable
+- Inference results correct
+
+---
+
+#### T008e: Integration Testing and Validation
+**Effort**: 3 hours
+**Dependencies**: T008d
+**Files**:
+- `tests/integration/test_dlpack_inference_bridge.py` (new)
+- `tests/performance/test_inference_pipeline.py` (updated)
+
+**Implementation**:
+- [ ] Create integration tests with BatchInferenceCoordinator
+- [ ] Test with actual neural network inference
+- [ ] Verify tensor correctness end-to-end
+- [ ] Measure GPU transfer time breakdown
+- [ ] Test with various batch sizes (1, 16, 32, 64, 128)
+- [ ] Stress test with sustained load
+
+**Validation**:
+- [ ] All integration tests pass
+- [ ] Tensor correctness verified
+- [ ] GPU utilization measured
+- [ ] Transfer times acceptable (< 1ms for batch 64)
+
+**Acceptance Criteria**:
+- Integration tests pass
+- Neural network inference working
+- Performance targets met
+- No memory leaks or race conditions
+
+**Expected Total Impact**: Enables 1.25× speedup from T007 (zero-copy tensors)
+
+---
+
+### T009: Implement Per-Thread Memory Arenas (SPLIT INTO SUBTASKS)
 **Priority**: MEDIUM
-**Effort**: 2 days
+**Effort**: 2 days → Split into 6 subtasks (3-5 hours each)
 **Dependencies**: None
+**Status**: NOT STARTED (broken down into T009a-T009f)
+
+**Rationale for Splitting**:
+Memory arena implementation is complex and touches critical allocation paths. Breaking into incremental steps allows for careful testing of each component before integration with MCTS tree.
+
+---
+
+#### T009a: Design ThreadLocalArena Architecture
+**Effort**: 3 hours
+**Dependencies**: None
+**Deliverables**:
+- [ ] Research arena allocation patterns (jemalloc, tcmalloc, mimalloc)
+- [ ] Design arena structure (chunk size, alignment requirements)
+- [ ] Plan thread-local storage strategy
+- [ ] Define allocation/deallocation interface
+- [ ] Document memory layout and lifecycle
+- [ ] Create design document in `specs/004-mcts-throughput-recovery/contracts/arena-api.md`
+
+**Acceptance Criteria**:
+- Architecture design complete and reviewed
+- Memory layout documented
+- Interface defined
+
+---
+
+#### T009b: Implement Arena Data Structure
+**Effort**: 4 hours
+**Dependencies**: T009a
 **Files**:
 - `cpp_extensions/mcts/thread_local_arena.hpp` (new)
+- `cpp_extensions/mcts/thread_local_arena.cpp` (new)
+
+**Implementation**:
+- [ ] Create `ThreadLocalArena` class with chunk-based allocation
+- [ ] Implement arena initialization (pre-allocate large memory blocks)
+- [ ] Add bump pointer allocation (O(1) fast path)
+- [ ] Implement chunk management (linked list of chunks)
+- [ ] Add alignment handling (64-byte for cache lines)
+- [ ] Implement arena destruction and cleanup
+
+**Validation**:
+- [ ] Unit tests for arena creation/destruction
+- [ ] Test allocation with various sizes
+- [ ] Verify alignment correctness
+- [ ] Test chunk overflow handling
+
+**Acceptance Criteria**:
+- Arena allocates memory correctly
+- Alignment guarantees maintained
+- Chunk management working
+- Unit tests pass
+
+---
+
+#### T009c: Implement Lock-Free Allocation within Arena
+**Effort**: 5 hours
+**Dependencies**: T009b
+**Files**:
+- `cpp_extensions/mcts/thread_local_arena.cpp`
+
+**Implementation**:
+- [ ] Implement `allocate(size)` with lock-free bump pointer
+- [ ] Use atomic operations for thread-safe bump pointer updates
+- [ ] Add fast path for common allocation sizes
+- [ ] Implement slow path for large allocations
+- [ ] Add overflow detection and new chunk allocation
+- [ ] Optimize for common MCTS node size (32 bytes)
+
+**Validation**:
+- [ ] Test concurrent allocations from same arena (should be thread-local, no contention)
+- [ ] Benchmark allocation speed vs malloc (target 10× faster)
+- [ ] Test with different allocation patterns
+- [ ] Verify no race conditions with ThreadSanitizer
+
+**Acceptance Criteria**:
+- Lock-free allocation implemented
+- Performance 10× faster than malloc
+- Thread safety verified
+- All tests pass
+
+---
+
+#### T009d: Add Free List Management
+**Effort**: 5 hours
+**Dependencies**: T009c
+**Files**:
+- `cpp_extensions/mcts/thread_local_arena.cpp`
+
+**Implementation**:
+- [ ] Implement `deallocate(ptr, size)` with free list management
+- [ ] Create per-size-class free lists (32, 64, 128, 256 bytes)
+- [ ] Use intrusive linked list (store next pointer in freed memory)
+- [ ] Implement allocation from free list before bump pointer
+- [ ] Add coalescing for adjacent freed blocks (optional)
+- [ ] Track allocation statistics for debugging
+
+**Validation**:
+- [ ] Test allocate/deallocate cycles
+- [ ] Verify free list LIFO ordering
+- [ ] Test memory reuse correctness
+- [ ] Measure fragmentation over 1M operations
+
+**Acceptance Criteria**:
+- Free list management working
+- Memory reuse functional
+- Fragmentation acceptable (< 20%)
+- Statistics tracking implemented
+
+---
+
+#### T009e: Integrate with MCTS Tree Allocation
+**Effort**: 4 hours
+**Dependencies**: T009d
+**Files**:
+- `cpp_extensions/mcts/tree.hpp`
 - `cpp_extensions/mcts/tree.cpp`
 
 **Implementation**:
-- [ ] Create `ThreadLocalArena` class
-- [ ] Allocate per-thread memory regions
-- [ ] Implement lock-free allocation
-- [ ] Add free list management
-- [ ] Integrate with tree allocation
+- [ ] Add `thread_local ThreadLocalArena* current_arena` storage
+- [ ] Initialize arena on first tree operation per thread
+- [ ] Route `allocate_nodes()` through arena allocator
+- [ ] Route node deallocation through arena free list
+- [ ] Add arena reset on tree clear
+- [ ] Implement fallback to global allocator if arena exhausted
 
 **Validation**:
-- Verify no cross-thread allocations
-- Measure allocation speed
-- Check memory fragmentation
+- [ ] Test tree operations use arena allocation
+- [ ] Verify no cross-thread memory sharing
+- [ ] Test arena reset correctness
+- [ ] Benchmark tree allocation speed improvement
 
-**Expected Impact**: 1.1× speedup (eliminates allocation contention)
+**Acceptance Criteria**:
+- Tree allocations use arena
+- No cross-thread allocations
+- Arena reset working
+- Performance improvement measurable
+
+---
+
+#### T009f: Validation and Benchmarking
+**Effort**: 3 hours
+**Dependencies**: T009e
+**Files**:
+- `tests/unit/test_thread_local_arena.cpp` (new)
+- `tests/performance/test_arena_vs_malloc.cpp` (new)
+
+**Implementation**:
+- [ ] Create comprehensive unit tests for arena operations
+- [ ] Test thread-local isolation (no cross-thread allocation)
+- [ ] Measure allocation speed vs malloc
+- [ ] Test memory fragmentation over long runs
+- [ ] Benchmark full MCTS search with/without arenas
+- [ ] Profile with valgrind and heaptrack
+
+**Validation**:
+- [ ] All unit tests pass
+- [ ] No cross-thread allocations detected
+- [ ] Allocation 10× faster than malloc
+- [ ] Fragmentation < 20%
+- [ ] 1.1× MCTS speedup achieved
+
+**Acceptance Criteria**:
+- All tests pass
+- Thread safety verified
+- Performance targets met
+- Memory usage acceptable
+
+**Expected Total Impact**: 1.1× speedup (eliminates allocation contention)
 
 ---
 
