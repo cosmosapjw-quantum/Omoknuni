@@ -1614,3 +1614,11 @@ All 3 Phase 1 tasks (T006-T008) completed successfully:
   - Configured build system with performance optimizations (`-O3 -march=znver3 -fopenmp`)
   - Created pyproject.toml with scikit-build-core for seamless Python/C++ integration
   - Added requirements.txt with all necessary dependencies for AI/ML workloads
+### Added
+- T007a: DLPack Tensor Bridge API design document (2025-10-08)
+  - Comprehensive 40+ page specification in `specs/004-mcts-throughput-recovery/contracts/dlpack-api.md`
+  - Designed zero-copy tensor exchange API between C++ and PyTorch
+  - Specified memory management with reference-counted pinned buffers
+  - Defined performance targets: <0.5ms for batch of 64, 1.25× expected speedup
+  - Created complete ownership semantics and lifecycle documentation
+
