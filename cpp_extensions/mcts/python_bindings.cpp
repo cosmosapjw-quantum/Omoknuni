@@ -28,6 +28,10 @@
 namespace py = pybind11;
 
 namespace mcts {
+
+// Forward declare wrap_dlpack_capsule (implemented in dlpack_python.cpp)
+PyObject* wrap_dlpack_capsule(DLManagedTensor* tensor);
+
 namespace python {
 
 using NoGil = py::call_guard<py::gil_scoped_release>;
@@ -642,6 +646,55 @@ PYBIND11_MODULE(mcts_py, m) {
           "Check if CUDA is available for pinned memory allocation\n\n"
           "Returns:\n"
           "    bool: True if CUDA runtime is available, False otherwise");
+
+    // DLPack Tensor Capsule API (T007c)
+    py::class_<TensorShape>(m, "TensorShape",
+             "Tensor shape metadata for DLPack capsules\n\n"
+             "Represents 4D tensor shape: (batch, planes, height, width)")
+        .def(py::init<int64_t, int64_t, int64_t, int64_t>(),
+             py::arg("batch_size"), py::arg("num_planes"), py::arg("height"), py::arg("width"),
+             "Create tensor shape\n\n"
+             "Args:\n"
+             "    batch_size: Number of states in batch\n"
+             "    num_planes: Number of feature planes\n"
+             "    height: Board height\n"
+             "    width: Board width")
+        .def_readwrite("batch_size", &TensorShape::batch_size)
+        .def_readwrite("num_planes", &TensorShape::num_planes)
+        .def_readwrite("height", &TensorShape::height)
+        .def_readwrite("width", &TensorShape::width);
+
+    m.def("create_dlpack_capsule",
+          [](std::shared_ptr<PinnedBuffer> buffer, const TensorShape& shape, bool use_cuda) -> py::object {
+              // Create DLManagedTensor
+              DLManagedTensor* managed_tensor = create_dlpack_tensor(buffer, shape, use_cuda);
+
+              // Wrap in PyCapsule
+              PyObject* capsule = wrap_dlpack_capsule(managed_tensor);
+              if (!capsule) {
+                  throw std::runtime_error("Failed to create DLPack capsule");
+              }
+
+              // Return as py::object (takes ownership)
+              return py::reinterpret_steal<py::object>(capsule);
+          },
+          py::arg("buffer"), py::arg("shape"), py::arg("use_cuda") = false,
+          "Create DLPack capsule from pinned buffer\n\n"
+          "Creates zero-copy tensor capsule compatible with torch.from_dlpack().\n"
+          "The capsule shares ownership of the buffer via reference counting.\n\n"
+          "Args:\n"
+          "    buffer: PinnedBuffer containing tensor data\n"
+          "    shape: TensorShape (batch, planes, height, width)\n"
+          "    use_cuda: Whether buffer is CUDA pinned memory\n\n"
+          "Returns:\n"
+          "    PyCapsule: DLPack capsule for torch.from_dlpack()\n\n"
+          "Example:\n"
+          "    >>> buffer = mcts_py.PinnedBuffer(192, use_cuda=False)\n"
+          "    >>> shape = mcts_py.TensorShape(1, 3, 4, 4)\n"
+          "    >>> capsule = mcts_py.create_dlpack_capsule(buffer, shape)\n"
+          "    >>> tensor = torch.from_dlpack(capsule)\n"
+          "    >>> tensor.shape\n"
+          "    torch.Size([1, 3, 4, 4])");
 }
 
 } // namespace python

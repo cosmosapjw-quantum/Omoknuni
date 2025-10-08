@@ -260,4 +260,67 @@ private:
  */
 bool is_cuda_available();
 
+// ============================================================================
+// DLPack Tensor Capsule API (T007c)
+// ============================================================================
+
+// Forward declare DLPack types
+struct DLTensor;
+struct DLManagedTensor;
+
+/**
+ * @brief Context for DLPack deleter callback
+ *
+ * Stores ownership information for tensor memory and metadata.
+ * Cleaned up when PyTorch releases the tensor.
+ */
+struct DLPackContext {
+    std::shared_ptr<PinnedBuffer> buffer;  // Owns the data memory
+    int64_t* shape_storage{nullptr};       // Heap-allocated shape array
+    int64_t* strides_storage{nullptr};     // Heap-allocated strides array (optional)
+
+    ~DLPackContext();
+};
+
+/**
+ * @brief Tensor shape metadata
+ */
+struct TensorShape {
+    int64_t batch_size;
+    int64_t num_planes;
+    int64_t height;
+    int64_t width;
+};
+
+/**
+ * @brief DLPack deleter callback
+ *
+ * Called by PyTorch when tensor is destroyed. Frees DLManagedTensor structure
+ * and releases buffer reference.
+ *
+ * @param self Pointer to DLManagedTensor being deleted
+ */
+void dlpack_deleter(DLManagedTensor* self);
+
+/**
+ * @brief Create DLManagedTensor from buffer and metadata
+ *
+ * Creates DLPack tensor structure that wraps pre-allocated pinned memory.
+ * The tensor takes shared ownership of the buffer via reference counting.
+ *
+ * @param buffer Pinned buffer containing tensor data
+ * @param shape Tensor shape (batch, planes, height, width)
+ * @param use_cuda Whether buffer is CUDA pinned memory
+ * @return DLManagedTensor* (caller must wrap in PyCapsule and pass to Python)
+ * @throws std::bad_alloc if allocation fails
+ */
+DLManagedTensor* create_dlpack_tensor(
+    std::shared_ptr<PinnedBuffer> buffer,
+    const TensorShape& shape,
+    bool use_cuda = false
+);
+
+// Note: wrap_dlpack_capsule() is implemented in python_bindings.cpp
+// since it requires Python.h headers. See python_bindings.cpp for usage.
+
 } // namespace mcts

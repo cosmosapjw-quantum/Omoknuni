@@ -204,4 +204,131 @@ void BufferPool::set_max_buffers_per_class(size_t max_buffers) {
     }
 }
 
+// ============================================================================
+// DLPack Tensor Capsule Implementation (T007c)
+// ============================================================================
+
+// DLPack types and constants (from dlpack v0.8)
+extern "C" {
+
+typedef enum {
+    kDLCPU = 1,
+    kDLCUDA = 2,
+    kDLCUDAHost = 3,
+    kDLCUDAManaged = 13,
+} DLDeviceType;
+
+typedef struct {
+    int device_type;
+    int device_id;
+} DLDevice;
+
+typedef enum {
+    kDLFloat = 2,
+    kDLUInt = 1,
+    kDLInt = 0,
+} DLDataTypeCode;
+
+typedef struct {
+    uint8_t code;    // DLDataTypeCode
+    uint8_t bits;    // Number of bits
+    uint16_t lanes;  // Number of lanes (SIMD)
+} DLDataType;
+
+typedef struct DLTensor {
+    void* data;
+    DLDevice device;
+    int32_t ndim;
+    DLDataType dtype;
+    int64_t* shape;
+    int64_t* strides;  // Can be NULL for row-major
+    uint64_t byte_offset;
+} DLTensor;
+
+typedef struct DLManagedTensor {
+    DLTensor dl_tensor;
+    void* manager_ctx;
+    void (*deleter)(struct DLManagedTensor* self);
+} DLManagedTensor;
+
+} // extern "C"
+
+// DLPackContext destructor
+DLPackContext::~DLPackContext() {
+    delete[] shape_storage;
+    delete[] strides_storage;
+    // buffer automatically freed via shared_ptr
+}
+
+// DLPack deleter callback
+void dlpack_deleter(DLManagedTensor* self) {
+    if (!self) {
+        return;
+    }
+
+    // Free context (which frees shape/strides and releases buffer)
+    auto* context = static_cast<DLPackContext*>(self->manager_ctx);
+    delete context;
+
+    // Free DLManagedTensor structure itself
+    delete self;
+}
+
+// Create DLManagedTensor from buffer and metadata
+DLManagedTensor* create_dlpack_tensor(
+    std::shared_ptr<PinnedBuffer> buffer,
+    const TensorShape& shape,
+    bool use_cuda) {
+
+    if (!buffer) {
+        throw std::invalid_argument("create_dlpack_tensor: buffer is null");
+    }
+
+    // Allocate context (owns metadata and buffer reference)
+    auto* context = new DLPackContext();
+    context->buffer = buffer;  // Increment buffer ref count
+
+    // Allocate shape array (4D tensor: batch, planes, height, width)
+    context->shape_storage = new int64_t[4];
+    context->shape_storage[0] = shape.batch_size;
+    context->shape_storage[1] = shape.num_planes;
+    context->shape_storage[2] = shape.height;
+    context->shape_storage[3] = shape.width;
+
+    // No strides (NULL means row-major)
+    context->strides_storage = nullptr;
+
+    // Allocate DLManagedTensor
+    auto* managed_tensor = new DLManagedTensor();
+    managed_tensor->manager_ctx = context;
+    managed_tensor->deleter = dlpack_deleter;
+
+    // Fill in DLTensor metadata
+    DLTensor& dl_tensor = managed_tensor->dl_tensor;
+    dl_tensor.data = buffer->data();
+    dl_tensor.ndim = 4;
+    dl_tensor.shape = context->shape_storage;
+    dl_tensor.strides = nullptr;  // Row-major
+    dl_tensor.byte_offset = 0;
+
+    // Device: CPU, CUDA host pinned, or CUDA managed
+    if (use_cuda && buffer->is_cuda_pinned()) {
+        dl_tensor.device.device_type = kDLCUDAHost;  // CUDA pinned memory
+        dl_tensor.device.device_id = 0;              // Default GPU
+    } else {
+        dl_tensor.device.device_type = kDLCPU;       // Regular CPU memory
+        dl_tensor.device.device_id = 0;
+    }
+
+    // Data type: float32
+    dl_tensor.dtype.code = kDLFloat;
+    dl_tensor.dtype.bits = 32;
+    dl_tensor.dtype.lanes = 1;
+
+    return managed_tensor;
+}
+
+// Note: wrap_dlpack_capsule() is implemented in python_bindings.cpp
+// to avoid Python.h dependency in core library
+
 } // namespace mcts

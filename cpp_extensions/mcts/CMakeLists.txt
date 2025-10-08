@@ -149,7 +149,7 @@ add_test(NAME mcts_compilation COMMAND mcts_compile_test)
 
 # Python bindings module (optional, requires pybind11)
 if(pybind11_FOUND)
-    pybind11_add_module(mcts_py python_bindings.cpp)
+    pybind11_add_module(mcts_py python_bindings.cpp dlpack_python.cpp)
 
     # Link with MCTS core library
     target_link_libraries(mcts_py PRIVATE mcts_core)
