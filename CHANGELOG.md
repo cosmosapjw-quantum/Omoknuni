@@ -6,6 +6,55 @@ All notable changes to this project will be documented in this file.
 
 ### Spec 004: MCTS Throughput Recovery - Phase 1 & 2 In Progress (2025-10-09)
 
+#### T007c: DLPack Tensor Capsule Structure (2025-10-09)
+- **Added**: DLPack tensor capsule API for zero-copy tensor exchange with PyTorch
+- **Files**:
+  - `cpp_extensions/mcts/dlpack_bridge.hpp` - DLPack structure declarations
+  - `cpp_extensions/mcts/dlpack_bridge.cpp` - Core DLPack logic (DLTensor, DLManagedTensor, deleter)
+  - `cpp_extensions/mcts/dlpack_python.cpp` - PyCapsule wrapper (new)
+  - `cpp_extensions/mcts/python_bindings.cpp` - Python API bindings
+  - `cpp_extensions/mcts/CMakeLists.txt` - Added dlpack_python.cpp to build
+  - `tests/unit/test_dlpack_capsule.py` - 17 comprehensive tests (new)
+- **Key Components**:
+  - `DLTensor`: Core tensor metadata (data ptr, shape, strides, dtype, device)
+  - `DLManagedTensor`: Tensor with deleter callback for cleanup
+  - `DLPackContext`: Owns shape/strides arrays, shares buffer reference
+  - `TensorShape`: 4D tensor metadata struct (batch, planes, height, width)
+  - `dlpack_deleter()`: Cleanup callback that frees metadata and releases buffer
+  - `create_dlpack_tensor()`: Creates DLManagedTensor from PinnedBuffer
+  - `wrap_dlpack_capsule()`: Wraps in PyCapsule for torch.from_dlpack()
+- **Key Features**:
+  - Zero-copy tensor creation: Shared memory ownership via reference counting
+  - PyTorch compatibility: PyCapsule with "dltensor" name
+  - Device support: CPU (kDLCPU) and CUDA pinned (kDLCUDAHost)
+  - Float32 tensors: Row-major layout (NULL strides)
+  - Minimal overhead: ~200 bytes per tensor (metadata only)
+- **Architecture**:
+  - Separated Python.h dependency into dlpack_python.cpp
+  - No capsule destructor (PyTorch calls DLManagedTensor deleter)
+  - DLPackContext lifetime tied to tensor destruction
+  - Thread-safe reference counting via shared_ptr
+- **Ownership Flow**:
+  1. C++ allocates PinnedBuffer (ref_count = 1)
+  2. create_dlpack_tensor() wraps buffer, increments ref count
+  3. wrap_dlpack_capsule() creates PyCapsule transport
+  4. torch.from_dlpack() consumes capsule
+  5. PyTorch calls deleter when tensor destroyed
+  6. Deleter frees metadata, releases buffer reference
+- **Validation**: 16/17 tests pass (1 skipped - no CUDA)
+  - Capsule creation and metadata correctness
+  - PyTorch torch.from_dlpack() integration
+  - Memory management (cleanup, ref counting, no leaks)
+  - Tensor operations (read/write, arithmetic, slicing)
+  - Edge cases (single element, large batches)
+  - Buffer pool integration
+- **Performance**:
+  - Zero-copy: No memory allocation or data copying
+  - Fast creation: <1μs for metadata setup
+  - Thread-safe shared ownership
+- **Status**: ✅ Complete
+- **Commit**: 3fa5d59
+
 #### T007b: Pinned Memory Buffer Allocation (2025-10-09)
 - **Added**: CUDA pinned memory buffer pool with size classes for zero-copy DLPack tensor bridge
 - **Files**:
