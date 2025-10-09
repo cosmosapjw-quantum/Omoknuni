@@ -1810,7 +1810,7 @@ Create coordinator ONCE in `MCTSAgent.__init__`, reuse across all searches, only
 **Dependencies**: T007 ✅, T008 ✅
 **Status**: COMPLETE
 **Completed**: 2025-10-10
-**Commit**: (pending git commit)
+**Commit**: 245ef01
 **Files**:
 - `src/core/mcts.py` (update)
 - `tests/unit/test_mcts_coordinator_lifecycle.py` (new)
