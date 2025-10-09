@@ -1205,7 +1205,7 @@ Initially implemented transfers on custom streams but inference on default strea
 
 **Completed**: 2025-10-09
 **Author**: Claude Code
-**Commit**: [pending]
+**Commit**: 2ee1d3e
 
 ---
 
