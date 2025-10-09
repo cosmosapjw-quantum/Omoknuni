@@ -1772,24 +1772,129 @@ Instead of forcing a memory allocator onto an index-based system, I **enhanced t
 
 ## Phase 3: Final Optimizations (Week 3)
 
-### T011: Implement Persistent Python Thread
+### T011: Persistent BatchInferenceCoordinator Lifecycle (SPLIT INTO SUBTASKS)
 **Priority**: MEDIUM
-**Effort**: 2 days
-**Dependencies**: T007, T008
+**Effort**: 7 hours total across 3 subtasks
+**Dependencies**: T007 ✅, T008 ✅
+**Status**: Split into T011a, T011b, T011c for systematic implementation
+
+**Architecture Overview (Based on review.pdf pages 2, 6-8):**
+
+**Current Issue** (review.pdf page 2):
+> "starting and stopping the BatchInferenceCoordinator each search still involves Python calls and thread startup/teardown every time. This adds latency especially for small searches."
+
+Current code in `mcts.py:267-307` creates/destroys coordinator for EVERY search:
+```python
+self.coordinator = mcts_py.BatchInferenceCoordinator()  # ⚠️ Created each search
+self.coordinator.start(...)
+try:
+    # ... run simulations ...
+finally:
+    self.coordinator.stop()  # ⚠️ Destroyed each search
+    self.coordinator = None
+```
+
+**Solution** (review.pdf page 8):
+> "remove per-search thread restarts and redundant tensor copies while keeping NN in Python"
+
+Create coordinator ONCE in `MCTSAgent.__init__`, reuse across all searches, only destroy in `MCTSAgent.close()` or `__del__`. This eliminates thread startup/teardown overhead (currently ~67% of MCTS overhead per review.pdf).
+
+**Note**: DLPack zero-copy tensor sharing already implemented in T007/T008. This task focuses solely on coordinator lifecycle management, NOT creating new persistent threads or queue architectures.
+
+**Expected Impact**: Reduce Python overhead from 60-70% to <30% by eliminating per-search thread restarts.
+
+---
+
+#### T011a: Move Coordinator to Instance Variable
+**Effort**: 3 hours
+**Dependencies**: T007 ✅, T008 ✅
 **Files**:
-- `src/core/persistent_inference_thread.py` (new)
-- `src/core/mcts.py`
+- `src/core/mcts.py` (update)
+- `tests/unit/test_mcts_coordinator_lifecycle.py` (new)
 
 **Implementation**:
-- [ ] Create thread that holds GIL permanently
-- [ ] Use lock-free queues for communication
-- [ ] Batch inference processing
-- [ ] Add graceful shutdown
+- [ ] Add `self._coordinator` and `self._coordinator_started` to `MCTSAgent.__init__`
+- [ ] Create and start coordinator in `__init__` if `use_async_inference=True`
+- [ ] Remove coordinator creation from `run_simulations()` method
+- [ ] Ensure coordinator reused across multiple `run_simulations()` calls
+- [ ] Add `close()` method to stop coordinator and cleanup
+- [ ] Implement `__del__` as fallback cleanup (calls `close()`)
+- [ ] Handle coordinator state transitions (not_started → started → stopped)
 
 **Validation**:
-- Verify GIL is never released
-- Measure Python overhead reduction
-- Test thread lifecycle
+- [ ] Unit tests for coordinator lifecycle (init → multiple searches → close)
+- [ ] Test coordinator reuse across 100+ consecutive searches
+- [ ] Verify coordinator state management (started/stopped flags)
+- [ ] Test `close()` method cleanup
+- [ ] Test `__del__` fallback if `close()` not called
+
+**Acceptance Criteria**:
+- Coordinator created once in `__init__`, not in `run_simulations()`
+- Same coordinator instance reused across multiple searches
+- Clean shutdown via `close()` method
+- All unit tests pass
+
+---
+
+#### T011b: Handle Coordinator State Across Searches
+**Effort**: 2 hours
+**Dependencies**: T011a
+**Files**:
+- `src/core/mcts.py` (update)
+- `tests/integration/test_coordinator_persistence.py` (new)
+
+**Implementation**:
+- [ ] Verify coordinator stays alive between searches
+- [ ] Add coordinator health checks before each search
+- [ ] Handle edge case: coordinator stopped externally
+- [ ] Add coordinator restart logic if needed (defensive)
+- [ ] Update exception handling to preserve coordinator
+- [ ] Add metrics for coordinator lifetime (searches per coordinator instance)
+
+**Validation**:
+- [ ] Integration test: 1000 consecutive searches with same coordinator
+- [ ] Test coordinator survives exceptions during search
+- [ ] Verify no coordinator recreation between searches
+- [ ] Test metrics show 1 coordinator for N searches (not N coordinators)
+- [ ] Memory leak test: no coordinator accumulation
+
+**Acceptance Criteria**:
+- Single coordinator handles 1000+ searches without restart
+- Coordinator survives search errors gracefully
+- Metrics confirm no per-search coordinator recreation
+- No memory leaks from coordinator accumulation
+
+---
+
+#### T011c: Testing and Performance Validation
+**Effort**: 2 hours
+**Dependencies**: T011b
+**Files**:
+- `tests/performance/test_coordinator_overhead.py` (new)
+- `scripts/profile_coordinator_lifecycle.py` (new)
+- `docs/performance/coordinator_lifecycle_optimization.md` (new)
+
+**Implementation**:
+- [ ] Benchmark coordinator creation overhead (baseline)
+- [ ] Measure throughput improvement from persistent coordinator
+- [ ] Profile thread startup/teardown elimination
+- [ ] Compare coordinator lifecycle metrics (before/after)
+- [ ] Document performance characteristics
+
+**Validation**:
+- [ ] Measure thread start/stop calls (should be ~1 vs 100+/search)
+- [ ] Benchmark throughput improvement (target: 1.15-1.25× speedup)
+- [ ] Profile confirms no per-search coordinator recreation
+- [ ] Memory usage stable across 1000+ searches
+- [ ] Document results with comparative metrics
+
+**Acceptance Criteria**:
+- Coordinator creation reduced from N times to 1 time
+- Measurable throughput improvement (15-25% expected)
+- No per-search thread restarts in profiler
+- Documentation complete with before/after metrics
+
+**Expected Total Impact**: 1.15-1.25× throughput improvement by eliminating coordinator recreation overhead (67% of MCTS overhead per review.pdf)
 
 ---
 
