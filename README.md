@@ -4,18 +4,19 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 
 ## Project Status
 
-🚀 **Spec 004 In Progress: MCTS Throughput Recovery** - Phase 1 (Virtual Loss Optimizations)
+🚀 **Spec 004 In Progress: MCTS Throughput Recovery** - Phase 2 (Zero-Copy Inference Bridge)
 
 ### Current Status
-- **Version**: 1.0.0-alpha + Spec 004 (Phase 1 Started)
+- **Version**: 1.0.0-alpha + Spec 004 (Phase 2 In Progress)
 - **Alpha Release Date**: 2025-10-01
 - **Spec 002**: ✅ COMPLETE (2025-10-03) - C++ Simulation Runner (7× Python baseline)
 - **Spec 003**: ✅ COMPLETE (2025-10-05) - Async inference batching with comprehensive optimization
 - **Spec 004**: 🔄 IN PROGRESS (Started 2025-10-06) - MCTS Throughput Recovery
-  - Phase 1: 🔄 Virtual Loss & Quick Wins (T001 ✅ T001b ✅ T002 ✅ complete)
+  - Phase 1: ✅ COMPLETE (T001 ✅ T001b ✅ T002 ✅ T003 ✅ T005 ✅)
+  - Phase 2: 🔄 IN PROGRESS (T007a-d ✅, T007e-f pending)
   - Target: 25,000+ sims/sec (8× current performance)
 - **Current Performance**: 3,831 sims/sec peak (12.8% of 30k target)
-- **Next**: T003 (Root pre-expansion) + T004 (Thread affinity)
+- **Next**: T007e (Feature extraction) + T007f (Python bindings) + T008 (Python inference bridge)
 
 ### Spec 003 Complete: Performance Analysis & Optimization
 
@@ -91,10 +92,38 @@ See [Async Optimization Results](docs/performance/async_optimization_results.md)
   - Added ExpansionConflict and BusyEdgeMasked instrumentation metrics
   - Performance: -6ns overhead (masking is actually faster!)
   - All 17 unit tests pass (thread safety verified)
-- [ ] **T003**: Root pre-expansion (2× speedup potential)
-- [ ] **T004**: Thread affinity for Ryzen 5900X (1.15× speedup)
+- ✅ **T003**: Root pre-expansion elimination (2025-10-08)
+  - Implemented pre-expanded root with N=1 initialization
+  - Eliminated N-1 thread idle problem (100% thread utilization)
+  - Root children pre-allocated with policy priors from neural network
+  - All 23 unit tests pass
+- ✅ **T005**: Collision metrics instrumentation (2025-10-08)
+  - Added ExpansionConflict and CollisionRate metrics
+  - Validated low collision rates (<0.5% at 4 threads)
+  - All 8 instrumentation tests pass
 
-**Expected Impact**: Phase 1 targets 12k sims/sec (3× improvement)
+**Phase 2: Zero-Copy Inference Bridge** (Week 2):
+- ✅ **T007a**: DLPack research and integration design (2025-10-09)
+  - Researched DLPack v0.8 protocol and PyTorch integration
+  - Designed zero-copy tensor bridge architecture
+- ✅ **T007b**: Pinned memory buffer allocation (2025-10-09)
+  - Implemented BufferPool with CUDA pinned memory support
+  - Size classes: 4KB, 64KB, 1MB, 4MB for efficient reuse
+  - All 15 unit tests pass
+- ✅ **T007c**: DLPack tensor capsule structure (2025-10-09)
+  - Implemented DLTensor, DLManagedTensor, DLPackContext
+  - PyCapsule wrapper for torch.from_dlpack() integration
+  - Zero-copy tensor creation with reference counting
+  - 16/17 tests pass (1 skipped - no CUDA)
+- ✅ **T007d**: Batch tensor creation (2025-10-09)
+  - GameType enum (GOMOKU/CHESS/GO) with automatic dimensions
+  - create_batch_tensor() allocates pooled buffers
+  - Stub implementation (zeros), feature extraction in T007e
+  - All 29 unit tests pass
+- [ ] **T007e**: Direct feature extraction to game states (5 hours)
+- [ ] **T007f**: Update Python bindings (4 hours)
+
+**Expected Impact**: Phase 1+2 target 12-15k sims/sec (4× improvement)
 
 See [Spec 004](specs/004-mcts-throughput-recovery/) for full implementation plan.
 
