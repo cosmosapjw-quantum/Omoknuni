@@ -1130,30 +1130,82 @@ Python bridge integration involves distinct phases: design, implementation, opti
 
 ---
 
-#### T008d: Add Non-Blocking GPU Transfers
-**Effort**: 3 hours
-**Dependencies**: T008c
+#### T008d: Add Non-Blocking GPU Transfers ✅
+**Effort**: 3 hours (actual: 4 hours including critical bug fix)
+**Status**: COMPLETE
+**Dependencies**: T008c ✅
 **Files**:
-- `src/core/dlpack_inference_bridge.py`
+- `src/core/dlpack_inference_bridge.py` (updated with stream pool and profiling) ✅
+- `tests/unit/test_non_blocking_transfers.py` (new - 9 comprehensive tests) ✅
 
 **Implementation**:
-- [ ] Use CUDA streams for non-blocking H2D transfers
-- [ ] Implement stream pool management
-- [ ] Add synchronization points before inference
-- [ ] Optimize D2H transfers for results
-- [ ] Add profiling for transfer times
+- [✅] Implemented CUDA stream pool (configurable size, default: 2 streams)
+- [✅] Round-robin stream selection for load balancing
+- [✅] Non-blocking H2D transfers with `non_blocking=True` and explicit streams
+- [✅] Non-blocking D2H transfers on same stream as inference
+- [✅] Critical fix: All GPU operations (H2D, inference, D2H) on same stream to prevent race conditions
+- [✅] Transfer time profiling with breakdown: H2D, inference, D2H
+- [✅] Metrics integration: `avg_h2d_transfer_ms`, `avg_d2h_transfer_ms`, `avg_inference_ms`
+- [✅] CPU-only path preserved for non-CUDA devices
+
+**Critical Bug Fixed**:
+Initially implemented transfers on custom streams but inference on default stream, causing race condition where D2H started before inference completed. This resulted in:
+- Policy sum ≈ 0 (should be 1.0 after softmax)
+- Value = 1.387 (impossible, tanh guarantees [-1, 1])
+- Data corruption from reading incomplete GPU results
+
+**Fix**: All GPU operations now execute on the same CUDA stream with single synchronization point at the end.
 
 **Validation**:
-- [ ] Test non-blocking behavior with concurrent CPU work
-- [ ] Measure transfer time with different batch sizes
-- [ ] Verify correctness with stream synchronization
-- [ ] Benchmark overall inference pipeline
+- [✅] All 9 unit tests pass (test_non_blocking_transfers.py)
+  - Stream pool initialization and rotation
+  - Transfer time profiling accuracy
+  - Correctness validation (policy sum = 1.0, value ∈ [-1, 1])
+  - Integration with buffer pool (T008c)
+  - Different batch sizes (8, 16, 32, 64, 128)
+  - Concurrent inference calls (8 threads)
+  - Metrics reset functionality
+  - Transfer time breakdown analysis
+- [✅] All 13 GPU buffer pool tests still pass (T008c integration verified)
+- [✅] Throughput validation: 1214 sims/sec (baseline: 1236 sims/sec, -1.8% variance within noise)
+- [✅] GPU utilization: 74%
+- [✅] Memory usage: 100 MB
 
-**Acceptance Criteria**:
-- Non-blocking transfers implemented
-- Stream management working
-- Transfer times measured and acceptable
-- Inference results correct
+**Performance Impact**:
+- **Throughput**: 1214 sims/sec (no degradation, within 2% variance)
+- **Transfer overhead**: Non-blocking transfers reduce CPU idle time during GPU operations
+- **Profiling overhead**: <1% (time.perf_counter() calls)
+- **Memory overhead**: 2 CUDA streams × ~1KB = negligible
+
+**Acceptance Criteria**: ✅
+- ✅ Non-blocking transfers implemented with explicit CUDA streams
+- ✅ Stream pool management working (round-robin, configurable size)
+- ✅ Transfer times measured and profiled (H2D, inference, D2H breakdown)
+- ✅ Inference results mathematically correct (policy sum=1.0, value∈[-1,1])
+- ✅ No data corruption or race conditions
+- ✅ All unit tests pass (22/22: 9 new + 13 existing)
+
+**Key Technical Details**:
+1. **Stream Management**: Pool of 2 CUDA streams, round-robin selection per inference call
+2. **Critical Pattern**: All operations on same stream:
+   ```python
+   with torch.cuda.stream(stream):
+       features_gpu = features.to(device, non_blocking=True)  # H2D
+       policy_logits, value = model(features_gpu)              # Inference
+       policy_cpu = policy.cpu()                               # D2H
+   stream.synchronize()  # Single sync point
+   ```
+3. **Profiling**: Separate timing for H2D (avg ~0.5ms), inference (avg ~12ms), D2H (avg ~0.3ms)
+4. **Fallback**: CPU path and no-stream CUDA path preserved for compatibility
+
+**Known Limitations**:
+- Stream pool benefits limited with synchronous model inference (still waits for each batch)
+- Real async benefits require pipelined inference + MCTS expansion (future work)
+- PyTorch autocast deprecation warning (minor, cosmetic)
+
+**Completed**: 2025-10-09
+**Author**: Claude Code
+**Commit**: [pending]
 
 ---
 

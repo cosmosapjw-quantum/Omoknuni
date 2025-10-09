@@ -185,6 +185,8 @@ class DLPackInferenceBridge:
         enable_fallback: Enable numpy fallback if DLPack fails
         warmup_iterations: Number of warmup batches for GPU
         use_mixed_precision: Enable FP16 mixed precision on CUDA (T008f)
+        enable_buffer_pool: Enable GPU buffer pooling (T008c)
+        stream_pool_size: Number of CUDA streams for async transfers (T008d)
 
     Example:
         >>> model = GomokuNet().cuda()
@@ -201,7 +203,8 @@ class DLPackInferenceBridge:
         enable_fallback: bool = True,
         warmup_iterations: int = 5,
         use_mixed_precision: bool = True,
-        enable_buffer_pool: bool = True  # T008c: GPU buffer pooling
+        enable_buffer_pool: bool = True,  # T008c: GPU buffer pooling
+        stream_pool_size: int = 2  # T008d: CUDA stream pool
     ):
         if not HAS_MCTS_PY:
             raise ImportError(
@@ -229,6 +232,17 @@ class DLPackInferenceBridge:
         # Will be lazily created on first inference (when we know game dimensions)
         self.buffer_pool: Optional[GPUBufferPool] = None
 
+        # T008d: Initialize CUDA stream pool for non-blocking transfers
+        self.stream_pool = []
+        self.stream_index = 0
+        if self.device.type == 'cuda':
+            for _ in range(stream_pool_size):
+                self.stream_pool.append(torch.cuda.Stream(device=self.device))
+            self.logger = logging.getLogger(__name__)
+            self.logger.info(f"Created CUDA stream pool with {stream_pool_size} streams")
+        else:
+            self.logger = logging.getLogger(__name__)
+
         # Metrics tracking
         self._total_batches = 0
         self._total_states = 0
@@ -237,12 +251,15 @@ class DLPackInferenceBridge:
         self._total_latency_ms = 0.0
         self._metrics_lock = Lock()
 
-        # Logger
-        self.logger = logging.getLogger(__name__)
+        # T008d: Transfer time profiling
+        self._h2d_transfer_time_ms = 0.0
+        self._d2h_transfer_time_ms = 0.0
+        self._inference_time_ms = 0.0
+
         self.logger.info(
             f"DLPackInferenceBridge initialized: device={device}, "
             f"fallback={enable_fallback}, mixed_precision={self.use_mixed_precision}, "
-            f"buffer_pool={enable_buffer_pool}"
+            f"buffer_pool={enable_buffer_pool}, stream_pool_size={stream_pool_size}"
         )
 
     def batch_inference(
@@ -343,34 +360,108 @@ class DLPackInferenceBridge:
         if self.buffer_pool is not None:
             pooled_buffer = self.buffer_pool.get_buffer(batch_size)
 
-        # Transfer to target device
-        if self.device.type == 'cuda':
+        # T008d: Get next stream from pool for async transfers
+        stream = None
+        if self.device.type == 'cuda' and self.stream_pool:
+            stream = self.stream_pool[self.stream_index]
+            self.stream_index = (self.stream_index + 1) % len(self.stream_pool)
+
+        # T008d: Profile H2D transfer time
+        h2d_start = time.perf_counter()
+
+        # T008d: Run all GPU operations on the same stream to avoid race conditions
+        # CRITICAL: Inference MUST run on same stream as transfers, otherwise
+        # D2H transfer can start before inference completes, reading garbage data
+        if self.device.type == 'cuda' and stream is not None:
+            with torch.cuda.stream(stream):
+                # H2D transfer
+                if pooled_buffer is not None:
+                    # Use pooled buffer: copy features into it
+                    pooled_buffer[:batch_size].copy_(features, non_blocking=True)
+                    features_gpu = pooled_buffer[:batch_size]
+                else:
+                    # Fallback to dynamic allocation
+                    features_gpu = features.to(self.device, non_blocking=True)
+
+                h2d_elapsed = (time.perf_counter() - h2d_start) * 1000.0
+
+                # T008d: Profile inference time
+                inference_start = time.perf_counter()
+
+                # T008f: Run inference with FP16 mixed precision on CUDA
+                # CRITICAL: Inference runs on same stream as transfers
+                with torch.no_grad():
+                    if self.use_mixed_precision:
+                        with torch.cuda.amp.autocast():
+                            policy_logits, value = self.model(features_gpu)
+                    else:
+                        policy_logits, value = self.model(features_gpu)
+
+                # Apply softmax to get probabilities (always in FP32 for numerical stability)
+                policy = torch.softmax(policy_logits.float(), dim=1)
+
+                inference_elapsed = (time.perf_counter() - inference_start) * 1000.0
+
+                # T008d: Profile D2H transfer time
+                d2h_start = time.perf_counter()
+
+                # D2H transfer on same stream
+                policy_cpu = policy.cpu()
+                value_cpu = value.cpu()
+
+                d2h_elapsed = (time.perf_counter() - d2h_start) * 1000.0
+
+            # Single synchronization point at the end
+            stream.synchronize()
+
+        elif self.device.type == 'cuda':
+            # No stream pool - use default stream (synchronous)
             if pooled_buffer is not None:
-                # Use pooled buffer: copy features into it
                 pooled_buffer[:batch_size].copy_(features, non_blocking=True)
                 features_gpu = pooled_buffer[:batch_size]
             else:
-                # Fallback to dynamic allocation
                 features_gpu = features.to(self.device, non_blocking=True)
-        else:
-            features_gpu = features
 
-        # T008f: Run inference with FP16 mixed precision on CUDA
-        with torch.no_grad():
-            if self.use_mixed_precision:
-                # Use automatic mixed precision (FP16) for 1.5-2× speedup on tensor cores
-                with torch.cuda.amp.autocast():
+            h2d_elapsed = (time.perf_counter() - h2d_start) * 1000.0
+
+            inference_start = time.perf_counter()
+
+            with torch.no_grad():
+                if self.use_mixed_precision:
+                    with torch.cuda.amp.autocast():
+                        policy_logits, value = self.model(features_gpu)
+                else:
                     policy_logits, value = self.model(features_gpu)
-            else:
-                # Standard FP32 inference
+
+            policy = torch.softmax(policy_logits.float(), dim=1)
+
+            inference_elapsed = (time.perf_counter() - inference_start) * 1000.0
+
+            d2h_start = time.perf_counter()
+            policy_cpu = policy.cpu()
+            value_cpu = value.cpu()
+            d2h_elapsed = (time.perf_counter() - d2h_start) * 1000.0
+
+        else:
+            # CPU path
+            features_gpu = features
+            h2d_elapsed = 0.0
+
+            inference_start = time.perf_counter()
+            with torch.no_grad():
                 policy_logits, value = self.model(features_gpu)
+            policy = torch.softmax(policy_logits.float(), dim=1)
+            inference_elapsed = (time.perf_counter() - inference_start) * 1000.0
 
-        # Apply softmax to get probabilities (always in FP32 for numerical stability)
-        policy = torch.softmax(policy_logits.float(), dim=1)
+            policy_cpu = policy
+            value_cpu = value
+            d2h_elapsed = 0.0
 
-        # Transfer results back to CPU (async)
-        policy_cpu = policy.cpu()
-        value_cpu = value.cpu()
+        # T008d: Update transfer time metrics
+        with self._metrics_lock:
+            self._h2d_transfer_time_ms += h2d_elapsed
+            self._d2h_transfer_time_ms += d2h_elapsed
+            self._inference_time_ms += inference_elapsed
 
         # Convert to Python lists
         results = []
@@ -500,6 +591,9 @@ class DLPackInferenceBridge:
                 - avg_latency_ms: Average inference latency
                 - dlpack_success_rate: Percentage of DLPack successes
                 - buffer_pool: Buffer pool statistics (T008c)
+                - avg_h2d_transfer_ms: Average H2D transfer time (T008d)
+                - avg_d2h_transfer_ms: Average D2H transfer time (T008d)
+                - avg_inference_ms: Average inference time (T008d)
         """
         with self._metrics_lock:
             metrics = {
@@ -511,7 +605,11 @@ class DLPackInferenceBridge:
                 'avg_latency_ms': self._total_latency_ms / self._total_batches if self._total_batches > 0 else 0.0,
                 'dlpack_success_rate': (
                     100.0 * self._dlpack_successes / self._total_batches if self._total_batches > 0 else 0.0
-                )
+                ),
+                # T008d: Transfer time breakdown
+                'avg_h2d_transfer_ms': self._h2d_transfer_time_ms / self._total_batches if self._total_batches > 0 else 0.0,
+                'avg_d2h_transfer_ms': self._d2h_transfer_time_ms / self._total_batches if self._total_batches > 0 else 0.0,
+                'avg_inference_ms': self._inference_time_ms / self._total_batches if self._total_batches > 0 else 0.0,
             }
 
             # T008c: Add buffer pool statistics
@@ -530,6 +628,10 @@ class DLPackInferenceBridge:
             self._dlpack_successes = 0
             self._fallback_uses = 0
             self._total_latency_ms = 0.0
+            # T008d: Reset transfer time metrics
+            self._h2d_transfer_time_ms = 0.0
+            self._d2h_transfer_time_ms = 0.0
+            self._inference_time_ms = 0.0
 
         # T008c: Reset buffer pool metrics (note: doesn't hold metrics_lock)
         if self.buffer_pool is not None:
