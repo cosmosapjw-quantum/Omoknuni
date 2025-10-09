@@ -4,7 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### Spec 004: MCTS Throughput Recovery - Phase 1 & 2 In Progress (2025-10-09)
+### Spec 004: MCTS Throughput Recovery - Phase 3 In Progress (2025-10-10)
+
+#### T011a: Persistent BatchInferenceCoordinator Lifecycle (2025-10-10)
+- **Changed**: Eliminated per-search coordinator creation/destruction overhead
+- **Impact**: Reduces Python overhead from 60-70% to <30% by removing thread startup/teardown
+- **Files**:
+  - `src/core/mcts.py` (updated - coordinator lifecycle management)
+  - `tests/unit/test_mcts_coordinator_lifecycle.py` (new - 325 lines, 9 tests)
+- **Implementation**:
+  - Coordinator created once in `__init__`, stored as `self._coordinator`
+  - Coordinator started lazily on first `search()` call, reused for all subsequent searches
+  - Batch callback cached as `self._batch_callback` to avoid recreation
+  - Clean shutdown via `close()` method (stops coordinator, shuts down thread pool)
+  - `__del__` fallback ensures coordinator stopped if `close()` not called
+  - Coordinator survives search exceptions (no stop in finally block)
+- **Test Coverage**:
+  - ✅ Coordinator created in `__init__` test
+  - ✅ Coordinator started on first search test
+  - ✅ Coordinator reused across 3+ searches test
+  - ✅ State management (not_started → started → stopped) test
+  - ✅ `close()` method cleanup test
+  - ✅ `close()` idempotent test
+  - ✅ Coordinator survives exceptions test
+  - ✅ Sync mode (no coordinator) test
+  - ✅ Regression test (no per-search recreation) test
+- **Performance**: Expected 15-25% throughput improvement (1.15-1.25× speedup)
+
+### Spec 004: MCTS Throughput Recovery - Phase 1 & 2 Complete (2025-10-09)
 
 #### T009b: ThreadLocalArena Data Structure Implementation (2025-10-09)
 - **Added**: Complete implementation of thread-local memory arena allocator

@@ -189,8 +189,10 @@ class AlphaZeroMCTS(MCTSEngine):
                 for _ in range(self.num_threads)
             ]
 
-            # Coordinator will be created per-search
-            self.coordinator = None
+            # T011a: Create persistent coordinator and callback (reused across all searches)
+            self._coordinator = mcts_py.BatchInferenceCoordinator()
+            self._coordinator_started = False
+            self._batch_callback = None  # Created lazily on first search
         else:
             # Use synchronous SimulationRunner for backward compatibility
             self.simulation_runner = mcts_py.SimulationRunner(
@@ -200,7 +202,9 @@ class AlphaZeroMCTS(MCTSEngine):
                 self.virtual_loss_manager
             )
             self.async_queue = None
-            self.coordinator = None
+            self._coordinator = None
+            self._coordinator_started = False
+            self._batch_callback = None
 
         # State management
         self.root_state = None
@@ -266,13 +270,15 @@ class AlphaZeroMCTS(MCTSEngine):
 
         if self.use_async_inference:
             # Async mode: Use ContinuousSimulationRunner with BatchInferenceCoordinator
-            # Create batch inference callback
-            batch_callback = mcts_py.PyBatchInferenceCallback(self._create_batch_inference_callback())
+            # T011a: Create batch callback once and reuse (callback holds GIL)
+            if self._batch_callback is None:
+                self._batch_callback = mcts_py.PyBatchInferenceCallback(self._create_batch_inference_callback())
 
-            # Create and start coordinator
-            self.coordinator = mcts_py.BatchInferenceCoordinator()
-            self.coordinator.start(self.async_queue, batch_callback,
-                                   self.async_batch_size, self.async_timeout_ms)
+            # T011a: Start persistent coordinator if not already running
+            if not self._coordinator_started:
+                self._coordinator.start(self.async_queue, self._batch_callback,
+                                       self.async_batch_size, self.async_timeout_ms)
+                self._coordinator_started = True
 
             try:
                 # Multi-threaded search: Distribute simulations across threads
@@ -301,10 +307,9 @@ class AlphaZeroMCTS(MCTSEngine):
                     successful_simulations = self.simulation_runners[0].run_continuous(
                         root_state, self.root_index, self.async_queue, simulations
                     )
-            finally:
-                # Always stop coordinator
-                self.coordinator.stop()
-                self.coordinator = None
+            except Exception:
+                # T011a: Preserve coordinator on exceptions - don't stop it
+                raise
 
         else:
             # Sync mode: Use SimulationRunner (backward compatibility)
@@ -530,7 +535,19 @@ class AlphaZeroMCTS(MCTSEngine):
             mcts_py.reset_instrumentation_metrics()
 
     def close(self) -> None:
-        """Release any background resources (thread pools)."""
+        """Release any background resources (thread pools, coordinator).
+
+        T011a: Stop persistent coordinator to eliminate per-search thread restarts.
+        """
+        # Stop coordinator if running
+        if self._coordinator is not None and self._coordinator_started:
+            try:
+                self._coordinator.stop()
+                self._coordinator_started = False
+            except Exception as e:
+                self.logger.warning(f"Failed to stop coordinator during close(): {e}")
+
+        # Shutdown thread pool
         with self._executor_lock:
             if self._executor is not None:
                 self._executor.shutdown(wait=True)
