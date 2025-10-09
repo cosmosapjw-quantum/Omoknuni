@@ -42,10 +42,11 @@ class DLPackInferenceBridge:
         device: Target device ('cpu', 'cuda', 'cuda:0', etc.)
         enable_fallback: Enable numpy fallback if DLPack fails
         warmup_iterations: Number of warmup batches for GPU
+        use_mixed_precision: Enable FP16 mixed precision on CUDA (T008f)
 
     Example:
         >>> model = GomokuNet().cuda()
-        >>> bridge = DLPackInferenceBridge(model, device='cuda')
+        >>> bridge = DLPackInferenceBridge(model, device='cuda', use_mixed_precision=True)
         >>> bridge.warmup(batch_size=64)
         >>> # Use with C++ coordinator
         >>> results = bridge.batch_inference(states)
@@ -56,7 +57,8 @@ class DLPackInferenceBridge:
         model: nn.Module,
         device: str = 'cuda' if torch.cuda.is_available() else 'cpu',
         enable_fallback: bool = True,
-        warmup_iterations: int = 5
+        warmup_iterations: int = 5,
+        use_mixed_precision: bool = True
     ):
         if not HAS_MCTS_PY:
             raise ImportError(
@@ -68,6 +70,12 @@ class DLPackInferenceBridge:
         self.device = torch.device(device)
         self.enable_fallback = enable_fallback
         self.warmup_iterations = warmup_iterations
+
+        # T008f: Enable mixed precision for CUDA (FP16 with tensor cores)
+        self.use_mixed_precision = use_mixed_precision and self.device.type == 'cuda'
+        if self.use_mixed_precision:
+            # Enable cudnn autotuner for better performance with tensor cores
+            torch.backends.cudnn.benchmark = True
 
         # Move model to target device and set to eval mode
         self.model = self.model.to(self.device)
@@ -85,7 +93,7 @@ class DLPackInferenceBridge:
         self.logger = logging.getLogger(__name__)
         self.logger.info(
             f"DLPackInferenceBridge initialized: device={device}, "
-            f"fallback={enable_fallback}"
+            f"fallback={enable_fallback}, mixed_precision={self.use_mixed_precision}"
         )
 
     def batch_inference(
@@ -177,12 +185,18 @@ class DLPackInferenceBridge:
         else:
             features_gpu = features
 
-        # Run inference (no gradients needed)
+        # T008f: Run inference with FP16 mixed precision on CUDA
         with torch.no_grad():
-            policy_logits, value = self.model(features_gpu)
+            if self.use_mixed_precision:
+                # Use automatic mixed precision (FP16) for 1.5-2× speedup on tensor cores
+                with torch.cuda.amp.autocast():
+                    policy_logits, value = self.model(features_gpu)
+            else:
+                # Standard FP32 inference
+                policy_logits, value = self.model(features_gpu)
 
-        # Apply softmax to get probabilities
-        policy = torch.softmax(policy_logits, dim=1)
+        # Apply softmax to get probabilities (always in FP32 for numerical stability)
+        policy = torch.softmax(policy_logits.float(), dim=1)
 
         # Transfer results back to CPU (async)
         policy_cpu = policy.cpu()
@@ -234,12 +248,16 @@ class DLPackInferenceBridge:
         # Convert to torch (with copy)
         features = torch.from_numpy(features_np).to(self.device)
 
-        # Run inference
+        # T008f: Run inference with mixed precision if enabled
         with torch.no_grad():
-            policy_logits, value = self.model(features)
+            if self.use_mixed_precision:
+                with torch.cuda.amp.autocast():
+                    policy_logits, value = self.model(features)
+            else:
+                policy_logits, value = self.model(features)
 
-        # Apply softmax
-        policy = torch.softmax(policy_logits, dim=1)
+        # Apply softmax (always in FP32 for numerical stability)
+        policy = torch.softmax(policy_logits.float(), dim=1)
 
         # Convert to Python lists
         results = []

@@ -53,6 +53,10 @@ uint64_t AsyncInferenceQueue::submit_request(std::unique_ptr<IGameState> state,
     }
 
     pending_count_.fetch_add(1, std::memory_order_relaxed);
+
+    // T006c: Notify waiting coordinator thread
+    request_ready_.notify_one();
+
     return request_id;
 }
 
@@ -70,21 +74,34 @@ std::vector<InferenceRequest> AsyncInferenceQueue::collect_batch(size_t min_batc
     const auto timeout_duration = duration<double, std::milli>(timeout_ms);
     const auto deadline = steady_clock::now() + timeout_duration;
 
-    // Wait for min_batch_size with timeout (T006b: polling, no condition variables)
+    // T006c: Wait for min_batch_size with timeout using condition variable (eliminates CPU waste)
     if (min_batch_size > 0 && timeout_ms > 0.0) {
-        while (batch.size() < min_batch_size) {
+        while (batch.size() < min_batch_size && !shutting_down_.load(std::memory_order_relaxed)) {
             InferenceRequest request;
             // Lock-free dequeue attempt
             if (pending_requests_.try_dequeue(request)) {
                 batch.push_back(std::move(request));
                 pending_count_.fetch_sub(1, std::memory_order_relaxed);
             } else {
-                // Check timeout
+                // Calculate remaining time
+                auto now = steady_clock::now();
+                if (now >= deadline) {
+                    break;  // Timeout expired
+                }
+                auto remaining = deadline - now;
+
+                // Block on condition variable instead of polling
+                std::unique_lock<std::mutex> lock(cv_mutex_);
+                request_ready_.wait_for(lock, remaining, [this, &batch, min_batch_size] {
+                    // Wake up if: shutdown requested, or queue has data
+                    return shutting_down_.load(std::memory_order_relaxed) ||
+                           pending_count_.load(std::memory_order_relaxed) > 0;
+                });
+
+                // Re-check timeout after waking up
                 if (steady_clock::now() >= deadline) {
                     break;
                 }
-                // Brief sleep to avoid busy-wait (10 microseconds)
-                std::this_thread::sleep_for(microseconds(10));
             }
         }
     }
@@ -203,9 +220,9 @@ size_t AsyncInferenceQueue::get_memory_usage() const {
 }
 
 void AsyncInferenceQueue::shutdown() {
-    // T006b: No condition variables to wake up
-    // Polling-based collect_batch() will exit naturally when checking timeout
-    // No-op in lock-free implementation
+    // T006c: Set shutdown flag and wake up all waiting threads
+    shutting_down_.store(true, std::memory_order_relaxed);
+    request_ready_.notify_all();
 }
 
 std::vector<uint64_t> AsyncInferenceQueue::get_ready_request_ids() const {

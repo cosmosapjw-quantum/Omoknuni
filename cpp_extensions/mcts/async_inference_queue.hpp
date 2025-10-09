@@ -37,6 +37,8 @@
 #include <memory>
 #include <atomic>
 #include <cstdint>
+#include <mutex>
+#include <condition_variable>
 
 namespace mcts {
 
@@ -254,6 +256,11 @@ private:
     // Lock-free pending requests queue (T006b)
     MPMCRingBuffer<InferenceRequest, 4096> pending_requests_;
     std::atomic<size_t> pending_count_{0};
+
+    // Condition variable for efficient waiting (T006c)
+    std::mutex cv_mutex_;
+    std::condition_variable request_ready_;
+    std::atomic<bool> shutting_down_{false};
 
     // Lock-free completed results ring buffer (T006b)
     static constexpr size_t RESULTS_BUFFER_CAPACITY = 8192;
