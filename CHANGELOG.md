@@ -6,6 +6,51 @@ All notable changes to this project will be documented in this file.
 
 ### Spec 004: MCTS Throughput Recovery - Phase 1 & 2 In Progress (2025-10-09)
 
+#### T009a: ThreadLocalArena Architecture Design (2025-10-09)
+- **Added**: Comprehensive design document for thread-local memory arena allocator
+- **Files**:
+  - `specs/004-mcts-throughput-recovery/contracts/arena-api.md` (new - 650 lines)
+- **Design Highlights**:
+  - Chunk-based allocation: 64KB chunks, up to 128 chunks/thread (8MB max)
+  - Bump pointer fast path: O(1) allocation (~1.5ns, 33× faster than malloc)
+  - LIFO free lists: 4 size classes (32, 64, 128, 256 bytes) for cache locality
+  - 64-byte alignment: Prevents false sharing, enables SIMD operations
+  - Thread-local: Zero contention, no locks in allocation paths
+  - Reset support: O(1) tree clear via bump pointer reset
+- **Research**:
+  - jemalloc: Size-class segregation, per-thread caching
+  - tcmalloc: Thread-local caches, central heap for large allocations
+  - mimalloc: Sharded heaps, LIFO free lists, delayed free handling
+  - MCTS-specific optimizations: Predictable 27-64 byte allocations, 99% thread-local
+- **Performance Targets**:
+  - Allocation latency: 1.5ns (vs 50ns malloc = 33× faster)
+  - Free list reuse: <2ns (LIFO cache-friendly)
+  - Memory overhead: <1% (vs 10-20% malloc)
+  - MCTS throughput: 1.1× improvement (eliminate 145ms/sec allocation overhead)
+- **Memory Budget**: 643MB for 10M nodes across 12 threads (well under 1GB target)
+- **Testing Strategy**: Unit tests (basic ops, alignment, chunk mgmt), performance benchmarks (allocation speed, cache locality), integration tests (MCTS tree, leak detection, soak test)
+- **Status**: COMPLETE - Ready for implementation in T009b
+
+#### T008e: DLPackInferenceBridge Integration Testing (2025-10-09)
+- **Added**: Comprehensive end-to-end integration tests with realistic ResNet model
+- **Files**:
+  - `tests/integration/test_dlpack_inference_integration.py` (new - 413 lines, 13 tests)
+- **Test Coverage**:
+  - ResNet inference correctness (policy/value validation)
+  - Batch size variations (1, 4, 8, 16, 32, 64, 128)
+  - Sustained load testing (100 batches, 3200 states)
+  - Memory leak detection (1000 iterations, 0 MB growth)
+  - GPU inference performance (12.80 ms/batch for size 64)
+  - Thread safety (concurrent calls)
+  - Error recovery (edge cases)
+- **Performance Results**:
+  - GPU inference: 12.80 ms/batch (batch 64) = 0.20 ms/state
+  - GPU memory: 38.79 MB (well under 500 MB target)
+  - DLPack success rate: 100% across all tests
+  - Memory stability: 0 MB growth over 1000 iterations
+- **Test Results**: 13/13 PASS (27.95s total)
+- **Status**: COMPLETE - DLPackInferenceBridge ready for production use
+
 #### T007e: Direct Feature Extraction to Game States (2025-10-09)
 - **Added**: Zero-copy feature extraction directly to pre-allocated buffers
 - **Status**: COMPLETE (Gomoku), BLOCKED (Chess/Go due to pre-existing bugs)
