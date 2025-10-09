@@ -171,6 +171,16 @@ PYBIND11_MODULE(alphazero_py, m) {
         .def("extract_features", [](const core::IGameState& state) {
             return tensorToNumpy(state.getBasicTensorRepresentation());  // Use basic 7-channel representation for contract compatibility
         })
+        .def("extract_features_to_buffer", [](const core::IGameState& state, py::array_t<float>& buffer) {
+            // T007e: Direct feature extraction to pre-allocated buffer
+            if (buffer.size() != state.get_num_feature_planes() * state.getBoardSize() * state.getBoardSize()) {
+                throw std::invalid_argument("Buffer size mismatch: expected " +
+                    std::to_string(state.get_num_feature_planes() * state.getBoardSize() * state.getBoardSize()) +
+                    " but got " + std::to_string(buffer.size()));
+            }
+            state.extract_features_to_buffer(buffer.mutable_data());
+        })
+        .def("get_num_feature_planes", &core::IGameState::get_num_feature_planes)
         .def("get_hash", &core::IGameState::getHash)
         .def("action_to_string", &core::IGameState::actionToString)
         .def("string_to_action", &core::IGameState::stringToAction)

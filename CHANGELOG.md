@@ -6,6 +6,39 @@ All notable changes to this project will be documented in this file.
 
 ### Spec 004: MCTS Throughput Recovery - Phase 1 & 2 In Progress (2025-10-09)
 
+#### T007e: Direct Feature Extraction to Game States (2025-10-09)
+- **Added**: Zero-copy feature extraction directly to pre-allocated buffers
+- **Status**: COMPLETE (Gomoku), BLOCKED (Chess/Go due to pre-existing bugs)
+- **Files**:
+  - `cpp_extensions/utils/igamestate.h` - Added extract_features_to_buffer() and get_num_feature_planes() virtual methods
+  - `cpp_extensions/games/gomoku/gomoku_state.{h,cpp}` - Full zero-copy implementation
+  - `cpp_extensions/games/chess/chess_state.{h,cpp}` - Stub implementation (blocked by segfault)
+  - `cpp_extensions/games/go/go_state.{h,cpp}` - Stub implementation (blocked by segfault)
+  - `cpp_extensions/games/python_bindings.cpp` - Python bindings for new methods
+  - `cpp_extensions/mcts/dlpack_bridge.{hpp,cpp}` - Added create_batch_tensor_from_states()
+  - `tests/unit/test_root_pre_expansion.cpp` - Fixed MockGameState to implement new interface
+  - `tests/unit/test_feature_extraction.py` - 10 comprehensive tests (new, 4 pass, 6 skipped)
+- **Gomoku Implementation** (COMPLETE):
+  - Zero-copy extraction: Direct write to buffer using memset + pointer arithmetic
+  - All 36 planes: stones (3), player indicator (1), move history (14), rules (3), tactical features (6), run-length (8)
+  - No intermediate allocations (only memset for initialization)
+  - Thread-safe concurrent extraction (read-only state access)
+  - Matches existing getEnhancedTensorRepresentation() output (validated)
+- **Chess/Go Implementation** (BLOCKED):
+  - Stub implementations call getEnhancedTensorRepresentation() + copy to buffer
+  - Pre-existing segfault bugs in Chess/GoState::getEnhancedTensorRepresentation()
+  - Tests skipped until underlying bugs are fixed
+  - Stubs will work correctly once underlying issues are resolved
+- **Python Bindings**:
+  - `extract_features_to_buffer(buffer)`: Direct extraction to numpy array
+  - `get_num_feature_planes()`: Returns plane count (36/30/25)
+  - Buffer size validation with clear error messages
+- **Test Results**:
+  - 4/4 Gomoku tests pass (buffer size, num planes, correctness vs tensor, thread safety)
+  - 6/6 Chess/Go tests skipped (pre-existing segfault bugs)
+  - Thread safety validated with 10 concurrent extractions
+- **Next Steps**: Fix pre-existing Chess/Go bugs, then optimize Chess/Go for zero-copy
+
 #### T007d: Batch Tensor Creation (2025-10-09)
 - **Added**: Batch tensor creation API with game-specific dimensions
 - **Files**:

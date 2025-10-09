@@ -4,6 +4,7 @@
  */
 
 #include "dlpack_bridge.hpp"
+#include "utils/igamestate.h"
 #include <stdexcept>
 #include <cstring>
 #include <algorithm>
@@ -377,6 +378,60 @@ DLManagedTensor* create_batch_tensor(
     // Initialize buffer to zeros for now (T007e will fill with actual features)
     // NOTE: This is a stub implementation. Real feature extraction happens in T007e.
     std::memset(buffer->data(), 0, buffer_size);
+
+    // Create tensor shape
+    TensorShape shape;
+    shape.batch_size = batch_size;
+    shape.num_planes = num_planes;
+    shape.height = height;
+    shape.width = width;
+
+    // Create DLPack tensor
+    return create_dlpack_tensor(buffer, shape, use_cuda);
+}
+
+/**
+ * @brief Create batch tensor with actual feature extraction from game states (T007e)
+ */
+DLManagedTensor* create_batch_tensor_from_states(
+    const std::vector<const alphazero::core::IGameState*>& states,
+    bool use_cuda) {
+
+    if (states.empty()) {
+        throw std::invalid_argument("create_batch_tensor_from_states: states cannot be empty");
+    }
+
+    // Get dimensions from first state
+    int batch_size = static_cast<int>(states.size());
+    int num_planes = states[0]->get_num_feature_planes();
+    int height = states[0]->getBoardSize();
+    int width = height;  // Assume square boards for now
+
+    // Validate all states are consistent
+    for (size_t i = 1; i < states.size(); ++i) {
+        if (states[i]->get_num_feature_planes() != num_planes) {
+            throw std::runtime_error("create_batch_tensor_from_states: inconsistent num_planes across states");
+        }
+        if (states[i]->getBoardSize() != height) {
+            throw std::runtime_error("create_batch_tensor_from_states: inconsistent board_size across states");
+        }
+    }
+
+    // Calculate buffer size: batch × planes × height × width × sizeof(float)
+    size_t num_elements = static_cast<size_t>(batch_size) * num_planes * height * width;
+    size_t buffer_size = num_elements * sizeof(float);
+
+    // Acquire buffer from pool
+    auto buffer = BufferPool::instance().acquire(buffer_size, use_cuda);
+
+    // Extract features from each state directly into buffer
+    float* data = static_cast<float*>(buffer->data());
+    size_t state_size = num_planes * height * width;
+
+    for (int i = 0; i < batch_size; ++i) {
+        float* state_buffer = data + (i * state_size);
+        states[i]->extract_features_to_buffer(state_buffer);
+    }
 
     // Create tensor shape
     TensorShape shape;

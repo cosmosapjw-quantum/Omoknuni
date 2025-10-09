@@ -30,6 +30,13 @@
 #include <vector>
 #include <optional>
 
+// Forward declare IGameState for T007e
+namespace alphazero {
+namespace core {
+class IGameState;
+}
+}
+
 namespace mcts {
 
 /**
@@ -366,6 +373,30 @@ DLManagedTensor* create_dlpack_tensor(
 DLManagedTensor* create_batch_tensor(
     int batch_size,
     GameType game_type,
+    bool use_cuda = false
+);
+
+/**
+ * @brief Create batch tensor with feature extraction from game states (T007e)
+ *
+ * Allocates pinned memory buffer and extracts features from game states directly
+ * into the buffer for zero-copy transfer to PyTorch.
+ *
+ * @param states Vector of game state pointers (NOT owned, read-only access)
+ * @param use_cuda Use CUDA pinned memory for faster GPU transfers
+ * @return DLManagedTensor* ready to wrap in PyCapsule
+ * @throws std::bad_alloc if buffer allocation fails
+ * @throws std::invalid_argument if states is empty
+ * @throws std::runtime_error if states have inconsistent game types
+ *
+ * Example:
+ *   std::vector<const alphazero::core::IGameState*> states = {...};
+ *   auto* tensor = create_batch_tensor_from_states(states, true);
+ *   PyObject* capsule = wrap_dlpack_capsule(tensor);
+ *   // Pass capsule to torch.from_dlpack()
+ */
+DLManagedTensor* create_batch_tensor_from_states(
+    const std::vector<const alphazero::core::IGameState*>& states,
     bool use_cuda = false
 );
 

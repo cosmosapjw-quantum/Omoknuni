@@ -2128,6 +2128,36 @@ std::vector<std::vector<uint64_t>> ChessState::getBitboards() const {
     return bitboards;
 }
 
+// ============================================================================
+// T007e: Direct Feature Extraction to Buffer
+// ============================================================================
+
+int ChessState::get_num_feature_planes() const {
+    return 30;  // Enhanced representation: 30 planes for Chess
+}
+
+void ChessState::extract_features_to_buffer(float* buffer) const {
+    // Simplified implementation: Use existing getEnhancedTensorRepresentation()
+    // and copy to buffer. This can be optimized later for zero-copy.
+    //
+    // Future optimization (T007e follow-up): Direct write like Gomoku implementation
+    auto tensor = getEnhancedTensorRepresentation();
+
+    const int num_planes = 30;
+    const int height = 8;
+    const int width = 8;
+    const int plane_size = height * width;
+
+    // Copy tensor data to buffer in row-major layout
+    for (int p = 0; p < num_planes; ++p) {
+        for (int r = 0; r < height; ++r) {
+            for (int c = 0; c < width; ++c) {
+                buffer[p * plane_size + r * width + c] = tensor[p][r][c];
+            }
+        }
+    }
+}
+
 } // namespace chess
 } // namespace games
 } // namespace alphazero

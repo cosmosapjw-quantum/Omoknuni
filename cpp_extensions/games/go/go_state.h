@@ -84,6 +84,8 @@ public:
     std::vector<std::vector<std::vector<float>>> getTensorRepresentation() const override;
     std::vector<std::vector<std::vector<float>>> getBasicTensorRepresentation() const override;
     std::vector<std::vector<std::vector<float>>> getEnhancedTensorRepresentation() const override;
+    void extract_features_to_buffer(float* buffer) const override;
+    int get_num_feature_planes() const override;
     uint64_t getHash() const override;
     std::unique_ptr<core::IGameState> clone() const override;
     std::vector<std::unique_ptr<core::IGameState>> batchClone(int count) const override;

@@ -18,6 +18,7 @@
 #include <atomic>
 #include <chrono>
 #include <optional>
+#include <cstring>  // For memset in MockGameState
 
 using namespace mcts;
 
@@ -99,6 +100,17 @@ public:
     std::vector<std::vector<std::vector<float>>> getEnhancedTensorRepresentation() const override {
         // Same as basic for mock
         return getBasicTensorRepresentation();
+    }
+
+    void extract_features_to_buffer(float* buffer) const override {
+        // Simple stub: write zeros to buffer
+        int num_planes = get_num_feature_planes();
+        int board_size = getBoardSize();
+        std::memset(buffer, 0, num_planes * board_size * board_size * sizeof(float));
+    }
+
+    int get_num_feature_planes() const override {
+        return 18;  // Mock: same as basic tensor representation
     }
 
     uint64_t getHash() const override {

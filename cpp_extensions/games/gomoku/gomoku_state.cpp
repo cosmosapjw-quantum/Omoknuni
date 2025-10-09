@@ -8,6 +8,7 @@
 #include <iostream>  // For debugging (optional, remove in production)
 #include <numeric>   // For std::accumulate, std::gcd
 #include <algorithm> // For std::fill, std::find
+#include <cstring>   // For memset (T007e)
 
 
 namespace alphazero {
@@ -1867,6 +1868,181 @@ float GomokuState::calculateRunLengthToFive(int action, int player_idx, int dr, 
 
     // Normalize to [0,1] range where 1.0 means can definitely make five
     return std::min(total_potential / 5.0f, 1.0f);
+}
+
+// ============================================================================
+// T007e: Direct Feature Extraction to Buffer
+// ============================================================================
+
+int GomokuState::get_num_feature_planes() const {
+    return 36;  // Enhanced representation: 36 planes for Gomoku
+}
+
+void GomokuState::extract_features_to_buffer(float* buffer) const {
+    // Zero-copy extraction: Write features directly to buffer
+    // Layout: [36 planes][15 rows][15 cols] in row-major order
+    // Total: 36 * 15 * 15 = 8100 floats
+
+    const int num_planes = 36;
+    const int plane_size = board_size_ * board_size_;  // 225 for 15×15
+
+    // Zero-initialize buffer (faster than per-element initialization)
+    std::memset(buffer, 0, num_planes * plane_size * sizeof(float));
+
+    int p_idx_current = current_player_ - 1;   // 0 for BLACK, 1 for WHITE
+    int p_idx_opponent = 1 - p_idx_current;     // 1 for BLACK, 0 for WHITE
+
+    // Plane 0: Current player's stones
+    // Plane 1: Opponent player's stones
+    // Plane 2: Empty cells
+    for (int r = 0; r < board_size_; ++r) {
+        for (int c = 0; c < board_size_; ++c) {
+            int action = coords_to_action(r, c);
+            int offset = r * board_size_ + c;
+
+            if (is_bit_set(p_idx_current, action)) {
+                buffer[0 * plane_size + offset] = 1.0f;  // Current player
+            } else if (is_bit_set(p_idx_opponent, action)) {
+                buffer[1 * plane_size + offset] = 1.0f;  // Opponent
+            } else {
+                buffer[2 * plane_size + offset] = 1.0f;  // Empty
+            }
+        }
+    }
+
+    // Plane 3: Player indicator (1.0 for BLACK, 0.0 for WHITE)
+    float player_indicator = (current_player_ == BLACK) ? 1.0f : 0.0f;
+    float* plane3 = buffer + 3 * plane_size;
+    for (int i = 0; i < plane_size; ++i) {
+        plane3[i] = player_indicator;
+    }
+
+    // Planes 4-10: Last 7 moves for current player
+    // Planes 11-17: Last 7 moves for opponent player
+    int history_size = std::min(7, static_cast<int>(move_history_.size()));
+    for (int h = 0; h < history_size; ++h) {
+        int move_action = move_history_[move_history_.size() - 1 - h];
+        auto [move_r, move_c] = action_to_coords_pair(move_action);
+        int offset = move_r * board_size_ + move_c;
+
+        // Determine which player made this move
+        int moves_back = h;
+        int player_who_moved;
+        if (moves_back % 2 == 0) {
+            player_who_moved = current_player_;
+        } else {
+            player_who_moved = (current_player_ == BLACK) ? WHITE : BLACK;
+        }
+
+        int history_player_idx = player_who_moved - 1;
+
+        if (history_player_idx == p_idx_current) {
+            buffer[(4 + h) * plane_size + offset] = 1.0f;  // Current player history
+        } else {
+            buffer[(11 + h) * plane_size + offset] = 1.0f; // Opponent history
+        }
+    }
+
+    // Planes 18-20: Rule indicators (constant across board)
+    float* plane18 = buffer + 18 * plane_size;
+    float* plane19 = buffer + 19 * plane_size;
+    float* plane20 = buffer + 20 * plane_size;
+
+    float freestyle_val = (!use_renju_ && !use_omok_) ? 1.0f : 0.0f;
+    float renju_val = use_renju_ ? 1.0f : 0.0f;
+    float omok_val = use_omok_ ? 1.0f : 0.0f;
+
+    for (int i = 0; i < plane_size; ++i) {
+        plane18[i] = freestyle_val;
+        plane19[i] = renju_val;
+        plane20[i] = omok_val;
+    }
+
+    // Plane 21: Allowed moves mask
+    std::vector<int> legal_moves = getLegalMoves();
+    float* plane21 = buffer + 21 * plane_size;
+    for (int action : legal_moves) {
+        auto [r, c] = action_to_coords_pair(action);
+        int offset = r * board_size_ + c;
+        plane21[offset] = 1.0f;
+    }
+
+    // Planes 22-27: Tactical features (five threats, four threats, open three)
+    float* plane22 = buffer + 22 * plane_size;  // Immediate five (current)
+    float* plane23 = buffer + 23 * plane_size;  // Immediate five (opponent)
+    float* plane24 = buffer + 24 * plane_size;  // Four threat (current)
+    float* plane25 = buffer + 25 * plane_size;  // Four threat (opponent)
+    float* plane26 = buffer + 26 * plane_size;  // Open three (current)
+    float* plane27 = buffer + 27 * plane_size;  // Open three (opponent)
+
+    for (int r = 0; r < board_size_; ++r) {
+        for (int c = 0; c < board_size_; ++c) {
+            int action = coords_to_action(r, c);
+            int offset = r * board_size_ + c;
+
+            // Only check empty positions
+            if (!is_bit_set(0, action) && !is_bit_set(1, action)) {
+                // Immediate five threats
+                if (rules_engine_->is_five_in_a_row(action, current_player_, true)) {
+                    plane22[offset] = 1.0f;
+                }
+                if (rules_engine_->is_five_in_a_row(action, 3 - current_player_, true)) {
+                    plane23[offset] = 1.0f;
+                }
+
+                // Four threats
+                if (createsFourThreat(action, p_idx_current)) {
+                    plane24[offset] = 1.0f;
+                }
+                if (createsFourThreat(action, p_idx_opponent)) {
+                    plane25[offset] = 1.0f;
+                }
+
+                // Open three patterns
+                if (use_omok_) {
+                    if (createsOmokOpenThree(action, p_idx_current)) {
+                        plane26[offset] = 1.0f;
+                    }
+                    if (createsOmokOpenThree(action, p_idx_opponent)) {
+                        plane27[offset] = 1.0f;
+                    }
+                } else if (use_renju_) {
+                    if (createsRenjuOpenThree(action, p_idx_current)) {
+                        plane26[offset] = 1.0f;
+                    }
+                    if (createsRenjuOpenThree(action, p_idx_opponent)) {
+                        plane27[offset] = 1.0f;
+                    }
+                } else {
+                    if (createsFreestyleOpenThree(action, p_idx_current)) {
+                        plane26[offset] = 1.0f;
+                    }
+                    if (createsFreestyleOpenThree(action, p_idx_opponent)) {
+                        plane27[offset] = 1.0f;
+                    }
+                }
+            }
+        }
+    }
+
+    // Planes 28-35: Run-length features (4 directions × 2 players)
+    const int DIRS[4][2] = {{1,0}, {0,1}, {1,1}, {1,-1}};
+
+    for (int dir = 0; dir < 4; ++dir) {
+        float* plane_current = buffer + (28 + dir) * plane_size;
+        float* plane_opponent = buffer + (32 + dir) * plane_size;
+
+        for (int r = 0; r < board_size_; ++r) {
+            for (int c = 0; c < board_size_; ++c) {
+                int action = coords_to_action(r, c);
+                int offset = r * board_size_ + c;
+
+                // Calculate run-length to five for both players
+                plane_current[offset] = calculateRunLengthToFive(action, p_idx_current, DIRS[dir][0], DIRS[dir][1]);
+                plane_opponent[offset] = calculateRunLengthToFive(action, p_idx_opponent, DIRS[dir][0], DIRS[dir][1]);
+            }
+        }
+    }
 }
 
 } // namespace gomoku

@@ -155,20 +155,57 @@ public:
 
     /**
      * @brief Get enhanced tensor representation with additional features
-     * 
+     *
      * Similar to getTensorRepresentation, but with additional planes
      * for features like move history, legal moves, game-specific data.
-     * 
+     *
      * @return 3D tensor with enhanced features
      */
     virtual std::vector<std::vector<std::vector<float>>> getEnhancedTensorRepresentation() const = 0;
 
     /**
+     * @brief Extract features directly to pre-allocated buffer (T007e)
+     *
+     * Writes tensor representation to pre-allocated buffer in row-major layout.
+     * This is a zero-copy optimization for batch inference, avoiding intermediate
+     * vector allocations.
+     *
+     * Layout: [num_planes, height, width] with contiguous memory
+     * Buffer size: num_planes * height * width * sizeof(float)
+     *
+     * @param buffer Float buffer of sufficient size (caller must allocate)
+     *
+     * Requirements:
+     * - No heap allocations during extraction
+     * - Thread-safe (read-only state access)
+     * - Performance target: <10μs per state
+     * - Deterministic output (same state → same features)
+     *
+     * Example for Gomoku (36 planes, 15×15):
+     *   float buffer[36 * 15 * 15];
+     *   state->extract_features_to_buffer(buffer);
+     *   // buffer[0..224] = plane 0 (current player stones)
+     *   // buffer[225..449] = plane 1 (opponent stones)
+     *   // etc.
+     */
+    virtual void extract_features_to_buffer(float* buffer) const = 0;
+
+    /**
+     * @brief Get number of feature planes for this game type
+     *
+     * Returns the number of feature planes in the enhanced tensor representation.
+     * Used to calculate buffer size for extract_features_to_buffer().
+     *
+     * @return Number of feature planes (Gomoku=36, Chess=30, Go=25)
+     */
+    virtual int get_num_feature_planes() const = 0;
+
+    /**
      * @brief Get hash for transposition table
-     * 
+     *
      * Returns a Zobrist hash of the current state for efficient
      * lookups in transposition tables.
-     * 
+     *
      * @return 64-bit hash
      */
     virtual uint64_t getHash() const = 0;

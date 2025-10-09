@@ -1770,6 +1770,36 @@ std::vector<std::vector<uint64_t>> GoState::getBitboards() const {
     return bitboards;
 }
 
+// ============================================================================
+// T007e: Direct Feature Extraction to Buffer
+// ============================================================================
+
+int GoState::get_num_feature_planes() const {
+    return 25;  // Enhanced representation: 25 planes for Go
+}
+
+void GoState::extract_features_to_buffer(float* buffer) const {
+    // Simplified implementation: Use existing getEnhancedTensorRepresentation()
+    // and copy to buffer. This can be optimized later for zero-copy.
+    //
+    // Future optimization (T007e follow-up): Direct write like Gomoku implementation
+    auto tensor = getEnhancedTensorRepresentation();
+
+    const int num_planes = 25;
+    const int height = board_size_;  // 19 for standard Go
+    const int width = board_size_;
+    const int plane_size = height * width;
+
+    // Copy tensor data to buffer in row-major layout
+    for (int p = 0; p < num_planes; ++p) {
+        for (int r = 0; r < height; ++r) {
+            for (int c = 0; c < width; ++c) {
+                buffer[p * plane_size + r * width + c] = tensor[p][r][c];
+            }
+        }
+    }
+}
+
 } // namespace go
 } // namespace games
 } // namespace alphazero
