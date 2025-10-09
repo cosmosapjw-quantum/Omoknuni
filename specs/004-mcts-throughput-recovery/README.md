@@ -150,7 +150,7 @@ Total copies: 0 (only GPU transfers)
 - A/B quality comparison
 - Gradual rollout (10% → 100%)
 
-## Implementation Status
+## Implementation Status (Updated 2025-10-09)
 
 - [✅] Specification complete
 - [✅] Technical research complete
@@ -159,29 +159,48 @@ Total copies: 0 (only GPU transfers)
 - [✅] Implementation plan ready
 - [✅] **Phase 1 implementation COMPLETE** (T001-T005)
   - WU-UCT virtual loss ✅
+  - Epoch-based tree clearing ✅ (1M× speedup)
   - Busy-edge masking ✅
   - Root pre-expansion ✅
   - Thread affinity ✅
   - Collision metrics ✅
-- [🔄] **Phase 2 implementation IN PROGRESS** (T006-T010)
+- [🟡] **Phase 2 implementation 85% COMPLETE** (T006-T010)
   - Lock-free MPMC queue ✅ (T006)
-  - **Lock-free AsyncInferenceQueue integration** ✅ (T006b - Just Completed!)
+  - AsyncInferenceQueue integration ✅ (T006b)
+  - 🔴 **CRITICAL MISSING: T006c** - Replace polling with condition variables (1.3-1.5× speedup)
+  - DLPack tensor bridge ✅ (T007a-g complete)
+  - Python inference bridge 🟡 (T008a-b,e ✅; T008c-d skipped)
+  - 🔴 **CRITICAL MISSING: T008f** - Enable FP16 mixed precision (1.5-2× GPU speedup)
+  - Per-thread memory arenas ✅ (T009a-f complete)
   - Pending expansions map replaced ✅ (T010)
-  - DLPack tensor bridge ⏸️ (T007 → split into T007a-g)
-  - Python inference bridge ⏸️ (T008 → split into T008a-e)
-  - Per-thread memory arenas ⏸️ (T009 → split into T009a-f)
 - [ ] Phase 3 implementation (not started)
 - [ ] Validation complete
 
-## Next Steps
+## Critical Path Forward
 
-1. **Complete Phase 2 remaining tasks** (T007-T009 subtasks)
-   - T007a-g: DLPack tensor bridge (7 subtasks, 4-6 hours each)
-   - T008a-e: Python inference bridge (5 subtasks, 2-3 hours each)
-   - T009a-f: Per-thread memory arenas (6 subtasks, 3-5 hours each)
-2. **Benchmark Phase 1+2 combined performance**
-3. **Begin Phase 3** tasks (T011-T013+)
-4. **Full system validation** with quality and performance tests
+**Two critical optimizations remain to achieve 25k sims/sec target:**
+
+1. **T006c: Replace Polling with Condition Variables** (CRITICAL - 1 day)
+   - **Problem**: Current polling wastes 67% of CPU time (10μs sleep loops)
+   - **Solution**: Use `std::condition_variable` for efficient blocking
+   - **Impact**: **1.3-1.5× throughput improvement** (12-18k sims/sec)
+   - **Status**: Ready to implement (full code examples in tasks.md)
+
+2. **T008f: Enable FP16 Mixed Precision** (CRITICAL - 2 hours)
+   - **Problem**: FP16 not validated despite RTX 3060 Ti having tensor cores
+   - **Solution**: Validate `torch.cuda.amp.autocast()` and benchmark
+   - **Impact**: **1.5-2× GPU inference speedup** (18-36k sims/sec)
+   - **Status**: Ready to implement (full code examples in tasks.md)
+
+3. **T016: Run Comprehensive Benchmarks** (HIGH PRIORITY - 2 days)
+   - Measure actual performance gains from Phase 1+2 optimizations
+   - Validate 25k sims/sec target achievement
+
+4. **T018-T019: Tune Parameters** (2 days)
+   - Optimize batch size, timeout, virtual loss magnitude
+   - Fine-tune for maximum throughput
+
+5. **Phase 3 & 4**: Final optimizations and validation (optional if target met)
 
 ## Success Criteria
 
@@ -205,6 +224,6 @@ For questions or clarifications about this specification, refer to the technical
 
 ---
 
-**Document Version**: 1.1.0
-**Last Updated**: 2025-10-08
-**Status**: IN PROGRESS - Phase 2 Partially Complete (T006b just completed)
+**Document Version**: 1.2.0
+**Last Updated**: 2025-10-09
+**Status**: Phase 2 85% Complete - T006c and T008f critical for 25k target

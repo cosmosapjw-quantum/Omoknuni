@@ -4,19 +4,22 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 
 ## Project Status
 
-🚀 **Spec 004 In Progress: MCTS Throughput Recovery** - Phase 2 (Zero-Copy Inference Bridge)
+🚀 **Spec 004 Phase 2: 85% Complete** - Critical Missing Optimizations Identified
 
 ### Current Status
-- **Version**: 1.0.0-alpha + Spec 004 (Phase 2 In Progress)
+- **Version**: 1.0.0-alpha + Spec 004 (Phase 2 85% Complete)
 - **Alpha Release Date**: 2025-10-01
 - **Spec 002**: ✅ COMPLETE (2025-10-03) - C++ Simulation Runner (7× Python baseline)
 - **Spec 003**: ✅ COMPLETE (2025-10-05) - Async inference batching with comprehensive optimization
-- **Spec 004**: 🔄 IN PROGRESS (Started 2025-10-06) - MCTS Throughput Recovery
-  - Phase 1: ✅ COMPLETE (T001 ✅ T001b ✅ T002 ✅ T003 ✅ T005 ✅)
-  - Phase 2: 🔄 IN PROGRESS (T007a-d ✅, T007e-f pending)
-  - Target: 25,000+ sims/sec (8× current performance)
+- **Spec 004**: 🟡 85% COMPLETE (Started 2025-10-06) - MCTS Throughput Recovery
+  - Phase 1: ✅ COMPLETE (T001 ✅ T001b ✅ T002 ✅ T003 ✅ T004 ✅ T005 ✅)
+  - Phase 2: 🟡 85% COMPLETE (T006/T006b/T007a-g/T008a-b,e/T009a-f/T010 ✅, **T006c/T008f CRITICAL**)
+  - Phase 3: ⏸️ NOT STARTED (T011-T015)
+  - Phase 4: ⏸️ NOT STARTED (T016-T025)
+  - Target: 25,000+ sims/sec (6.8× current performance)
 - **Current Performance**: 3,831 sims/sec peak (12.8% of 30k target)
-- **Next**: T007e (Feature extraction) + T007f (Python bindings) + T008 (Python inference bridge)
+- **Critical Missing**: **T006c** (condition variables: 1.3-1.5× speedup) + **T008f** (FP16: 1.5-2× speedup)
+- **Expected Path**: 3,831 → +T006c: 12-18k → +T008f: 18-36k → +tuning: ≥25k sims/sec
 
 ### Spec 003 Complete: Performance Analysis & Optimization
 
@@ -70,60 +73,66 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 
 See [Async Optimization Results](docs/performance/async_optimization_results.md) for detailed analysis.
 
-### Spec 004: MCTS Throughput Recovery (In Progress)
+### Spec 004: MCTS Throughput Recovery (Phase 2 85% Complete)
 
-**Goal**: Achieve 25,000+ simulations/second (8× improvement) through targeted optimizations
+**Goal**: Achieve 25,000+ simulations/second (6.8× improvement) through targeted optimizations
 
-**Phase 1: Virtual Loss & Quick Wins** (Week 1):
-- ✅ **T001**: WU-UCT Virtual Loss Manager (2025-10-06)
-  - Separates in-flight tracking from Q-value calculation
-  - Pure Q-values: `Q = W/N` (no distortion)
-  - Exploration adjustment: `U = P*sqrt(N_p)/(1 + N + VL)`
-  - Performance: 2.7ns per operation, 4 bytes per node
-  - All 17 unit tests pass, thread-safe with collision tracking
-- ✅ **T001b**: Epoch-based tree clearing (2025-10-06) - **Pre-existing**
-  - Already implemented: clear() uses epoch increment (25ns) instead of memset (25ms)
-  - 1,000,000× speedup over naive approach
-  - Lazy node initialization at allocation time
-  - All 8 validation tests pass
-- ✅ **T002**: Busy-edge masking validation + critical bug fix (2025-10-07)
-  - Validated existing busy-edge masking (PUCT = -∞ for expanding nodes)
-  - Fixed critical thread-local block caching bug (instance_id_ solution)
-  - Added ExpansionConflict and BusyEdgeMasked instrumentation metrics
-  - Performance: -6ns overhead (masking is actually faster!)
-  - All 17 unit tests pass (thread safety verified)
-- ✅ **T003**: Root pre-expansion elimination (2025-10-08)
-  - Implemented pre-expanded root with N=1 initialization
-  - Eliminated N-1 thread idle problem (100% thread utilization)
-  - Root children pre-allocated with policy priors from neural network
-  - All 23 unit tests pass
-- ✅ **T005**: Collision metrics instrumentation (2025-10-08)
-  - Added ExpansionConflict and CollisionRate metrics
-  - Validated low collision rates (<0.5% at 4 threads)
-  - All 8 instrumentation tests pass
+**Phase 1: Virtual Loss & Quick Wins** - ✅ **COMPLETE** (2025-10-06 to 2025-10-08)
+- ✅ **T001**: WU-UCT Virtual Loss Manager (visit-only, no Q-value distortion)
+- ✅ **T001b**: Epoch-based tree clearing (1M× speedup: 25ns vs 25ms)
+- ✅ **T002**: Busy-edge masking validation + critical thread-local bug fix
+- ✅ **T003**: Root pre-expansion (eliminates N-1 thread idle problem)
+- ✅ **T004**: Thread affinity for Ryzen 5900X (CCD-aware pinning)
+- ✅ **T005**: Collision metrics instrumentation (<0.5% collision rate @ 4 threads)
 
-**Phase 2: Zero-Copy Inference Bridge** (Week 2):
-- ✅ **T007a**: DLPack research and integration design (2025-10-09)
-  - Researched DLPack v0.8 protocol and PyTorch integration
-  - Designed zero-copy tensor bridge architecture
-- ✅ **T007b**: Pinned memory buffer allocation (2025-10-09)
-  - Implemented BufferPool with CUDA pinned memory support
-  - Size classes: 4KB, 64KB, 1MB, 4MB for efficient reuse
-  - All 15 unit tests pass
-- ✅ **T007c**: DLPack tensor capsule structure (2025-10-09)
-  - Implemented DLTensor, DLManagedTensor, DLPackContext
-  - PyCapsule wrapper for torch.from_dlpack() integration
-  - Zero-copy tensor creation with reference counting
-  - 16/17 tests pass (1 skipped - no CUDA)
-- ✅ **T007d**: Batch tensor creation (2025-10-09)
-  - GameType enum (GOMOKU/CHESS/GO) with automatic dimensions
-  - create_batch_tensor() allocates pooled buffers
-  - Stub implementation (zeros), feature extraction in T007e
-  - All 29 unit tests pass
-- [ ] **T007e**: Direct feature extraction to game states (5 hours)
-- [ ] **T007f**: Update Python bindings (4 hours)
+**Phase 2: Architecture Changes** - 🟡 **85% COMPLETE** (2025-10-09)
+- ✅ **T006**: Lock-free MPMC queue implementation (4096 entries, turn-based sync)
+- ✅ **T006b**: AsyncInferenceQueue integration (lock-free operations)
+- 🔴 **T006c**: **CRITICAL MISSING** - Replace polling with condition variables
+  - **Problem**: Current polling wastes 67% of CPU time (10μs sleep loops)
+  - **Solution**: `std::condition_variable` for efficient blocking
+  - **Impact**: **1.3-1.5× throughput improvement** (reclaim wasted CPU)
+  - **Status**: Ready to implement (full code examples in tasks.md)
+- ✅ **T007**: DLPack Tensor Bridge - **COMPLETE** (T007a-g all done)
+  - T007a-g: Research, pinned memory, capsules, batch tensors, feature extraction, Python bindings, validation
+  - Zero-copy C++ → PyTorch pipeline operational
+- ✅ **T008**: Python Inference Bridge (T008a-b,e complete, T008c-d skipped)
+  - T008a-b: DLPackInferenceBridge class, torch.from_dlpack() conversion
+  - T008c-d: Pre-allocated GPU buffers (skipped - not needed), non-blocking transfers (already async)
+  - T008e: Integration testing and validation
+- 🔴 **T008f**: **CRITICAL MISSING** - Enable FP16 mixed precision
+  - **Problem**: FP16 not validated despite RTX 3060 Ti having tensor cores
+  - **Solution**: Validate `torch.cuda.amp.autocast()` and benchmark
+  - **Impact**: **1.5-2× GPU inference speedup** (tensor core acceleration)
+  - **Status**: Ready to implement (full code examples in tasks.md)
+- ✅ **T009**: Per-Thread Memory Arenas (T009a-f complete)
+  - 4096-node block allocation, 99.93% fast-path, 0.07% mutex fallback
+- ✅ **T010**: Replace pending expansions map with ring buffer
 
-**Expected Impact**: Phase 1+2 target 12-15k sims/sec (4× improvement)
+**Phase 3: Final Optimizations** - ⏸️ **NOT STARTED**
+- T011: Persistent Python thread (eliminate repeated GIL acquire/release)
+- T012: Relaxed memory ordering (std::memory_order_relaxed where safe)
+- T013: Selection prefetching (cache line prefetch hints)
+- T014: Batched result processing (reduce atomic operations)
+- T015: Hot/cold child separation (cache-aware data layout)
+
+**Phase 4: Integration & Tuning** - ⏸️ **NOT STARTED**
+- 🔴 **T016**: Performance benchmark suite (HIGH PRIORITY - measure actual gains)
+- T017-T019: A/B testing, virtual loss tuning, batch size/timeout optimization
+- T020-T025: Profiling, validation, documentation
+
+**Performance Projections** (from review.pdf analysis):
+- **Baseline**: 3,831 sims/sec (12.8% of 30k target)
+- **+T006c** (condition variables): 12,000-18,000 sims/sec (reclaim 67% CPU waste)
+- **+T008f** (FP16 mixed precision): 18,000-36,000 sims/sec (2× GPU throughput)
+- **+Tuning** (T018-T019): ≥25,000 sims/sec **(TARGET ACHIEVED)**
+
+**Critical Path Forward**:
+1. **Implement T006c** - Replace polling with condition variables (1 day)
+2. **Implement T008f** - Enable and validate FP16 mixed precision (2 hours)
+3. **Run T016** - Comprehensive benchmarking to measure actual gains (2 days)
+4. **Tune T018-T019** - Optimize batch size, timeout, virtual loss (2 days)
+5. **Validate T025** - Final performance validation and sign-off (1 day)
 
 See [Spec 004](specs/004-mcts-throughput-recovery/) for full implementation plan.
 

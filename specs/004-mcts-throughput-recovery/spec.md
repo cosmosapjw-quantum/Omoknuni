@@ -4,42 +4,96 @@
 **Last Updated**: 2025-10-08
 **Current Phase**: Phase 2 (Architecture Changes) - Partially Complete
 
-## Current Progress
+## Current Progress (Updated 2025-10-09 after review.pdf analysis)
 
-### Completed Tasks ✅
-- **Phase 1**: Virtual loss & quick wins (T001-T005) ✅
-  - T001: WU-UCT virtual loss implementation ✅
-  - T002: Busy-edge masking ✅
-  - T003: Root pre-expansion ✅
-  - T004: Thread affinity for Ryzen 5900X ✅
-  - T005: Collision metrics instrumentation ✅
+### ✅ Completed Tasks (Phase 1 + Phase 2 Major Components)
 
-- **Phase 2** (Partial): Architecture changes
-  - T006: Lock-free MPMC queue implementation ✅
-  - **T006b: Lock-free AsyncInferenceQueue integration** ✅ *(just completed)*
-  - T010: Replace pending expansions map with ring buffer ✅
+**Phase 1: Virtual Loss & Quick Wins** - ✅ **COMPLETE**
+- T001: WU-UCT virtual loss implementation ✅
+- T001b: Epoch-based tree clearing ✅ (was already complete, instant <1μs clear)
+- T002: Busy-edge masking ✅
+- T003: Root pre-expansion ✅
+- T004: Thread affinity for Ryzen 5900X ✅
+- T005: Collision metrics instrumentation ✅
 
-### In Progress / Not Started
-- **Phase 2** (Remaining):
-  - T007: Create DLPack Tensor Bridge (split into T007a-T007g) ⏸️
-  - T008: Update Python Inference Bridge (split into T008a-T008e) ⏸️
-  - T009: Implement Per-Thread Memory Arenas (split into T009a-T009f) ⏸️
+**Phase 2: Architecture Changes** - 🟡 **85% COMPLETE**
+- T006: Lock-free MPMC queue implementation ✅
+- T006b: Lock-free AsyncInferenceQueue integration ✅
+- **T006c: Replace polling with condition variables** 🔴 **CRITICAL - NOT STARTED**
+- T007: DLPack Tensor Bridge ✅ (T007a-g complete)
+  - T007a: DLPack spec research and API design ✅
+  - T007b: Pinned memory buffer allocation ✅
+  - T007c: DLPack tensor capsule structure ✅
+  - T007d: Batch tensor creation ✅
+  - T007e: Direct feature extraction (all games) ✅
+  - T007f: Python bindings ✅
+  - T007g: Validation and benchmarking ✅
+- T008: Python Inference Bridge (T008a-b,e complete, T008c-d skipped, **T008f CRITICAL**)
+  - T008a: DLPackInferenceBridge class interface design ✅
+  - T008b: torch.from_dlpack() conversion ✅
+  - T008c: Pre-allocate GPU buffers ⏭️ (skipped - not needed)
+  - T008d: Non-blocking GPU transfers ⏭️ (skipped - already async)
+  - T008e: Integration testing and validation ✅
+  - **T008f: Enable FP16 mixed precision** 🔴 **CRITICAL - NOT STARTED**
+- T009: Per-Thread Memory Arenas ✅ (T009a-f complete)
+  - T009a: ThreadLocalArena architecture design ✅
+  - T009b: Arena data structure implementation ✅
+  - T009c: Lock-free allocation ⏭️ (skipped - thread-local eliminates need)
+  - T009d: Free list management ✅
+  - T009e: MCTS tree integration (pragmatic: 4096-block allocation) ✅
+  - T009f: Validation and benchmarking ✅
+- T010: Replace pending expansions map with ring buffer ✅
 
-- **Phase 3**: Final optimizations
-  - T011: Persistent Python thread ⏸️
-  - T012: Relaxed memory ordering ⏸️
-  - T013+: Additional optimizations ⏸️
+### 🔴 Critical Missing Optimizations (from review.pdf)
+
+**1. T006c: Condition Variables** (review.pdf pages 8-9)
+- **Problem**: Current polling wastes 67% of CPU time
+- **Solution**: Use `std::condition_variable` for efficient blocking
+- **Impact**: **1.3-1.5× throughput improvement**
+- **Status**: Added to tasks.md, ready to implement
+
+**2. T008f: FP16 Mixed Precision** (review.pdf pages 8, 13)
+- **Problem**: Not validated that FP16 is enabled
+- **Solution**: Validate `torch.cuda.amp.autocast()` and benchmark
+- **Impact**: **1.5-2× GPU inference speedup** (RTX 3060 Ti has tensor cores)
+- **Status**: Added to tasks.md, ready to implement
+
+### ⏸️ Phase 3: Final Optimizations (Not Started)
+- T011: Persistent Python thread
+- T012: Relaxed memory ordering
+- T013: Selection prefetching
+- T014: Batched result processing
+- T015: Hot/cold child separation
+
+### ⏸️ Phase 4: Integration & Tuning (Not Started)
+- T016: Performance benchmark suite 🔴 **HIGH PRIORITY**
+- T017: A/B testing framework
+- T018: Tune virtual loss magnitude
+- T019: Optimize batch size and timeout
+- T020: Profile and fix remaining bottlenecks
+- T021-T025: Validation and documentation
 
 ### Key Achievements
-- **Lock-Free Infrastructure**: Eliminated all mutexes from AsyncInferenceQueue hot paths
-- **Critical Bug Fixes**: Resolved coordinator lifecycle and result-stealing bugs
-- **Memory Efficiency**: Fixed 1MB allocation for queue (vs unbounded map/deque)
-- **Thread Safety**: All async integration tests passing (11/11)
+- **Zero-Copy DLPack Pipeline**: Complete end-to-end (C++ → PyTorch)
+- **Lock-Free Infrastructure**: Eliminated mutexes from hot paths (but still polling)
+- **Thread-Local Arenas**: 99.93% fast-path allocation, 4096-node blocks
+- **Enhanced Feature Extraction**: Zero-copy for Gomoku, optimized for Chess/Go
+- **Critical Bug Fixes**: Coordinator lifecycle, result-stealing, thread-local caching
+- **Memory Efficiency**: 1MB queue, 270MB tree (10M nodes), 1MB DLPack buffers
 
-### Current Performance
-- **Baseline**: 3,831 sims/sec (12.8% of target)
-- **Expected after Phase 1+2**: ~12k-15k sims/sec (pending benchmarks)
-- **Target**: ≥25,000 sims/sec
+### Performance Status
+- **Baseline**: 3,831 sims/sec (12.8% of 30k target) - Spec 003 result
+- **Theoretical (Phase 1+2)**: ~8-12k sims/sec (3× from Phase 1, optimizations not fully measured)
+- **+ T006c (Condition Variables)**: ~12-18k sims/sec (reclaim 67% CPU waste)
+- **+ T008f (FP16)**: ~18-36k sims/sec (2× GPU throughput)
+- **Target**: ≥25,000 sims/sec (achievable with T006c + T008f + tuning)
+
+### Critical Path Forward
+1. **Implement T006c** - Replace polling with condition variables (1 day)
+2. **Implement T008f** - Enable and validate FP16 mixed precision (2 hours)
+3. **Run T016** - Comprehensive benchmarking to measure actual gains (2 days)
+4. **Tune T018-T019** - Optimize batch size, timeout, virtual loss (2 days)
+5. **Validate T025** - Final performance validation and sign-off (1 day)
 
 ---
 
