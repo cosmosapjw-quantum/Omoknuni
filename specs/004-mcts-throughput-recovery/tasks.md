@@ -788,7 +788,7 @@ The 1.02-1.04× speedup is lower than the 1.25× target because:
 
 **Completed**: 2025-10-09
 **Author**: Claude Code
-**Commit**: TBD (pending commit)
+**Commit**: 2d35dd6
 
 ---
 
