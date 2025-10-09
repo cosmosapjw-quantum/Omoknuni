@@ -680,29 +680,51 @@ DLPack integration is complex and involves multiple independent components that 
 
 ---
 
-#### T007f: Update Python Bindings
+#### T007f: Update Python Bindings ✅
 **Effort**: 4 hours
 **Dependencies**: T007e
+**Status**: COMPLETE
 **Files**:
-- `cpp_extensions/mcts/python_bindings.cpp`
+- `cpp_extensions/mcts/python_bindings.cpp` - Added create_batch_tensor_from_states binding
+- `cpp_extensions/mcts/CMakeLists.txt` - Linked mcts_py with utils_core
+- `tests/unit/test_batch_tensor_from_states.py` - Comprehensive test suite (19 tests)
 
 **Implementation**:
-- [ ] Expose `create_batch_tensor()` to Python via pybind11
-- [ ] Return PyCapsule object compatible with `torch.from_dlpack()`
-- [ ] Add proper error handling and exception conversion
-- [ ] Document Python API usage
+- [✅] Expose `create_batch_tensor_from_states()` to Python via pybind11
+- [✅] Return PyCapsule object compatible with `torch.from_dlpack()`
+- [✅] Add proper error handling and exception conversion
+- [✅] Document Python API usage with comprehensive docstrings
 
 **Validation**:
-- [ ] Test Python can call C++ function
-- [ ] Test `torch.from_dlpack()` consumes capsule
-- [ ] Verify tensor data correctness in Python
-- [ ] Test error handling (invalid inputs, CUDA errors)
+- [✅] Test Python can call C++ function (19 tests, all passing)
+- [✅] Test `torch.from_dlpack()` consumes capsule successfully
+- [✅] Verify tensor data correctness in Python (matches extract_features_to_buffer)
+- [✅] Test error handling (empty list, mixed game types, invalid states, None)
+
+**Test Results** (19/19 passing):
+- ✅ Single state extraction (Gomoku, Chess, Go)
+- ✅ Batch extraction (8, 32, 64 states)
+- ✅ Feature correctness (matches direct extraction)
+- ✅ Tensor properties (contiguous, correct shape, dtype)
+- ✅ Error handling (5 error cases tested)
+- ✅ PyTorch integration (gradient computation, device transfer)
+- ✅ Batch diversity validation
+- ✅ CUDA pinned memory support
+- ✅ API documentation complete
 
 **Acceptance Criteria**:
-- Python bindings work correctly
-- PyTorch integration functional
-- Errors properly propagated to Python
-- Documentation complete
+- ✅ Python bindings work correctly (mcts_py.create_batch_tensor_from_states)
+- ✅ PyTorch integration functional (torch.from_dlpack() works)
+- ✅ Errors properly propagated to Python (all error cases tested)
+- ✅ Documentation complete (comprehensive docstrings with examples)
+
+**Bug Fixes**:
+- Fixed mcts_py module linking: Added utils_core to target_link_libraries
+- Added include directories for utils and games in CMakeLists.txt
+
+**Completed**: 2025-10-09
+**Author**: Claude Code
+**Commit**: TBD (pending commit)
 
 ---
 

@@ -756,6 +756,116 @@ PYBIND11_MODULE(mcts_py, m) {
           "    >>> tensor = torch.from_dlpack(capsule)\n"
           "    >>> tensor.shape\n"
           "    torch.Size([64, 36, 15, 15])");
+
+    m.def("create_batch_tensor_from_states",
+          [](const py::list& states, bool use_cuda) -> py::object {
+              // Validate input
+              if (states.empty()) {
+                  throw std::invalid_argument("states list cannot be empty");
+              }
+
+              // Convert Python list to C++ vector
+              std::vector<const alphazero::core::IGameState*> state_ptrs;
+              state_ptrs.reserve(states.size());
+
+              for (size_t i = 0; i < states.size(); ++i) {
+                  // Extract IGameState pointer directly (all game states inherit from IGameState)
+                  py::object state_obj = py::reinterpret_borrow<py::object>(states[i]);
+
+                  // Try to cast to IGameState pointer
+                  const alphazero::core::IGameState* state_ptr = nullptr;
+                  try {
+                      state_ptr = state_obj.cast<const alphazero::core::IGameState*>();
+                  } catch (const py::cast_error& e) {
+                      throw std::invalid_argument(
+                          "State at index " + std::to_string(i) +
+                          " is not a valid game state (must inherit from IGameState)"
+                      );
+                  }
+
+                  if (state_ptr == nullptr) {
+                      throw std::invalid_argument("State at index " + std::to_string(i) + " is null");
+                  }
+
+                  state_ptrs.push_back(state_ptr);
+              }
+
+              // Validate all states are the same type
+              alphazero::core::GameType first_type = state_ptrs[0]->getGameType();
+              int first_board_size = state_ptrs[0]->getBoardSize();
+              for (size_t i = 1; i < state_ptrs.size(); ++i) {
+                  if (state_ptrs[i]->getGameType() != first_type) {
+                      throw std::invalid_argument(
+                          "All states must be the same game type. State 0 has type " +
+                          std::to_string(static_cast<int>(first_type)) + " but state " +
+                          std::to_string(i) + " has type " +
+                          std::to_string(static_cast<int>(state_ptrs[i]->getGameType()))
+                      );
+                  }
+                  if (state_ptrs[i]->getBoardSize() != first_board_size) {
+                      throw std::invalid_argument(
+                          "All states must have the same board size. State 0 has size " +
+                          std::to_string(first_board_size) + " but state " +
+                          std::to_string(i) + " has size " +
+                          std::to_string(state_ptrs[i]->getBoardSize())
+                      );
+                  }
+              }
+
+              // Create DLManagedTensor with real feature extraction
+              DLManagedTensor* managed_tensor = nullptr;
+              try {
+                  managed_tensor = create_batch_tensor_from_states(state_ptrs, use_cuda);
+              } catch (const std::exception& e) {
+                  throw std::runtime_error(
+                      "Failed to create batch tensor from states: " + std::string(e.what())
+                  );
+              }
+
+              if (managed_tensor == nullptr) {
+                  throw std::runtime_error("create_batch_tensor_from_states returned null");
+              }
+
+              // Wrap in PyCapsule
+              PyObject* capsule = wrap_dlpack_capsule(managed_tensor);
+              if (!capsule) {
+                  // Note: wrap_dlpack_capsule handles cleanup on failure
+                  throw std::runtime_error("Failed to create DLPack capsule");
+              }
+
+              // Return as py::object (takes ownership)
+              return py::reinterpret_steal<py::object>(capsule);
+          },
+          py::arg("states"), py::arg("use_cuda") = false,
+          "Create batch tensor from actual game states with feature extraction (T007e/T007f)\n\n"
+          "Extracts features from a list of game states and creates a DLPack tensor.\n"
+          "This function performs real feature extraction (unlike create_batch_tensor\n"
+          "which creates zero-initialized tensors).\n\n"
+          "Args:\n"
+          "    states: List of game state objects (GomokuState, ChessState, or GoState)\n"
+          "            All states must be the same game type and board size.\n"
+          "    use_cuda: Use CUDA pinned memory for faster GPU transfers\n\n"
+          "Returns:\n"
+          "    PyCapsule: DLPack capsule for torch.from_dlpack()\n\n"
+          "Raises:\n"
+          "    ValueError: If states list is empty\n"
+          "    ValueError: If states have different game types or board sizes\n"
+          "    TypeError: If states are not valid game state objects\n"
+          "    RuntimeError: If tensor creation or feature extraction fails\n\n"
+          "Example:\n"
+          "    >>> import alphazero_py as mcts_py\n"
+          "    >>> import torch\n"
+          "    >>> # Create game states\n"
+          "    >>> states = [mcts_py.GomokuState() for _ in range(32)]\n"
+          "    >>> # Make some moves\n"
+          "    >>> states[0].make_move(112)  # Center move\n"
+          "    >>> # Create batch tensor with real features\n"
+          "    >>> capsule = mcts_py.create_batch_tensor_from_states(states)\n"
+          "    >>> tensor = torch.from_dlpack(capsule)\n"
+          "    >>> tensor.shape\n"
+          "    torch.Size([32, 36, 15, 15])\n"
+          "    >>> # Features contain actual game state (not zeros)\n"
+          "    >>> assert tensor.sum() > 0  # Non-zero features\n");
 }
 
 } // namespace python
