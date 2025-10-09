@@ -19,7 +19,10 @@ namespace mcts {
 
 namespace {
 
-constexpr std::uint32_t kThreadBlockSize = 64;
+// Increased from 64 to 4096 to reduce contention on global next_free_index_
+// With 12 threads, this means 49K nodes allocated without global synchronization
+// Per review.pdf recommendation: "give each thread its own block of node indices"
+constexpr std::uint32_t kThreadBlockSize = 4096;
 
 // Global counter for generating unique tree instance IDs
 std::atomic<std::uint64_t> next_tree_id{1};
@@ -30,6 +33,11 @@ struct ThreadLocalBlock {
     NodeIndex next = NULL_NODE_INDEX;
     std::uint32_t remaining = 0;
     std::uint64_t epoch = 0;
+
+    // Statistics for tracking thread-local allocation efficiency
+    std::uint64_t allocations_from_block = 0;    // Fast path: thread-local block
+    std::uint64_t allocations_from_global = 0;   // Slow path: global pool
+    std::uint64_t allocations_from_freelist = 0; // Reuse path: free list
 };
 
 thread_local ThreadLocalBlock thread_block;
@@ -342,6 +350,7 @@ NodeIndex MCTSTree::allocate_node() {
         NodeIndex index = block.next;
         ++block.next;
         --block.remaining;
+        ++block.allocations_from_block;  // Track fast-path allocations
         return index;
     };
 
@@ -360,6 +369,7 @@ NodeIndex MCTSTree::allocate_node() {
                 block.epoch = current_epoch;
                 block.tree = this;
                 block.tree_id = instance_id_;
+                ++block.allocations_from_freelist;  // Track free list reuse
                 return reused;
             }
 
@@ -391,6 +401,7 @@ NodeIndex MCTSTree::allocate_node() {
                 block.remaining = 0;
             }
 
+            ++block.allocations_from_global;  // Track global pool allocation
             return first_index;
         };
 
@@ -495,6 +506,18 @@ void MCTSTree::initialize_node_range(NodeIndex first_index, std::uint16_t count)
         }
         initialize_node(index);
     }
+}
+
+MCTSTree::ThreadAllocationStats MCTSTree::get_thread_allocation_stats() const {
+    // Access thread-local block for current thread
+    // thread_block is in the anonymous namespace, so we access it directly
+    ThreadAllocationStats stats;
+    stats.allocations_from_block = thread_block.allocations_from_block;
+    stats.allocations_from_global = thread_block.allocations_from_global;
+    stats.allocations_from_freelist = thread_block.allocations_from_freelist;
+    stats.block_size = kThreadBlockSize;
+
+    return stats;
 }
 
 } // namespace mcts

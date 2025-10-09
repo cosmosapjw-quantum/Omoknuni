@@ -132,9 +132,28 @@ endif()
 
 gtest_discover_tests(test_thread_local_arena)
 
+# Enhanced thread-local allocation tests (T009e)
+add_executable(test_enhanced_thread_local_allocation
+    test_enhanced_thread_local_allocation.cpp
+)
+
+target_link_libraries(test_enhanced_thread_local_allocation
+    PRIVATE
+    mcts_core
+    gtest_main
+    gtest
+    pthread
+)
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    target_compile_options(test_enhanced_thread_local_allocation PRIVATE -O2 -mavx2)
+endif()
+
+gtest_discover_tests(test_enhanced_thread_local_allocation)
+
 # Create a simple test runner for all unit tests
 add_custom_target(run_unit_tests
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --parallel 4
-    DEPENDS test_node_pool test_selection test_instrumentation_metrics test_root_pre_expansion test_thread_affinity test_lock_free_queue test_thread_local_arena
+    DEPENDS test_node_pool test_selection test_instrumentation_metrics test_root_pre_expansion test_thread_affinity test_lock_free_queue test_thread_local_arena test_enhanced_thread_local_allocation
     COMMENT "Running all unit tests"
 )

@@ -531,6 +531,39 @@ public:
         moves_[index] = move;
     }
 
+    /**
+     * @brief Get thread-local allocation statistics
+     *
+     * Returns statistics about allocation efficiency for the calling thread.
+     * Used for performance analysis and tuning.
+     *
+     * @return Struct with allocations_from_block, allocations_from_global, allocations_from_freelist
+     */
+    struct ThreadAllocationStats {
+        std::uint64_t allocations_from_block;    // Fast path: thread-local block cache
+        std::uint64_t allocations_from_global;   // Slow path: global pool with mutex
+        std::uint64_t allocations_from_freelist; // Reuse path: free list
+        std::uint32_t block_size;                // Current thread-local block size config
+
+        // Derived metrics
+        double fast_path_percentage() const {
+            std::uint64_t total = allocations_from_block + allocations_from_global + allocations_from_freelist;
+            return total > 0 ? (100.0 * allocations_from_block / total) : 0.0;
+        }
+
+        double slow_path_percentage() const {
+            std::uint64_t total = allocations_from_block + allocations_from_global + allocations_from_freelist;
+            return total > 0 ? (100.0 * allocations_from_global / total) : 0.0;
+        }
+
+        double reuse_percentage() const {
+            std::uint64_t total = allocations_from_block + allocations_from_global + allocations_from_freelist;
+            return total > 0 ? (100.0 * allocations_from_freelist / total) : 0.0;
+        }
+    };
+
+    ThreadAllocationStats get_thread_allocation_stats() const;
+
 private:
     // Maximum number of nodes this tree can hold
     std::size_t max_nodes_;
