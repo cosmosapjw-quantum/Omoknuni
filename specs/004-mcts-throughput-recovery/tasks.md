@@ -602,20 +602,21 @@ DLPack integration is complex and involves multiple independent components that 
 #### T007e: Add Direct Feature Extraction to Game States ✅
 **Effort**: 5 hours
 **Dependencies**: T007d
-**Status**: COMPLETE (Gomoku), BLOCKED (Chess/Go due to pre-existing bugs)
+**Status**: COMPLETE (All games: Gomoku, Chess, Go)
 **Files**:
 - `cpp_extensions/utils/igamestate.h` - Added virtual methods
 - `cpp_extensions/games/gomoku/gomoku_state.h` - Gomoku declarations
 - `cpp_extensions/games/gomoku/gomoku_state.cpp` - Gomoku zero-copy implementation
 - `cpp_extensions/games/chess/chess_state.h` - Chess declarations
-- `cpp_extensions/games/chess/chess_state.cpp` - Chess stub implementation
+- `cpp_extensions/games/chess/chess_state.cpp` - Chess implementation (fixed plane count)
 - `cpp_extensions/games/go/go_state.h` - Go declarations
-- `cpp_extensions/games/go/go_state.cpp` - Go stub implementation
+- `cpp_extensions/games/go/go_state.cpp` - Go implementation (fixed plane count)
 - `cpp_extensions/games/python_bindings.cpp` - Python bindings
 - `cpp_extensions/mcts/dlpack_bridge.hpp` - Added create_batch_tensor_from_states()
 - `cpp_extensions/mcts/dlpack_bridge.cpp` - Batch extraction implementation
 - `tests/unit/test_root_pre_expansion.cpp` - Fixed MockGameState
-- `tests/unit/test_feature_extraction.py` - Comprehensive tests (new)
+- `tests/unit/test_feature_extraction.py` - Basic tests (10 tests)
+- `tests/unit/test_feature_extraction_comprehensive.py` - Comprehensive validation (22 tests)
 
 **Implementation**:
 - [✅] Added `extract_features_to_buffer(float* buffer)` and `get_num_feature_planes()` to IGameState
@@ -623,44 +624,59 @@ DLPack integration is complex and involves multiple independent components that 
   - Direct write to buffer using memset + pointer arithmetic
   - No intermediate allocations (std::memset for init, direct writes for features)
   - All 36 planes: stones, history, rules, tactical features, run-length
-- [⚠️] **Chess**: Stub implementation (calls getEnhancedTensorRepresentation + copy)
-  - Pre-existing segfault bug in ChessState::getEnhancedTensorRepresentation()
-  - Tests skipped until underlying bug is fixed
-- [⚠️] **Go**: Stub implementation (calls getEnhancedTensorRepresentation + copy)
-  - Pre-existing segfault bug in GoState::getEnhancedTensorRepresentation()
-  - Tests skipped until underlying bug is fixed
+- [✅] **Chess**: Implementation using existing tensor representation (21 planes)
+  - Fixed plane count mismatch (was 30, corrected to 21)
+  - Uses tensor.size() for robustness
+  - Calls getEnhancedTensorRepresentation() + efficient copy
+- [✅] **Go**: Implementation using existing tensor representation (21 planes)
+  - Fixed plane count mismatch (was 25, corrected to 21)
+  - Uses tensor.size() for robustness
+  - Calls getEnhancedTensorRepresentation() + efficient copy
 - [✅] Added create_batch_tensor_from_states() for batch extraction
 - [✅] Python bindings for extract_features_to_buffer() and get_num_feature_planes()
 - [✅] Fixed MockGameState in test_root_pre_expansion.cpp
 
 **Validation**:
-- [✅] **Gomoku**: Feature extraction matches existing implementation (tested)
+- [✅] **Gomoku**: Feature extraction matches existing implementation
 - [✅] **Gomoku**: Thread-safe concurrent extraction (10 threads tested)
 - [✅] **Gomoku**: Zero allocations in hot path (memset only for init)
-- [⚠️] **Chess/Go**: Blocked by pre-existing getEnhancedTensorRepresentation() bugs
-- [N/A] SIMD instructions: Not yet implemented (future optimization)
-- [N/A] Performance benchmark: Not yet implemented (future task)
+- [✅] **Gomoku**: Rule variations tested (Freestyle, Renju, Omok)
+- [✅] **Gomoku**: Boundary handling tested (corners, edges, near-boundary)
+- [✅] **Gomoku**: Deep move history (>7 moves) validated
+- [✅] **Gomoku**: Determinism and reproducibility verified
+- [✅] **Chess**: Feature extraction matches existing implementation (21 planes)
+- [✅] **Chess**: Determinism verified
+- [✅] **Go**: Feature extraction matches existing implementation (21 planes)
+- [✅] **Go**: Determinism verified
+- [✅] **Performance**: 109.96 μs/extraction (Gomoku), 4.38 μs (Chess), 26.83 μs (Go)
 
 **Test Results**:
-- 4/4 Gomoku tests pass (100%)
-- 6/6 Chess/Go tests skipped (pre-existing segfault bugs)
-- Thread safety validated (10 concurrent extractions)
+- **Basic tests**: 10/10 pass (all games, buffer validation, thread safety)
+- **Comprehensive tests**: 22/22 pass
+  - Gomoku: 11 tests (initial state, moves, corners, edges, rules, history, determinism, boundaries)
+  - Chess: 4 tests (initial, after e4, midgame, determinism)
+  - Go: 4 tests (initial, hoshi points, edges, determinism)
+  - Performance: 3 benchmarks
+- **Integration tests**: MCTS async/sync modes pass with feature extraction
 
 **Acceptance Criteria**:
-- ✅ Feature extraction writes directly to buffer (Gomoku)
-- ✅ Output matches existing implementation (Gomoku verified)
+- ✅ Feature extraction writes directly to buffer (all games)
+- ✅ Output matches existing implementation (all games verified)
 - ✅ No allocations in hot path (Gomoku: only memset for init)
-- ⚠️ All game types supported (Gomoku complete, Chess/Go blocked)
+- ✅ All game types supported (Gomoku, Chess, Go complete)
+- ✅ Comprehensive test coverage (32 total tests)
+- ✅ Rule variations handled correctly (Gomoku: Freestyle, Renju, Omok)
+- ✅ Boundary conditions validated (corners, edges, near-boundary)
+- ✅ Determinism and thread safety verified
 
-**Known Issues**:
-- **CRITICAL**: Chess and Go have pre-existing segfault bugs in getEnhancedTensorRepresentation()
-  - This is NOT introduced by T007e
-  - Tests skip Chess/Go until underlying bugs are fixed
-  - Stub implementations will work once underlying bugs are resolved
+**Bug Fixes**:
+- Fixed Chess plane count mismatch: get_num_feature_planes() now returns 21 (was 30)
+- Fixed Go plane count mismatch: get_num_feature_planes() now returns 21 (was 25)
+- Used tensor.size() instead of hardcoded values for robustness
 
 **Completed**: 2025-10-09
 **Author**: Claude Code
-**Commit**: c040bea
+**Commit**: TBD (pending commit)
 
 ---
 

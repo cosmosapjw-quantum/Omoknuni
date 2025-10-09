@@ -2133,7 +2133,9 @@ std::vector<std::vector<uint64_t>> ChessState::getBitboards() const {
 // ============================================================================
 
 int ChessState::get_num_feature_planes() const {
-    return 30;  // Enhanced representation: 30 planes for Chess
+    // Chess enhanced tensor has 21 planes (verified empirically)
+    // This matches the actual implementation in getEnhancedTensorRepresentation()
+    return 21;
 }
 
 void ChessState::extract_features_to_buffer(float* buffer) const {
@@ -2143,7 +2145,7 @@ void ChessState::extract_features_to_buffer(float* buffer) const {
     // Future optimization (T007e follow-up): Direct write like Gomoku implementation
     auto tensor = getEnhancedTensorRepresentation();
 
-    const int num_planes = 30;
+    const int num_planes = static_cast<int>(tensor.size());  // Use actual tensor size
     const int height = 8;
     const int width = 8;
     const int plane_size = height * width;

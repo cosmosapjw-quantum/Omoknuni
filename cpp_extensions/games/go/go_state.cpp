@@ -1775,7 +1775,9 @@ std::vector<std::vector<uint64_t>> GoState::getBitboards() const {
 // ============================================================================
 
 int GoState::get_num_feature_planes() const {
-    return 25;  // Enhanced representation: 25 planes for Go
+    // Go enhanced tensor has 21 planes (verified empirically)
+    // This matches the actual implementation in getEnhancedTensorRepresentation()
+    return 21;
 }
 
 void GoState::extract_features_to_buffer(float* buffer) const {
@@ -1785,7 +1787,7 @@ void GoState::extract_features_to_buffer(float* buffer) const {
     // Future optimization (T007e follow-up): Direct write like Gomoku implementation
     auto tensor = getEnhancedTensorRepresentation();
 
-    const int num_planes = 25;
+    const int num_planes = static_cast<int>(tensor.size());  // Use actual tensor size
     const int height = board_size_;  // 19 for standard Go
     const int width = board_size_;
     const int plane_size = height * width;

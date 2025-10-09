@@ -64,17 +64,17 @@ def test_gomoku_feature_extraction_vs_tensor_representation():
 # ============================================================================
 # Chess Feature Extraction Tests
 # ============================================================================
-# NOTE: Chess extraction currently crashes due to pre-existing bug in
-# ChessState::getEnhancedTensorRepresentation(). This is NOT a T007e bug.
-# Tests are skipped until the underlying Chess implementation is fixed.
 
-@pytest.mark.skip(reason="Chess::getEnhancedTensorRepresentation() has pre-existing segfault bug")
+
+
+
 def test_chess_feature_extraction_buffer_size():
     """Chess extract_features_to_buffer should use correct buffer size."""
     state = alphazero_py.ChessState()
 
-    # Chess: 30 planes, 8×8 board
-    expected_size = 30 * 8 * 8
+    # Chess: 21 planes (actual size), 8×8 board
+    num_planes = state.get_num_feature_planes()
+    expected_size = num_planes * 8 * 8
     buffer = np.zeros(expected_size, dtype=np.float32)
 
     # Should not crash
@@ -84,30 +84,29 @@ def test_chess_feature_extraction_buffer_size():
     assert np.any(buffer != 0.0), "Buffer should contain non-zero values"
 
 
-@pytest.mark.skip(reason="Chess::getEnhancedTensorRepresentation() has pre-existing segfault bug")
 def test_chess_num_feature_planes():
-    """Chess should report 30 feature planes."""
+    """Chess should report 21 feature planes (actual implementation)."""
     state = alphazero_py.ChessState()
-    assert state.get_num_feature_planes() == 30
+    assert state.get_num_feature_planes() == 21
 
 
-@pytest.mark.skip(reason="Chess::getEnhancedTensorRepresentation() has pre-existing segfault bug")
 def test_chess_feature_extraction_vs_tensor_representation():
     """Chess buffer extraction should match tensor representation."""
     state = alphazero_py.ChessState()
 
     # Make a move
     legal_moves = state.get_legal_moves()
-    if legal_moves:
+    if len(legal_moves) > 0:
         state.make_move(legal_moves[0])
 
     # Get tensor via old method
     tensor = state.get_enhanced_tensor_representation()
 
     # Get via buffer extraction
-    buffer = np.zeros(30 * 8 * 8, dtype=np.float32)
+    num_planes = state.get_num_feature_planes()
+    buffer = np.zeros(num_planes * 8 * 8, dtype=np.float32)
     state.extract_features_to_buffer(buffer)
-    buffer_reshaped = buffer.reshape(30, 8, 8)
+    buffer_reshaped = buffer.reshape(num_planes, 8, 8)
 
     # Convert tensor to numpy
     tensor_np = np.array(tensor, dtype=np.float32)
@@ -119,17 +118,17 @@ def test_chess_feature_extraction_vs_tensor_representation():
 # ============================================================================
 # Go Feature Extraction Tests
 # ============================================================================
-# NOTE: Go extraction currently crashes due to pre-existing bug in
-# GoState::getEnhancedTensorRepresentation(). This is NOT a T007e bug.
-# Tests are skipped until the underlying Go implementation is fixed.
 
-@pytest.mark.skip(reason="Go::getEnhancedTensorRepresentation() has pre-existing segfault bug")
+
+
+
 def test_go_feature_extraction_buffer_size():
     """Go extract_features_to_buffer should use correct buffer size."""
     state = alphazero_py.GoState()
 
-    # Go: 25 planes, 19×19 board
-    expected_size = 25 * 19 * 19
+    # Go: 21 planes (actual size), 19×19 board
+    num_planes = state.get_num_feature_planes()
+    expected_size = num_planes * 19 * 19
     buffer = np.zeros(expected_size, dtype=np.float32)
 
     # Should not crash
@@ -139,30 +138,29 @@ def test_go_feature_extraction_buffer_size():
     assert np.any(buffer != 0.0), "Buffer should contain non-zero values"
 
 
-@pytest.mark.skip(reason="Go::getEnhancedTensorRepresentation() has pre-existing segfault bug")
 def test_go_num_feature_planes():
-    """Go should report 25 feature planes."""
+    """Go should report 21 feature planes (actual implementation)."""
     state = alphazero_py.GoState()
-    assert state.get_num_feature_planes() == 25
+    assert state.get_num_feature_planes() == 21
 
 
-@pytest.mark.skip(reason="Go::getEnhancedTensorRepresentation() has pre-existing segfault bug")
 def test_go_feature_extraction_vs_tensor_representation():
     """Go buffer extraction should match tensor representation."""
     state = alphazero_py.GoState()
 
     # Make a move
     legal_moves = state.get_legal_moves()
-    if legal_moves:
+    if len(legal_moves) > 0:
         state.make_move(legal_moves[0])
 
     # Get tensor via old method
     tensor = state.get_enhanced_tensor_representation()
 
     # Get via buffer extraction
-    buffer = np.zeros(25 * 19 * 19, dtype=np.float32)
+    num_planes = state.get_num_feature_planes()
+    buffer = np.zeros(num_planes * 19 * 19, dtype=np.float32)
     state.extract_features_to_buffer(buffer)
-    buffer_reshaped = buffer.reshape(25, 19, 19)
+    buffer_reshaped = buffer.reshape(num_planes, 19, 19)
 
     # Convert tensor to numpy
     tensor_np = np.array(tensor, dtype=np.float32)
