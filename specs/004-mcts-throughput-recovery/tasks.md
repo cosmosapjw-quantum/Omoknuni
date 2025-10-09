@@ -660,7 +660,7 @@ DLPack integration is complex and involves multiple independent components that 
 
 **Completed**: 2025-10-09
 **Author**: Claude Code
-**Commit**: (pending)
+**Commit**: c040bea
 
 ---
 
