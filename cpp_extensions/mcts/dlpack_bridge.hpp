@@ -261,12 +261,34 @@ private:
 bool is_cuda_available();
 
 // ============================================================================
-// DLPack Tensor Capsule API (T007c)
+// DLPack Tensor Capsule API (T007c, T007d)
 // ============================================================================
 
 // Forward declare DLPack types
 struct DLTensor;
 struct DLManagedTensor;
+
+/**
+ * @brief Game type enumeration (T007d)
+ *
+ * Defines supported game types with their feature plane counts and board dimensions.
+ */
+enum class GameType {
+    GOMOKU,  // 36 planes, 15×15 board
+    CHESS,   // 30 planes, 8×8 board
+    GO       // 25 planes, 19×19 board
+};
+
+/**
+ * @brief Get number of feature planes for a game type
+ */
+int get_num_planes(GameType game_type);
+
+/**
+ * @brief Get board dimensions for a game type
+ * @return Pair of (height, width)
+ */
+std::pair<int, int> get_board_size(GameType game_type);
 
 /**
  * @brief Context for DLPack deleter callback
@@ -317,6 +339,33 @@ void dlpack_deleter(DLManagedTensor* self);
 DLManagedTensor* create_dlpack_tensor(
     std::shared_ptr<PinnedBuffer> buffer,
     const TensorShape& shape,
+    bool use_cuda = false
+);
+
+/**
+ * @brief Create batch tensor from game states (T007d)
+ *
+ * Allocates pinned memory buffer and creates DLPack tensor for a batch of game states.
+ * Features are extracted directly into the buffer for zero-copy transfer to PyTorch.
+ *
+ * NOTE: This is a simplified stub implementation for T007d. Full feature extraction
+ * will be implemented in T007e when IGameState::extract_features_to_buffer() is added.
+ *
+ * @param batch_size Number of states in batch
+ * @param game_type Game type (GOMOKU/CHESS/GO)
+ * @param use_cuda Use CUDA pinned memory for faster GPU transfers
+ * @return DLManagedTensor* ready to wrap in PyCapsule
+ * @throws std::bad_alloc if buffer allocation fails
+ * @throws std::invalid_argument if batch_size <= 0
+ *
+ * Example:
+ *   auto* tensor = create_batch_tensor(64, GameType::GOMOKU, true);
+ *   PyObject* capsule = wrap_dlpack_capsule(tensor);
+ *   // Pass capsule to torch.from_dlpack()
+ */
+DLManagedTensor* create_batch_tensor(
+    int batch_size,
+    GameType game_type,
     bool use_cuda = false
 );
 

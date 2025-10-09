@@ -695,6 +695,67 @@ PYBIND11_MODULE(mcts_py, m) {
           "    >>> tensor = torch.from_dlpack(capsule)\n"
           "    >>> tensor.shape\n"
           "    torch.Size([1, 3, 4, 4])");
+
+    // GameType enum (T007d)
+    py::enum_<GameType>(m, "GameType",
+             "Game type enumeration\n\n"
+             "Defines supported game types with their feature dimensions.")
+        .value("GOMOKU", GameType::GOMOKU, "Gomoku (36 planes, 15×15 board)")
+        .value("CHESS", GameType::CHESS, "Chess (30 planes, 8×8 board)")
+        .value("GO", GameType::GO, "Go (25 planes, 19×19 board)")
+        .export_values();
+
+    m.def("get_num_planes",
+          &get_num_planes,
+          py::arg("game_type"),
+          "Get number of feature planes for a game type\n\n"
+          "Args:\n"
+          "    game_type: GameType enum value\n\n"
+          "Returns:\n"
+          "    int: Number of feature planes");
+
+    m.def("get_board_size",
+          [](GameType game_type) {
+              auto [height, width] = get_board_size(game_type);
+              return py::make_tuple(height, width);
+          },
+          py::arg("game_type"),
+          "Get board dimensions for a game type\n\n"
+          "Args:\n"
+          "    game_type: GameType enum value\n\n"
+          "Returns:\n"
+          "    tuple[int, int]: (height, width)");
+
+    m.def("create_batch_tensor",
+          [](int batch_size, GameType game_type, bool use_cuda) -> py::object {
+              // Create DLManagedTensor
+              DLManagedTensor* managed_tensor = create_batch_tensor(batch_size, game_type, use_cuda);
+
+              // Wrap in PyCapsule
+              PyObject* capsule = wrap_dlpack_capsule(managed_tensor);
+              if (!capsule) {
+                  throw std::runtime_error("Failed to create DLPack capsule");
+              }
+
+              // Return as py::object (takes ownership)
+              return py::reinterpret_steal<py::object>(capsule);
+          },
+          py::arg("batch_size"), py::arg("game_type"), py::arg("use_cuda") = false,
+          "Create batch tensor for game states (T007d)\n\n"
+          "Allocates pinned memory buffer and creates DLPack tensor for a batch.\n"
+          "Features are initialized to zeros (stub implementation - real feature\n"
+          "extraction will be added in T007e).\n\n"
+          "Args:\n"
+          "    batch_size: Number of states in batch\n"
+          "    game_type: GameType (GOMOKU/CHESS/GO)\n"
+          "    use_cuda: Use CUDA pinned memory for faster GPU transfers\n\n"
+          "Returns:\n"
+          "    PyCapsule: DLPack capsule for torch.from_dlpack()\n\n"
+          "Example:\n"
+          "    >>> capsule = mcts_py.create_batch_tensor(64, mcts_py.GameType.GOMOKU)\n"
+          "    >>> tensor = torch.from_dlpack(capsule)\n"
+          "    >>> tensor.shape\n"
+          "    torch.Size([64, 36, 15, 15])");
 }
 
 } // namespace python

@@ -328,6 +328,67 @@ DLManagedTensor* create_dlpack_tensor(
     return managed_tensor;
 }
 
+// ============================================================================
+// Batch Tensor Creation API (T007d)
+// ============================================================================
+
+// Helper functions for game type metadata
+int get_num_planes(GameType game_type) {
+    switch (game_type) {
+        case GameType::GOMOKU: return 36;  // Enhanced Gomoku features
+        case GameType::CHESS:  return 30;  // Complete Chess state
+        case GameType::GO:     return 25;  // Enhanced Go features
+        default:
+            throw std::invalid_argument("Unknown game type");
+    }
+}
+
+std::pair<int, int> get_board_size(GameType game_type) {
+    switch (game_type) {
+        case GameType::GOMOKU: return {15, 15};  // 15×15 board
+        case GameType::CHESS:  return {8, 8};    // 8×8 board
+        case GameType::GO:     return {19, 19};  // 19×19 board
+        default:
+            throw std::invalid_argument("Unknown game type");
+    }
+}
+
+// Create batch tensor from game states
+DLManagedTensor* create_batch_tensor(
+    int batch_size,
+    GameType game_type,
+    bool use_cuda) {
+
+    if (batch_size <= 0) {
+        throw std::invalid_argument("create_batch_tensor: batch_size must be > 0");
+    }
+
+    // Get game-specific dimensions
+    int num_planes = get_num_planes(game_type);
+    auto [height, width] = get_board_size(game_type);
+
+    // Calculate buffer size: batch × planes × height × width × sizeof(float)
+    size_t num_elements = static_cast<size_t>(batch_size) * num_planes * height * width;
+    size_t buffer_size = num_elements * sizeof(float);
+
+    // Acquire buffer from pool
+    auto buffer = BufferPool::instance().acquire(buffer_size, use_cuda);
+
+    // Initialize buffer to zeros for now (T007e will fill with actual features)
+    // NOTE: This is a stub implementation. Real feature extraction happens in T007e.
+    std::memset(buffer->data(), 0, buffer_size);
+
+    // Create tensor shape
+    TensorShape shape;
+    shape.batch_size = batch_size;
+    shape.num_planes = num_planes;
+    shape.height = height;
+    shape.width = width;
+
+    // Create DLPack tensor
+    return create_dlpack_tensor(buffer, shape, use_cuda);
+}
+
 // Note: wrap_dlpack_capsule() is implemented in python_bindings.cpp
 // to avoid Python.h dependency in core library
 

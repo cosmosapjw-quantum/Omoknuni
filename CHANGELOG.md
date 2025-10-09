@@ -6,6 +6,34 @@ All notable changes to this project will be documented in this file.
 
 ### Spec 004: MCTS Throughput Recovery - Phase 1 & 2 In Progress (2025-10-09)
 
+#### T007d: Batch Tensor Creation (2025-10-09)
+- **Added**: Batch tensor creation API with game-specific dimensions
+- **Files**:
+  - `cpp_extensions/mcts/dlpack_bridge.hpp` - GameType enum, helper functions
+  - `cpp_extensions/mcts/dlpack_bridge.cpp` - Batch tensor implementation
+  - `cpp_extensions/mcts/python_bindings.cpp` - Python API bindings
+  - `tests/unit/test_batch_tensor.py` - 29 comprehensive tests (new)
+- **Key Components**:
+  - `GameType` enum: GOMOKU (36 planes, 15×15), CHESS (30 planes, 8×8), GO (25 planes, 19×19)
+  - `get_num_planes()`: Returns plane count for game type
+  - `get_board_size()`: Returns (height, width) for game type
+  - `create_batch_tensor()`: Allocates batch tensor with correct dimensions
+- **Key Features**:
+  - Automatic dimension calculation: batch × planes × height × width × sizeof(float)
+  - Buffer pool integration: Reuses memory from pooled buffers
+  - Row-major layout: PyTorch-compatible contiguous memory
+  - Zero-copy conversion: Via DLPack capsule API (T007c)
+  - Stub implementation: Zero-initialized (feature extraction in T007e)
+- **Validation**: 29/29 tests pass
+  - GameType enum and helper functions
+  - Batch tensor creation for all game types (GOMOKU, CHESS, GO)
+  - Correct tensor shapes and data types
+  - PyTorch torch.from_dlpack() conversion
+  - Buffer pool integration and memory cleanup
+  - Error handling (invalid batch_size)
+  - Various batch sizes (1, 4, 8, 16, 32, 64, 128)
+- **Next Steps**: T007e will add real feature extraction (currently zeros)
+
 #### T007c: DLPack Tensor Capsule Structure (2025-10-09)
 - **Added**: DLPack tensor capsule API for zero-copy tensor exchange with PyTorch
 - **Files**:
