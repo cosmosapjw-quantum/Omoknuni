@@ -185,10 +185,14 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
 
 int ContinuousSimulationRunner::process_completed_results(AsyncInferenceQueue& queue) {
     ScopedMetric metric(InstrumentationMetric::QueueProcessResults);
-    int processed = 0;
 
-    // Check each pending slot for completed results
-    // This avoids the race where consume_ready_results() steals other threads' results
+    // T014: Batched Result Processing
+    // Phase 1: Collect all ready results (no tree modifications yet)
+    // This reduces lock contention by batching atomic operations
+    thread_local std::vector<ReadyResult> ready_results;
+    ready_results.clear();
+    ready_results.reserve(32);  // Typical batch size
+
     for (size_t i = 0; i < PENDING_BUFFER_CAPACITY; ++i) {
         PendingSlot& slot = pending_buffer_[i];
 
@@ -203,34 +207,85 @@ int ContinuousSimulationRunner::process_completed_results(AsyncInferenceQueue& q
             continue;  // Result not ready yet
         }
 
-        auto& result = result_opt.value();
+        // Collect result without modifying tree yet (batching optimization)
+        ReadyResult ready;
+        ready.pending = std::move(slot.data);
+        ready.result = std::move(result_opt.value());
+        ready.slot_index = i;
+        ready_results.push_back(std::move(ready));
 
-        // Extract pending data
-        PendingExpansion pending = std::move(slot.data);
-
-        // Mark slot as free
+        // Mark slot as free early (safe since we've moved data out)
         slot.occupied.store(false, std::memory_order_release);
         pending_count_.fetch_sub(1, std::memory_order_relaxed);
-
-        if (pending.state && expand_node_with_result(
-                pending.leaf_node,
-                *pending.state,
-                result.policy,
-                result.value)) {
-            std::vector<NodeIndex> path = pending.path;
-            std::reverse(path.begin(), path.end());
-            backup_value(path, result.value);
-        } else {
-            std::vector<NodeIndex> path = pending.path;
-            std::reverse(path.begin(), path.end());
-            backup_value(path, result.value);
-        }
-
-        tree_.clear_expanding_flag(pending.leaf_node);
-        processed++;
     }
 
-    return processed;
+    // No results ready - early return
+    if (ready_results.empty()) {
+        return 0;
+    }
+
+    // Phase 2: Batch node expansions
+    // Expand all nodes before backup to ensure consistent tree state
+    for (auto& ready : ready_results) {
+        if (ready.pending.state) {
+            ready.expansion_succeeded = expand_node_with_result(
+                ready.pending.leaf_node,
+                *ready.pending.state,
+                ready.result.policy,
+                ready.result.value
+            );
+        } else {
+            ready.expansion_succeeded = false;
+        }
+    }
+
+    // Phase 3: Batch backups with grouped atomic operations
+    // Key optimization: paths overlap heavily in MCTS, so we can batch
+    // updates to the same nodes and reduce atomic contention significantly
+    thread_local std::unordered_map<NodeIndex, BatchedUpdate> node_updates;
+    node_updates.clear();
+    node_updates.reserve(128);  // Typical tree depth × batch size
+
+    for (auto& ready : ready_results) {
+        // Reverse path for backup (leaf-to-root becomes root-to-leaf)
+        std::vector<NodeIndex> path = ready.pending.path;
+        std::reverse(path.begin(), path.end());
+
+        // Accumulate updates for each node in the path
+        // This is the key optimization: instead of N separate atomic operations
+        // per path, we do 1 atomic operation per unique node across all paths
+        float current_value = ready.result.value;
+
+        for (size_t i = 0; i < path.size(); ++i) {
+            NodeIndex node = path[i];
+
+            // Apply sign flipping: each level up the tree negates the value
+            float value_for_node = (i % 2 == 0) ? current_value : -current_value;
+
+            // Accumulate updates (will be applied atomically in Phase 4)
+            auto& update = node_updates[node];
+            update.visit_increment += 1.0f;
+            update.value_increment += value_for_node;
+        }
+    }
+
+    // Phase 4: Apply batched atomic updates
+    // Single atomic operation per unique node instead of per path occurrence
+    // For 32 results with avg path length 10 and 50% overlap:
+    //   Before: 32 × 10 × 2 = 640 atomic operations
+    //   After:  ~160 unique nodes × 2 = 320 atomic operations
+    //   Result: 2× reduction + less contention
+    for (const auto& [node_index, update] : node_updates) {
+        backup_.update_node_atomic(node_index, update.value_increment, update.visit_increment);
+    }
+
+    // Phase 5: Batch clear expanding flags
+    // Clear all flags after backups complete to ensure consistency
+    for (auto& ready : ready_results) {
+        tree_.clear_expanding_flag(ready.pending.leaf_node);
+    }
+
+    return static_cast<int>(ready_results.size());
 }
 
 bool ContinuousSimulationRunner::expand_node_with_result(

@@ -26,6 +26,7 @@
 #include "async_inference_queue.hpp"
 #include <array>
 #include <atomic>
+#include <unordered_map>
 
 namespace mcts {
 
@@ -47,6 +48,49 @@ struct PendingExpansion {
     PendingExpansion& operator=(PendingExpansion&&) = default;
     PendingExpansion(const PendingExpansion&) = delete;
     PendingExpansion& operator=(const PendingExpansion&) = delete;
+};
+
+/**
+ * @brief Batched update accumulator for reducing atomic contention (T014)
+ *
+ * Accumulates multiple visit/value updates for a single node before
+ * applying them atomically. This is the key optimization in batched
+ * result processing: instead of N atomic operations for N path
+ * traversals that touch the same node, we do 1 atomic operation
+ * with the accumulated increment.
+ *
+ * Performance Impact:
+ * - Before: 32 results × 10 nodes × 2 atomics = 640 atomic operations
+ * - After: ~160 unique nodes × 2 atomics = 320 atomic operations
+ * - Result: 2× reduction + reduced contention
+ */
+struct BatchedUpdate {
+    float visit_increment = 0.0f;  // Accumulated visit count increments
+    float value_increment = 0.0f;  // Accumulated value increments
+
+    BatchedUpdate() = default;
+};
+
+/**
+ * @brief Ready result container for batched processing (T014)
+ *
+ * Holds a completed inference result along with its associated
+ * pending expansion data. Used to collect all ready results before
+ * processing them in batch to reduce lock contention and improve
+ * cache locality.
+ */
+struct ReadyResult {
+    PendingExpansion pending;           // Expansion data (leaf, path, state)
+    InferenceResult result;             // Neural network inference result
+    size_t slot_index;                  // Pending buffer slot index
+    bool expansion_succeeded = false;   // Whether node expansion succeeded
+
+    // Move-only type (owns expansion data)
+    ReadyResult() = default;
+    ReadyResult(ReadyResult&&) = default;
+    ReadyResult& operator=(ReadyResult&&) = default;
+    ReadyResult(const ReadyResult&) = delete;
+    ReadyResult& operator=(const ReadyResult&) = delete;
 };
 
 /**
