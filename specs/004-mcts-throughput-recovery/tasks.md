@@ -923,7 +923,7 @@ Python bridge integration involves distinct phases: design, implementation, opti
 
 **Completed**: 2025-10-09
 **Author**: Claude Code
-**Commit**: TBD (pending commit)
+**Commit**: 8e1339a
 
 ---
 
