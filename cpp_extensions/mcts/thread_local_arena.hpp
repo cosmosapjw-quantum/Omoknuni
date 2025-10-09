@@ -70,8 +70,9 @@ public:
     /**
      * Deallocate memory (adds to free list)
      *
-     * Note: In this phase (T009b), deallocation is a no-op.
-     * Free list management will be added in T009d.
+     * Adds the freed block to the appropriate size-class free list.
+     * Uses intrusive linked list (stores next pointer in freed memory).
+     * LIFO ordering for cache locality.
      *
      * @param ptr Pointer returned by allocate()
      * @param size Original allocation size
@@ -118,7 +119,19 @@ private:
         uint8_t* data() { return reinterpret_cast<uint8_t*>(this) + sizeof(Chunk); }
     };
 
+    /**
+     * Free list node (intrusive linked list)
+     *
+     * When a block is freed, we store the next pointer in the first 8 bytes.
+     * This allows zero-overhead free lists.
+     */
+    struct FreeNode {
+        FreeNode* next;
+    };
+
     static constexpr size_t CACHE_LINE_SIZE = 64;  // Cache line alignment
+    static constexpr size_t NUM_SIZE_CLASSES = 4;
+    static constexpr size_t SIZE_CLASSES[NUM_SIZE_CLASSES] = {64, 128, 192, 256};
 
     Chunk* current_chunk_;     // Current chunk for allocations
     size_t current_offset_;    // Offset in current chunk
@@ -126,6 +139,8 @@ private:
     size_t max_chunks_;        // Maximum chunks before fallback
     size_t num_chunks_;        // Current number of chunks
     uint32_t next_chunk_id_;   // Next chunk ID for debugging
+
+    FreeNode* freelists_[NUM_SIZE_CLASSES];  // Per-size-class free lists
 
     Statistics stats_;
 
@@ -162,6 +177,30 @@ private:
      * @return Pointer to allocated memory, or nullptr on OOM
      */
     void* allocate_from_new_chunk(size_t size);
+
+    /**
+     * Round size up to next size class
+     *
+     * @param size Size to round up
+     * @return Size class (32, 64, 128, or 256)
+     */
+    size_t round_up_to_size_class(size_t size) const;
+
+    /**
+     * Get size class index for a size
+     *
+     * @param size Size (must be a valid size class)
+     * @return Index into SIZE_CLASSES array (0-3)
+     */
+    size_t size_to_class_index(size_t size) const;
+
+    /**
+     * Pop a node from the free list for a given size
+     *
+     * @param size Size class to pop from
+     * @return Pointer to freed block, or nullptr if list empty
+     */
+    FreeNode* pop_from_freelist(size_t size);
 };
 
 /**

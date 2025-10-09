@@ -362,6 +362,221 @@ TEST_F(ThreadLocalArenaTest, WriteAndReadBack) {
     }
 }
 
+// Test 17: Free list basic functionality
+TEST_F(ThreadLocalArenaTest, FreeListBasic) {
+    // Allocate and free a block (32 bytes rounds to 64)
+    void* ptr1 = arena->allocate(32);
+    ASSERT_NE(ptr1, nullptr);
+
+    auto stats_after_alloc = arena->get_statistics();
+    EXPECT_EQ(stats_after_alloc.allocations_from_bump, 1);
+    EXPECT_EQ(stats_after_alloc.allocations_from_freelist, 0);
+
+    // Deallocate
+    arena->deallocate(ptr1, 32);
+
+    auto stats_after_free = arena->get_statistics();
+    EXPECT_EQ(stats_after_free.deallocations, 1);
+    EXPECT_EQ(stats_after_free.bytes_in_freelists, 64);  // Rounded to 64
+
+    // Allocate again - should reuse from free list
+    void* ptr2 = arena->allocate(32);
+    ASSERT_NE(ptr2, nullptr);
+    EXPECT_EQ(ptr2, ptr1);  // Same pointer (LIFO)
+
+    auto stats_after_reuse = arena->get_statistics();
+    EXPECT_EQ(stats_after_reuse.allocations_from_freelist, 1);
+    EXPECT_EQ(stats_after_reuse.bytes_in_freelists, 0);
+}
+
+// Test 18: Free list LIFO ordering
+TEST_F(ThreadLocalArenaTest, FreeListLIFO) {
+    // Allocate multiple blocks
+    void* ptr1 = arena->allocate(64);
+    void* ptr2 = arena->allocate(64);
+    void* ptr3 = arena->allocate(64);
+
+    // Free them in order 1, 2, 3
+    arena->deallocate(ptr1, 64);
+    arena->deallocate(ptr2, 64);
+    arena->deallocate(ptr3, 64);
+
+    // Allocate again - should get them back in reverse order (LIFO): 3, 2, 1
+    void* reused1 = arena->allocate(64);
+    EXPECT_EQ(reused1, ptr3);  // Most recently freed
+
+    void* reused2 = arena->allocate(64);
+    EXPECT_EQ(reused2, ptr2);
+
+    void* reused3 = arena->allocate(64);
+    EXPECT_EQ(reused3, ptr1);  // Least recently freed
+}
+
+// Test 19: Free list size classes
+TEST_F(ThreadLocalArenaTest, FreeListSizeClasses) {
+    // Allocate different sizes (will round up to 64, 64, 128, 256)
+    void* ptr32 = arena->allocate(32);   // Rounds to 64
+    void* ptr64 = arena->allocate(64);   // Stays 64
+    void* ptr128 = arena->allocate(128); // Stays 128
+    void* ptr256 = arena->allocate(256); // Stays 256
+
+    // Free them all
+    arena->deallocate(ptr32, 32);
+    arena->deallocate(ptr64, 64);
+    arena->deallocate(ptr128, 128);
+    arena->deallocate(ptr256, 256);
+
+    auto stats = arena->get_statistics();
+    EXPECT_EQ(stats.bytes_in_freelists, 64 + 64 + 128 + 256);  // All rounded to size classes
+
+    // Allocate 32 bytes - should get ptr64 or ptr32 back (both are 64-byte class)
+    void* reused32 = arena->allocate(32);
+    // Either ptr64 or ptr32 (both are in 64-byte class)
+    EXPECT_TRUE(reused32 == ptr32 || reused32 == ptr64);
+
+    // Allocate 64 bytes - should get the other one
+    void* reused64 = arena->allocate(64);
+    EXPECT_TRUE(reused64 == ptr32 || reused64 == ptr64);
+    EXPECT_NE(reused64, reused32);  // Different from the first one
+
+    // Allocate 128 bytes - should get ptr128 back
+    void* reused128 = arena->allocate(128);
+    EXPECT_EQ(reused128, ptr128);
+
+    // Allocate 256 bytes - should get ptr256 back
+    void* reused256 = arena->allocate(256);
+    EXPECT_EQ(reused256, ptr256);
+}
+
+// Test 20: Free list with size class rounding
+TEST_F(ThreadLocalArenaTest, FreeListSizeClassRounding) {
+    // Allocate 27 bytes (typical MCTS node size)
+    // Should round up to 64 bytes
+    void* ptr1 = arena->allocate(27);
+    ASSERT_NE(ptr1, nullptr);
+
+    arena->deallocate(ptr1, 27);
+
+    // Allocate 30 bytes - should also round to 64 and reuse ptr1
+    void* ptr2 = arena->allocate(30);
+    EXPECT_EQ(ptr2, ptr1);
+
+    auto stats = arena->get_statistics();
+    EXPECT_EQ(stats.allocations_from_freelist, 1);
+}
+
+// Test 21: Free list with reset
+TEST_F(ThreadLocalArenaTest, FreeListWithReset) {
+    // Allocate and free some blocks
+    void* ptr1 = arena->allocate(64);
+    void* ptr2 = arena->allocate(64);
+
+    arena->deallocate(ptr1, 64);
+    arena->deallocate(ptr2, 64);
+
+    auto stats_before = arena->get_statistics();
+    EXPECT_EQ(stats_before.bytes_in_freelists, 128);
+
+    // Reset arena
+    arena->reset();
+
+    auto stats_after = arena->get_statistics();
+    EXPECT_EQ(stats_after.bytes_in_freelists, 0);
+    EXPECT_EQ(stats_after.deallocations, 0);
+
+    // Allocate again - should NOT reuse (free lists cleared)
+    void* ptr3 = arena->allocate(64);
+    ASSERT_NE(ptr3, nullptr);
+
+    auto stats_final = arena->get_statistics();
+    EXPECT_EQ(stats_final.allocations_from_freelist, 0);
+    EXPECT_EQ(stats_final.allocations_from_bump, 1);
+}
+
+// Test 22: Free list reuse performance
+TEST_F(ThreadLocalArenaTest, FreeListReusePerformance) {
+    const int iterations = 1000;
+    std::vector<void*> ptrs;
+
+    // Allocate blocks
+    for (int i = 0; i < iterations; ++i) {
+        void* ptr = arena->allocate(64);
+        ASSERT_NE(ptr, nullptr);
+        ptrs.push_back(ptr);
+    }
+
+    // Free all blocks
+    for (void* ptr : ptrs) {
+        arena->deallocate(ptr, 64);
+    }
+
+    auto stats_after_free = arena->get_statistics();
+    EXPECT_EQ(stats_after_free.deallocations, iterations);
+
+    // Allocate again - should all come from free list
+    for (int i = 0; i < iterations; ++i) {
+        void* ptr = arena->allocate(64);
+        ASSERT_NE(ptr, nullptr);
+    }
+
+    auto stats_after_reuse = arena->get_statistics();
+    EXPECT_EQ(stats_after_reuse.allocations_from_freelist, iterations);
+    EXPECT_EQ(stats_after_reuse.bytes_in_freelists, 0);
+}
+
+// Test 23: Large allocations (>256) don't use free lists
+TEST_F(ThreadLocalArenaTest, LargeAllocationsNoFreeList) {
+    // Allocate 512 bytes (larger than max size class of 256)
+    void* ptr1 = arena->allocate(512);
+    ASSERT_NE(ptr1, nullptr);
+
+    arena->deallocate(ptr1, 512);
+
+    auto stats_after_free = arena->get_statistics();
+    // Deallocation is tracked, but not added to free list
+    EXPECT_EQ(stats_after_free.deallocations, 1);
+    // bytes_in_freelists should be 0 for sizes > 256
+    EXPECT_EQ(stats_after_free.bytes_in_freelists, 0);
+
+    // Allocate again - should NOT reuse (too large for free list)
+    void* ptr2 = arena->allocate(512);
+    ASSERT_NE(ptr2, nullptr);
+
+    auto stats_after_alloc = arena->get_statistics();
+    EXPECT_EQ(stats_after_alloc.allocations_from_freelist, 0);
+    EXPECT_EQ(stats_after_alloc.allocations_from_bump, 2);
+}
+
+// Test 24: Mixed allocate/deallocate pattern
+TEST_F(ThreadLocalArenaTest, MixedAllocateDeallocate) {
+    std::vector<void*> ptrs;
+
+    // Allocate 10 blocks
+    for (int i = 0; i < 10; ++i) {
+        void* ptr = arena->allocate(64);
+        ASSERT_NE(ptr, nullptr);
+        ptrs.push_back(ptr);
+    }
+
+    // Free every other block
+    for (size_t i = 0; i < ptrs.size(); i += 2) {
+        arena->deallocate(ptrs[i], 64);
+    }
+
+    auto stats_after_partial_free = arena->get_statistics();
+    EXPECT_EQ(stats_after_partial_free.deallocations, 5);
+
+    // Allocate 5 more - should reuse the freed blocks
+    for (int i = 0; i < 5; ++i) {
+        void* ptr = arena->allocate(64);
+        ASSERT_NE(ptr, nullptr);
+    }
+
+    auto stats_final = arena->get_statistics();
+    EXPECT_EQ(stats_final.allocations_from_freelist, 5);
+    EXPECT_EQ(stats_final.bytes_in_freelists, 0);
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

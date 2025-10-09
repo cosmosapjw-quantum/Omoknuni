@@ -22,6 +22,7 @@ ThreadLocalArena::ThreadLocalArena(
       max_chunks_(max_chunks),
       num_chunks_(0),
       next_chunk_id_(0),
+      freelists_{nullptr, nullptr, nullptr, nullptr},
       stats_()
 {
     // Pre-allocate initial chunks
@@ -65,8 +66,16 @@ void* ThreadLocalArena::allocate(size_t size) {
         return nullptr;
     }
 
-    // Round up to alignment boundary (64 bytes)
-    size_t aligned_size = align_up(size, CACHE_LINE_SIZE);
+    // Round up to size class
+    size_t aligned_size = round_up_to_size_class(size);
+
+    // FASTEST PATH: Try free list first (LIFO for cache locality)
+    if (FreeNode* node = pop_from_freelist(aligned_size)) {
+        stats_.allocations_from_freelist++;
+        stats_.bytes_allocated += aligned_size;
+        stats_.bytes_in_freelists -= aligned_size;
+        return node;
+    }
 
     // FAST PATH: Try bump pointer allocation in current chunk
     if (current_chunk_) {
@@ -89,11 +98,25 @@ void* ThreadLocalArena::allocate(size_t size) {
 }
 
 void ThreadLocalArena::deallocate(void* ptr, size_t size) {
-    // No-op for now - free list management will be added in T009d
-    // For now, memory is only reclaimed via reset() or destructor
-    if (ptr) {
-        stats_.deallocations++;
+    if (!ptr) {
+        return;
     }
+
+    // Round up to size class
+    size_t aligned_size = round_up_to_size_class(size);
+
+    stats_.deallocations++;
+
+    // Only add to free list if it's a valid size class (<=256)
+    size_t class_idx = size_to_class_index(aligned_size);
+    if (class_idx < NUM_SIZE_CLASSES) {
+        // Add to free list (LIFO for cache locality)
+        FreeNode* node = static_cast<FreeNode*>(ptr);
+        node->next = freelists_[class_idx];
+        freelists_[class_idx] = node;
+        stats_.bytes_in_freelists += aligned_size;
+    }
+    // Sizes > 256 are not added to free lists (too large)
 }
 
 void ThreadLocalArena::reset() {
@@ -106,6 +129,11 @@ void ThreadLocalArena::reset() {
 
     // Reset to first chunk
     current_offset_ = 0;
+
+    // Clear all free lists
+    for (size_t i = 0; i < NUM_SIZE_CLASSES; ++i) {
+        freelists_[i] = nullptr;
+    }
 
     // Reset statistics (keep chunks_allocated, but reset allocations)
     stats_.allocations_from_bump = 0;
@@ -204,6 +232,47 @@ void* ThreadLocalArena::allocate_from_new_chunk(size_t aligned_size) {
     stats_.bytes_allocated += aligned_size;
 
     return ptr;
+}
+
+size_t ThreadLocalArena::round_up_to_size_class(size_t size) const {
+    // Round up to next size class (64, 128, 192, 256)
+    // All size classes are multiples of 64 to maintain alignment
+    if (size <= 64) return 64;
+    if (size <= 128) return 128;
+    if (size <= 192) return 192;
+    if (size <= 256) return 256;
+
+    // For sizes > 256, round up to 64-byte alignment
+    return align_up(size, CACHE_LINE_SIZE);
+}
+
+size_t ThreadLocalArena::size_to_class_index(size_t size) const {
+    // Convert size class to index (0-3)
+    // Assumes size is already a valid size class
+    if (size == 64) return 0;
+    if (size == 128) return 1;
+    if (size == 192) return 2;
+    if (size == 256) return 3;
+
+    // Size > 256 doesn't use free lists
+    return NUM_SIZE_CLASSES;  // Invalid index
+}
+
+ThreadLocalArena::FreeNode* ThreadLocalArena::pop_from_freelist(size_t size) {
+    size_t class_idx = size_to_class_index(size);
+
+    // Sizes > 256 don't use free lists
+    if (class_idx >= NUM_SIZE_CLASSES) {
+        return nullptr;
+    }
+
+    FreeNode* node = freelists_[class_idx];
+    if (node) {
+        // Pop from LIFO list
+        freelists_[class_idx] = node->next;
+    }
+
+    return node;
 }
 
 // Global thread-local arena accessors
