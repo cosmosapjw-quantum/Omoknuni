@@ -743,17 +743,26 @@ class AlphaZeroMCTS(MCTSEngine):
 
         # MODE 1: Direct GPU Batching (Production - FAST)
         if hasattr(self.inference_fn, 'batch_inference'):
+            # Check if this is DLPackInferenceBridge (needs states, not tensors)
+            from src.core.dlpack_inference_bridge import DLPackInferenceBridge
+            is_dlpack_bridge = isinstance(self.inference_fn, DLPackInferenceBridge)
+
             def fast_batch_callback(game_states: List[IGameState]) -> List[Tuple[List[float], float]]:
                 """Direct GPU batch inference - single call for entire batch."""
                 try:
-                    # Extract position tensors once
-                    positions = []
-                    for state in game_states:
-                        tensor = state.get_enhanced_tensor_representation()
-                        positions.append(np.asarray(tensor, dtype=np.float32))
+                    if is_dlpack_bridge:
+                        # DLPackInferenceBridge: Pass states directly (handles DLPack internally)
+                        results = self.inference_fn.batch_inference(game_states)
+                        return results
+                    else:
+                        # Standard GPUInferenceWorker: Extract tensors first
+                        positions = []
+                        for state in game_states:
+                            tensor = state.get_enhanced_tensor_representation()
+                            positions.append(np.asarray(tensor, dtype=np.float32))
 
-                    # ✅ SINGLE batched GPU call
-                    policies, values = self.inference_fn.batch_inference(positions)
+                        # ✅ SINGLE batched GPU call
+                        policies, values = self.inference_fn.batch_inference(positions)
 
                     # Convert to expected format
                     results = []
