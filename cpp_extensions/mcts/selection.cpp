@@ -109,6 +109,17 @@ void PUCTSelector::compute_puct_vectorized(
         for (; processed + simd_batch_size <= num_children; processed += simd_batch_size) {
             NodeIndex base_index = first_child_index + processed;
 
+            // T013: Prefetch next batch of child data for improved cache performance
+            // Prefetch with temporal locality hint (will be used soon)
+            if (processed + 2 * simd_batch_size <= num_children) {
+                NodeIndex prefetch_index = base_index + simd_batch_size;
+                __builtin_prefetch(&visit_counts[prefetch_index], 0, 3);  // read, high temporal locality
+                __builtin_prefetch(&total_values[prefetch_index], 0, 3);
+                __builtin_prefetch(&prior_probs[prefetch_index], 0, 3);
+                __builtin_prefetch(&virtual_losses[prefetch_index], 0, 3);
+                __builtin_prefetch(&flags[prefetch_index], 0, 3);
+            }
+
             // Load 8 values simultaneously
             __m256 visits = _mm256_loadu_ps(&visit_counts[base_index]);
             __m256 values = _mm256_loadu_ps(&total_values[base_index]);
@@ -160,6 +171,16 @@ void PUCTSelector::compute_puct_vectorized(
     // Handle remaining children with scalar operations
     for (; processed < num_children; ++processed) {
         NodeIndex child_index = first_child_index + processed;
+
+        // T013: Prefetch next child's data to hide memory latency
+        if (processed + 1 < num_children) {
+            NodeIndex next_index = child_index + 1;
+            __builtin_prefetch(&visit_counts[next_index], 0, 3);
+            __builtin_prefetch(&total_values[next_index], 0, 3);
+            __builtin_prefetch(&prior_probs[next_index], 0, 3);
+            __builtin_prefetch(&virtual_losses[next_index], 0, 3);
+            __builtin_prefetch(&flags[next_index], 0, 3);
+        }
 
         // ✅ CRITICAL FIX: Skip expanding nodes (busy-edge masking)
         if (flags[child_index].is_expanding()) {

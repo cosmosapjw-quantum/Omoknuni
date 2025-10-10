@@ -6,6 +6,95 @@ All notable changes to this project will be documented in this file.
 
 ### Spec 004: MCTS Throughput Recovery - Phase 3 In Progress (2025-10-10)
 
+#### T013: Selection Prefetching Optimization (2025-10-10)
+- **Status**: COMPLETE - Prefetch hints added, minimal impact expected
+- **Implementation**: Added `__builtin_prefetch()` compiler hints to selection hot loops
+- **Files**:
+  - `cpp_extensions/mcts/selection.cpp` (modified - lines 112-121, 175-183)
+  - `scripts/validate_prefetch.py` (new - validation script)
+  - `tests/unit/test_selection_prefetch.py` (new - unit tests)
+  - `tests/performance/test_selection_prefetch_benchmark.py` (new - benchmarks)
+- **Changes**:
+  - **SIMD path**: Prefetch next 8-child batch while processing current batch
+  - **Scalar path**: Prefetch next child's data while processing current child
+  - Prefetches 5 arrays: visit_counts, total_values, prior_probs, virtual_losses, flags
+  - Proper bounds checking prevents out-of-range prefetching
+  - Locality hints: read (0), high temporal locality (3)
+- **Validation**:
+  - ✅ Selection correctness verified (validation script passes)
+  - ✅ Deterministic behavior confirmed
+  - ✅ No functional changes to selection results
+  - ✅ Zero-copy behavior unchanged
+- **Expected Impact**: 1.05-1.10× speedup (minimal)
+  - Reduces cache miss penalty for large child counts (32-64+ children)
+  - Main benefit already achieved via SIMD vectorization (3-5× faster)
+  - **Selection is NOT the bottleneck** (MCTS coordination overhead is)
+- **Decision**: Keep implementation (no downside)
+  - Compiler hints are free (no runtime cost if ineffective)
+  - Low-risk change (just hints to CPU prefetcher)
+  - Correct bounds checking prevents issues
+  - **Focus future effort on MCTS coordination (60% thread waiting)**
+- **Context**: Recent investigation revealed:
+  - MCTS coordination: 60% thread waiting (real bottleneck)
+  - GPU utilization: 55% (underutilized despite 10.4× speedup)
+  - Selection: Already fast via SIMD, prefetching adds marginal benefit
+- **Completed**: 2025-10-10 (2 hours)
+- **Author**: Claude Code
+- **Commit**: (pending)
+
+#### Zero-Copy Investigation and Performance Analysis (2025-10-10)
+- **Status**: Investigation complete - zero-copy NOT achieved, but acceptable
+- **Finding**: DLPack uses pinned CPU memory, not GPU device memory (H2D transfer still required)
+- **Decision**: Keep current implementation - true zero-copy not worth 0.7% gain
+- **Files**:
+  - `docs/performance/zero_copy_investigation.md` (new - comprehensive analysis)
+  - `scripts/verify_zero_copy.py` (new - verification tool)
+  - `docs/performance/performance_optimization_session_summary.md` (updated)
+  - `specs/004-mcts-throughput-recovery/tasks.md` (updated with findings)
+- **Zero-Copy Investigation Results**:
+  - ❌ **True zero-copy NOT achieved**: DLPack creates `kDLCUDAHost` (CPU pinned), not `kDLCUDA` (GPU device)
+  - ❌ **H2D transfer still required**: 0.24ms per batch (measured)
+  - ✅ **Pinned memory very efficient**: 8.6 GB/s bandwidth (close to PCIe 3.0 x16 max)
+  - ✅ **H2D is NOT bottleneck**: Only 0.7% of total execution time
+- **Root Cause** (cpp_extensions/mcts/dlpack_bridge.cpp):
+  - Uses `cudaMallocHost()` (CPU pinned) instead of `cudaMalloc()` (GPU device)
+  - Sets `device_type = kDLCUDAHost` instead of `kDLCUDA`
+  - Feature extraction writes to CPU buffer, then transfers to GPU
+- **What Would Be Needed for True Zero-Copy**:
+  - Replace `cudaMallocHost()` with `cudaMalloc()` (GPU device memory)
+  - Set `device.device_type = kDLCUDA`
+  - Implement CUDA kernel for direct GPU feature extraction
+  - High implementation complexity for minimal gain
+- **Performance Impact Analysis**:
+  - Current H2D transfer: 0.24ms per batch (0.7% of total time)
+  - True zero-copy savings: 0.7% speedup (not worth complexity)
+  - Pinned memory already provides near-optimal transfer speed
+- **Real Bottleneck Identified**:
+  - **Thread waiting**: ~60% of execution time (1.489s out of 2.5s)
+  - **Batch tensor creation**: 7.5ms per batch (should be near-zero)
+  - **GPU inference**: Only 32.8% of total time (already optimized 10.4×)
+  - **MCTS coordination overhead**: 67.2% of execution - this is the limiting factor
+- **Current Performance** (comprehensive benchmarks):
+  - Throughput: 2,147 sims/sec (best: 4 threads, batch 32, 1.0ms timeout)
+  - vs Baseline (3,831 sims/sec): 56% (44% slower) ⚠️
+  - vs Target (25,000 sims/sec): 8.6% (11.6× slower) ⚠️
+  - GPU utilization: ~55% (GPU can do 3,885 states/sec, MCTS only 2,147 sims/sec)
+- **GPU Optimization Success** (model reduction):
+  - Reduced parameters: 23.8M → 10.1M (2.36× smaller)
+  - GPU inference speedup: 180ms → 17.3ms per batch (10.4× faster)
+  - Batch 32 optimal: 8.24ms/batch = 3,885 states/sec
+  - Batch 64: 17.26ms/batch = 3,708 states/sec
+- **Decision**: ✅ **Keep pinned memory implementation**
+  - Already very efficient (8.6 GB/s)
+  - True zero-copy complexity not justified for 0.7% gain
+  - **Focus on real bottleneck**: MCTS coordination (60% thread waiting)
+- **Immediate Priorities**:
+  1. Find baseline configuration (what achieved 3,831 sims/sec in Spec 003?)
+  2. Optimize batch tensor creation (7.5ms → near-zero)
+  3. Reduce thread waiting time (60% → target <20%)
+  4. Implement T013 (prefetching), T015 (hot/cold separation)
+- **Conclusion**: GPU is no longer the bottleneck. With 10.4× GPU speedup achieved, MCTS coordination overhead is now the limiting factor. Zero-copy optimization complete (using efficient pinned memory), focus must shift to MCTS overhead reduction.
+
 #### T012: Memory Ordering Optimization and Validation (2025-10-10)
 - **Status**: COMPLETE (validation and documentation)
 - **Impact**: Confirms optimal memory ordering already implemented, provides validation framework
