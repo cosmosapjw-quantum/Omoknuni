@@ -2,7 +2,7 @@
 
 **Session:** pipeline_test
 
-**Duration:** 0.270538s
+**Duration:** 0.272136s
 
 ## Timing Statistics
 

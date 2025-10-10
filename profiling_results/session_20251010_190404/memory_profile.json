@@ -1,7 +1,7 @@
 {
-  "total_memory_mb": 0.054370880126953125,
-  "peak_memory_mb": 0.042052268981933594,
-  "tree_size": 35937,
+  "total_memory_mb": 0.052928924560546875,
+  "peak_memory_mb": 0.040610313415527344,
+  "tree_size": 35944,
   "top_allocations": [
     {
       "file": "  File \"/usr/lib/python3.12/threading.py\", line 293",
@@ -9,7 +9,7 @@
     },
     {
       "file": "  File \"<string>\", line 27",
-      "size_mb": 0.00432586669921875
+      "size_mb": 0.00293731689453125
     },
     {
       "file": "  File \"/usr/lib/python3.12/threading.py\", line 992",
@@ -21,7 +21,7 @@
     },
     {
       "file": "  File \"/home/cosmosapjw/omoknuni/src/core/mcts.py\", line 860",
-      "size_mb": 0.0027313232421875
+      "size_mb": 0.002410888671875
     },
     {
       "file": "  File \"/usr/lib/python3.12/threading.py\", line 589",
@@ -36,12 +36,12 @@
       "size_mb": 0.0020904541015625
     },
     {
-      "file": "  File \"/usr/lib/python3.12/threading.py\", line 1370",
-      "size_mb": 0.0018310546875
+      "file": "  File \"/usr/lib/python3.12/concurrent/futures/_base.py\", line 334",
+      "size_mb": 0.00197601318359375
     },
     {
       "file": "  File \"/usr/lib/python3.12/concurrent/futures/_base.py\", line 335",
-      "size_mb": 0.00176239013671875
+      "size_mb": 0.00186920166015625
     }
   ]
 }

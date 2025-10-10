@@ -12,20 +12,20 @@ Completed in 56ms
 Testing with 2 threads...
 Thread 0 starting...
 Thread 1 starting...
-Thread 0 completed.
 Thread 1 completed.
-Completed in 56ms
+Thread 0 completed.
+Completed in 57ms
 
 Testing with 4 threads...
 Thread 0 starting...
 Thread 1 starting...
 Thread 2 starting...
 Thread 3 starting...
-Thread 1 completed.
 Thread 3 completed.
+Thread 1 completed.
 Thread 2 completed.
 Thread 0 completed.
-Completed in 57ms
+Completed in 56ms
 
 Testing with 8 threads...
 Thread 0 starting...
@@ -36,16 +36,16 @@ Thread 4 starting...
 Thread 5 starting...
 Thread 6 starting...
 Thread 7 starting...
-Thread 2 completed.
-Thread 3 completed.
-Thread 6 completed.
 Thread 4 completed.
 Thread 1 completed.
 Thread 0 completed.
-Thread 7 completed.
+Thread 6 completed.
+Thread 3 completed.
+Thread 2 completed.
 Thread 5 completed.
-Completed in 57ms
-Profiling session ended. Duration: 227.72ms
+Thread 7 completed.
+Completed in 56ms
+Profiling session ended. Duration: 226.86ms
 
 ========== Profiling Summary ==========
 Session: thread_contention_test
@@ -56,7 +56,7 @@ Top Operations by Total Time:
 
 === Testing Memory Access Patterns ===
 Profiling session started: memory_patterns_test
-Profiling session ended. Duration: 6.99ms
+Profiling session ended. Duration: 8.10ms
 
 ========== Profiling Summary ==========
 Session: memory_patterns_test
@@ -67,7 +67,7 @@ Top Operations by Total Time:
 
 === Testing Pipeline Stages ===
 Profiling session started: pipeline_test
-Profiling session ended. Duration: 270.54ms
+Profiling session ended. Duration: 272.14ms
 
 ========== Profiling Summary ==========
 Session: pipeline_test

@@ -5,15 +5,15 @@
 ============================================================
 PROFILING SUMMARY
 ============================================================
-Session: 20251010_185332
+Session: 20251010_190404
 Configuration: gomoku with 8 threads
 
 Top Bottlenecks:
-  🔴 GPU: Low utilization (89.2%)
+  🔴 GPU: Low utilization (88.8%)
 
 Performance Metrics:
-  GPU Utilization: 10.8%
-  GPU Memory: 1323.98MB
+  GPU Utilization: 11.2%
+  GPU Memory: 1339.58MB
   Peak Memory: 0.0MB
-  Tree Size: 35937 nodes
+  Tree Size: 35944 nodes
 ============================================================
