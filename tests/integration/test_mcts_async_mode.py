@@ -60,7 +60,9 @@ def test_async_mode_initialization():
     assert hasattr(mcts, 'simulation_runners')
     assert len(mcts.simulation_runners) == mcts.num_threads
     assert all(runner is not None for runner in mcts.simulation_runners)
-    assert mcts.coordinator is None  # Not created until search
+    # T011: Coordinator now created in __init__ (persistent)
+    assert mcts._coordinator is not None
+    assert mcts._coordinator_started is False  # Not started until search
 
 def test_sync_mode_backward_compatibility():
     """Test that sync mode still works for backward compatibility."""
@@ -75,7 +77,8 @@ def test_sync_mode_backward_compatibility():
     # Verify sync mode
     assert mcts.use_async_inference is False
     assert mcts.async_queue is None
-    assert mcts.coordinator is None
+    # T011: No coordinator in sync mode
+    assert not hasattr(mcts, '_coordinator') or mcts._coordinator is None
 
 
 def test_async_search_completes():
@@ -100,7 +103,9 @@ def test_async_search_completes():
     # Check root visit count (all simulations should complete)
     root_visits = mcts.tree.get_visit_count(mcts.root_index)
     assert root_visits == 20.0, f"Expected 20 root visits, got {root_visits}"
-    assert mcts.coordinator is None  # Coordinator stopped after search
+    # T011: Coordinator is persistent (started, then reused across searches)
+    assert mcts._coordinator is not None
+    assert mcts._coordinator_started is True  # Started during search
 
 
 def test_sync_search_completes():
@@ -195,8 +200,9 @@ def test_coordinator_cleanup_on_exception():
     # Run search (should handle gracefully)
     visit_counts = mcts.search(state, simulations=10)
 
-    # Coordinator should be cleaned up
-    assert mcts.coordinator is None
+    # T011: Coordinator is persistent (remains active after search)
+    assert mcts._coordinator is not None
+    assert mcts._coordinator_started is True
 
 
 def test_async_performance_improvement():

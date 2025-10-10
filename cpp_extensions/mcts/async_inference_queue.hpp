@@ -16,7 +16,7 @@
  * Key design principles:
  * - Wait-free request submission (no locks, no blocking)
  * - Lock-free result retrieval with O(1) ring buffer indexing
- * - Timeout-based batch collection via polling (no condition variables)
+ * - Timeout-based batch collection via condition variables (T006c - efficient blocking)
  * - Fixed memory footprint with predictable allocation
  *
  * Architecture (T006b):
