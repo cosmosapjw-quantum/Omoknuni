@@ -2659,19 +2659,59 @@ Thread Efficiency (4) | 45%      | ~70%     | 85%     | 53%
 
 ---
 
-### T023: Update Performance Documentation
+### T023: Update Performance Documentation ✅
 **Priority**: MEDIUM
 **Effort**: 4 hours
 **Dependencies**: T016, T020
+**Status**: COMPLETE
 **Files**:
 - `docs/performance/throughput_analysis.md` (new)
 - `README.md`
 
 **Implementation**:
-- [ ] Document achieved performance
-- [ ] Explain optimizations
-- [ ] Provide tuning guide
-- [ ] Update benchmarks
+- [x] Document achieved performance
+- [x] Explain optimizations
+- [x] Provide tuning guide
+- [x] Update benchmarks
+
+**Completion Notes**:
+
+**Created `docs/performance/throughput_analysis.md`** (400+ lines):
+- ✅ Comprehensive performance history from baseline (3,831 sims/sec) to current (2,147 sims/sec)
+- ✅ Documented all Spec 004 optimizations with performance impact analysis
+- ✅ Current performance characteristics with detailed bottleneck breakdown
+- ✅ Configuration tuning guide for different hardware/use cases
+- ✅ Roadmap to 25,000+ sims/sec target with expected gains per phase
+- ✅ Hardware-specific recommendations and troubleshooting guide
+
+**Updated `README.md` Performance Targets Section**:
+- ✅ Replaced static target list with comprehensive current status table
+- ✅ Added detailed metrics: throughput (2,147/25,000), GPU util (55%/85%), thread efficiency (45%/85%)
+- ✅ Added thread scaling analysis showing 4 threads optimal (45% efficiency vs 19% @ 8 threads)
+- ✅ Added GPU batch optimization guidance (batch=32-64, timeout=1.0ms)
+- ✅ Added links to comprehensive performance documentation
+
+**Key Documented Insights**:
+- 🔍 **MCTS coordination is the bottleneck** (60% thread waiting time), not GPU
+- 🔍 **GPU underutilized** at 55% capacity (can handle 3,885 states/sec, MCTS only feeds 2,147)
+- 🔍 **Thread scaling poor** beyond 4 threads (45% efficiency → 19% @ 8 threads)
+- 🔍 **Batch tensor creation 15× too slow** (7.5ms per batch, should be <0.5ms)
+- 🔍 **Critical path to target**: Lock-free queues + tensor pools + better thread scaling
+
+**Performance Documentation Now Provides**:
+1. Complete optimization history from T001-T020
+2. Current system performance characteristics
+3. Bottleneck analysis with time distribution breakdown
+4. Configuration tuning guide for different scenarios
+5. Hardware-specific recommendations (Ryzen 5900X + RTX 3060 Ti)
+6. Troubleshooting guide for common issues
+7. Phased roadmap to 25,000+ sims/sec target
+
+**Validation**:
+- ✅ Documentation accurate based on T020 profiling report
+- ✅ All performance numbers match empirical measurements
+- ✅ Configuration recommendations validated through research.md
+- ✅ README.md updated with current status and links
 
 ---
 

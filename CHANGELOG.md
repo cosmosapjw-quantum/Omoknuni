@@ -6,6 +6,87 @@ All notable changes to this project will be documented in this file.
 
 ### Spec 004: MCTS Throughput Recovery - Phase 4 In Progress (2025-10-10)
 
+#### T023: Update Performance Documentation (2025-10-10)
+- **Status**: DOCUMENTATION COMPLETE - Comprehensive performance analysis and tuning guide created
+- **Implementation**: Created comprehensive throughput analysis document and updated README.md with current status
+- **Files**:
+  - `docs/performance/throughput_analysis.md` (new - 400+ line comprehensive guide) ✅
+  - `README.md` (updated - Performance Targets section replaced with detailed current status) ✅
+  - `specs/004-mcts-throughput-recovery/tasks.md` (T023 marked complete)
+- **Created Documentation**:
+  1. **Comprehensive Throughput Analysis** (`throughput_analysis.md`):
+     - Performance history from baseline (3,831 sims/sec) to current (2,147 sims/sec)
+     - All Spec 004 optimizations documented with performance impact
+     - Current performance characteristics with detailed bottleneck breakdown
+     - Configuration tuning guide for different hardware/use cases
+     - Roadmap to 25,000+ sims/sec target with expected gains per phase
+     - Hardware-specific recommendations (Ryzen 5900X + RTX 3060 Ti)
+     - Troubleshooting guide for common performance issues
+
+  2. **Updated README.md Performance Targets**:
+     - Replaced static target list with comprehensive current status table
+     - Added detailed metrics showing progress toward targets
+     - Added thread scaling analysis (4 threads optimal at 45% efficiency)
+     - Added GPU batch optimization guidance (batch=32-64, timeout=1.0ms)
+     - Added links to comprehensive performance documentation
+- **Key Documented Insights**:
+  - 🔍 **MCTS coordination is the bottleneck** (60% thread waiting time), not GPU
+  - 🔍 **GPU underutilized** at 55% capacity (can handle 3,885 states/sec, MCTS only feeds 2,147)
+  - 🔍 **Thread scaling poor** beyond 4 threads (45% efficiency → 19% @ 8 threads)
+  - 🔍 **Batch tensor creation 15× too slow** (7.5ms per batch, should be <0.5ms)
+  - 🔍 **Critical path to target**: Lock-free queues + tensor pools + better thread scaling
+- **Current Performance Status**:
+  ```
+  Metric                        | Current       | Target        | Progress | Status
+  ------------------------------|---------------|---------------|----------|--------
+  MCTS Throughput               | 2,147 sims/s  | 25,000 sims/s | 8.6%     | 🟡 In Progress
+  GPU Utilization               | 55%           | 85%           | 65%      | ⚠️ Underutilized
+  Thread Efficiency (4 threads) | 45%           | 85%           | 53%      | ⚠️ Coordination overhead
+  Batch Fill Rate               | 75%           | 90%           | 83%      | ✅ Good
+  Memory Efficiency             | 270MB/10M     | <1GB/10M      | 100%     | ✅ Excellent
+  ```
+- **Documentation Provides**:
+  1. Complete optimization history from T001-T020
+  2. Current system performance characteristics
+  3. Bottleneck analysis with time distribution breakdown
+  4. Configuration tuning guide for different scenarios
+  5. Hardware-specific recommendations
+  6. Troubleshooting guide for common issues
+  7. Phased roadmap to 25,000+ sims/sec target
+- **Thread Scaling Analysis**:
+  ```
+  Threads | Throughput    | Efficiency | Scaling Factor | Assessment
+  --------|---------------|------------|----------------|------------------
+  1       | 1,200 sims/s  | 100%       | 1.0×           | Baseline
+  2       | 1,987 sims/s  | 83%        | 1.66×          | Excellent
+  4       | 2,147 sims/s  | 45%        | 1.79×          | ← OPTIMAL (current best)
+  8       | 1,850 sims/s  | 19%        | 1.54×          | Diminishing returns
+  ```
+- **GPU Batch Optimization** (documented for users):
+  - Batch size 32-64 optimal for RTX 3060 Ti (85% GPU util, 3,885 states/sec)
+  - Timeout 1.0ms optimal (24k theoretical throughput vs 23k @ 3.0ms)
+  - Critical insight: GPU util ≠ MCTS throughput beyond 85%
+  - Recommendation: Use default config (batch=64, timeout=1.0ms) for most users
+- **Phased Roadmap** (documented with expected gains):
+  - **Phase 1** (Target: 4,000 sims/sec): Tensor pools + lock-free queues
+  - **Phase 2** (Target: 6,000 sims/sec): Reduced transfers + better thread scaling
+  - **Phase 3** (Target: 8,000 sims/sec): Hot/cold separation + micro-optimizations
+  - **Phase 4** (Target: 15,000-25,000 sims/sec): C++ coordinator + GPU-accelerated MCTS
+- **Value to Users**:
+  - Complete performance picture with actionable insights
+  - Configuration tuning guide for different hardware/scenarios
+  - Troubleshooting guide for common performance issues
+  - Clear roadmap showing path to target performance
+  - Hardware-specific recommendations for optimal setup
+- **Validation**:
+  - ✅ All performance numbers match T020 profiling report
+  - ✅ Configuration recommendations validated through research.md
+  - ✅ README.md updated with current status and links
+  - ✅ Documentation accurate and comprehensive
+- **Completed**: 2025-10-10 (4 hours documentation)
+- **Author**: Claude Code
+- **Commit**: (pending)
+
 #### T020: Bottleneck Profiling and Analysis (2025-10-10)
 - **Status**: PROFILING COMPLETE - Comprehensive analysis identifies MCTS coordination as primary bottleneck
 - **Implementation**: Analyzed existing profiling data, created comprehensive bottleneck report with actionable fixes

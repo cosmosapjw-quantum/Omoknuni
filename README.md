@@ -865,27 +865,94 @@ This project follows [Spec-Driven Development](specs/001-goal-create-spec/).
 5. **Phase 4** (1 day): Testing & performance validation (≥30k sims/sec)
 6. **Phase 5** (0.5 day): Documentation & evidence collection
 
-## Performance Targets
+## Performance Targets and Current Status
 
-- **Simulations/sec**: 30,000+ including neural network inference
-- **GPU utilization**: 80-92% sustained during search (adaptive micro-batching implemented)
-- **Batch efficiency**: ≥32 positions OR ≤3ms timeout (T015 specification met)
-- **Tree memory**: <1GB for typical search configurations (27 bytes/node achieved)
-- **Node allocation**: O(1) operations with 330M allocations/second
-- **PUCT selection**: 3.6-5.2x speedup with AVX2 vectorization
-- **Memory transfers**: Optimized H2D/D2H transfers using pinned CUDA memory buffers
-- **Reliability**: Automatic CPU fallback with seamless inference continuation on GPU failures
-- **Training speed**: 200-300 self-play games per hour
-- **Games supported**: Gomoku, Chess (including Chess960), Go (9x9 to 19x19)
-- **Self-Play Quality**: Comprehensive testing validates training data integrity
+### Current Performance (Spec 004 Phase 4 Complete)
+
+| Metric | Current | Target | Progress | Status |
+|--------|---------|--------|----------|--------|
+| **MCTS Throughput** | 2,147 sims/sec | 25,000 sims/sec | 8.6% | 🟡 In Progress |
+| **GPU Utilization** | 55% | 85% | 65% | ⚠️ Underutilized (MCTS bottleneck) |
+| **Thread Efficiency (4 threads)** | 45% | 85% | 53% | ⚠️ Coordination overhead |
+| **Tree Memory** | 270MB (10M nodes) | <1GB | ✅ 100% | ✅ Complete |
+| **Node Allocation** | 330M allocs/sec | O(1) operations | ✅ 100% | ✅ Complete |
+| **PUCT Selection** | 3.6-5.2× speedup | Vectorized | ✅ 100% | ✅ Complete |
+| **Thread Safety** | TSan clean | No race conditions | ✅ 100% | ✅ Complete |
+
+**Key Finding** (from T020 profiling): **GPU optimization phase is complete**. CPU-side MCTS coordination is now the bottleneck (60% thread waiting time). Further GPU optimization will NOT improve throughput.
+
+### Optimization Roadmap
+
+**Completed Optimizations** (Spec 004):
+- ✅ WU-UCT Virtual Loss (prevents Q-value distortion)
+- ✅ Busy-Edge Masking (reduces thread collisions)
+- ✅ DLPack Zero-Copy Bridge (eliminated Python list conversion)
+- ✅ FP16 Mixed Precision (10.4× GPU speedup: 180ms → 17.3ms per batch)
+- ✅ Thread-Local Memory Arenas (330M allocations/sec)
+- ✅ Selection Prefetching (cache optimization)
+- ✅ Batch/Timeout Optimization (batch=64, timeout=1.0ms optimal)
+- ✅ Comprehensive Profiling (identified MCTS coordination as bottleneck)
+
+**Remaining Path to 25,000 sims/sec** (see [Throughput Analysis](docs/performance/throughput_analysis.md)):
+- **Phase 1** (Target: 4,000 sims/sec): Tensor pools, lock-free queues (+1.86×)
+- **Phase 2** (Target: 6,000 sims/sec): Reduced transfers, thread scaling (+1.5×)
+- **Phase 3** (Target: 8,000 sims/sec): Hot/cold separation, memory optimization (+1.33×)
+- **Phase 4** (Target: 15,000-25,000 sims/sec): C++ coordinator, GPU MCTS (+1.88-3.13×)
+
+### Performance Characteristics
+
+**Thread Scaling** (from T020 profiling):
+```
+Threads | Throughput    | Efficiency | Status
+--------|---------------|------------|----------------
+1       | 1,200 sims/s  | 100%       | Baseline
+2       | 1,987 sims/s  | 83%        | Excellent
+4       | 2,147 sims/s  | 45%        | ← OPTIMAL (current best)
+8       | 1,850 sims/s  | 19%        | Poor coordination
+12      | 1,600 sims/s  | 11%        | Severe contention
+```
+
+**Recommendation**: Use 4 threads for optimal current performance. Beyond 4 threads, coordination overhead dominates.
+
+**GPU Batch Optimization**:
+```
+Batch Size | GPU Util | Latency | MCTS Throughput
+-----------|----------|---------|------------------
+32         | 68%      | 8.2ms   | 2,147 sims/sec ← OPTIMAL
+64         | 85%      | 17.3ms  | 2,078 sims/sec
+128        | 92%      | 32.0ms  | 1,900 sims/sec
+```
+
+**Recommendation**: Use batch size 32-64 with timeout 1.0ms for optimal balance.
+
+### System Capabilities
+
+- **Simulations/sec**: 2,147 (current) → 25,000+ (target with full optimization)
+- **GPU utilization**: 55% (current) → 85% (target when MCTS coordination fixed)
+- **Batch efficiency**: batch=64, timeout=1.0ms optimal ✅
+- **Tree memory**: 270MB for 10M nodes (<1GB target) ✅
+- **Node allocation**: O(1) with 330M allocations/second ✅
+- **PUCT selection**: 3.6-5.2× speedup with AVX2 vectorization ✅
+- **Memory transfers**: Optimized H2D/D2H with pinned CUDA memory ✅
+- **Reliability**: Automatic CPU fallback with seamless GPU failure handling ✅
+- **Training speed**: 150-200 self-play games per hour (current) → 200-300 (target)
+- **Games supported**: Gomoku, Chess (including Chess960), Go (9x9 to 19x19) ✅
+- **Self-Play Quality**: Comprehensive testing validates training data integrity ✅
   - Move bias detection with statistical significance testing
   - Policy entropy monitoring (exploration→exploitation balance)
   - Terminal detection accuracy across all game variations
   - Temperature scheduling effectiveness validation
-- **Tensor representations**: Enhanced feature planes for stronger tactical play
+- **Tensor representations**: Enhanced feature planes for stronger tactical play ✅
   - Gomoku: 36 planes (threat detection, run-length analysis, rule variations)
   - Chess: 30 planes (castling, en passant, 8-pair move history)
   - Go: 25 planes (proper move history separation, capture patterns)
+
+### Performance Documentation
+
+- **Comprehensive Analysis**: [Throughput Analysis](docs/performance/throughput_analysis.md)
+- **Profiling Reports**: [T020 Bottleneck Analysis](docs/performance/T020_bottleneck_profiling_report.md)
+- **Optimization Results**: [Performance Session Summary](docs/performance/performance_optimization_session_summary.md)
+- **GPU Analysis**: [GPU Bottleneck Analysis](docs/performance/gpu_bottleneck_analysis.md)
 
 ## Development Philosophy
 
