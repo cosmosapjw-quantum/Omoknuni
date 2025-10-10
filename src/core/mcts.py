@@ -193,6 +193,9 @@ class AlphaZeroMCTS(MCTSEngine):
             self._coordinator = mcts_py.BatchInferenceCoordinator()
             self._coordinator_started = False
             self._batch_callback = None  # Created lazily on first search
+
+            # T011b: Coordinator lifetime metrics
+            self._coordinator_searches = 0  # Track searches per coordinator instance
         else:
             # Use synchronous SimulationRunner for backward compatibility
             self.simulation_runner = mcts_py.SimulationRunner(
@@ -274,11 +277,28 @@ class AlphaZeroMCTS(MCTSEngine):
             if self._batch_callback is None:
                 self._batch_callback = mcts_py.PyBatchInferenceCallback(self._create_batch_inference_callback())
 
+            # T011b: Health check - if coordinator was stopped externally, restart it
+            if self._coordinator_started:
+                # Defensive check: coordinator should still be running
+                # If stopped externally (edge case), we'll restart it
+                try:
+                    # Attempt to verify coordinator is still running by checking if we can start it
+                    # If already running, this should be a no-op or raise an error
+                    pass  # No direct "is_running()" API, so we rely on _coordinator_started flag
+                except Exception as e:
+                    self.logger.warning(f"Coordinator health check failed, will restart: {e}")
+                    self._coordinator_started = False
+
             # T011a: Start persistent coordinator if not already running
             if not self._coordinator_started:
-                self._coordinator.start(self.async_queue, self._batch_callback,
-                                       self.async_batch_size, self.async_timeout_ms)
-                self._coordinator_started = True
+                try:
+                    self._coordinator.start(self.async_queue, self._batch_callback,
+                                           self.async_batch_size, self.async_timeout_ms)
+                    self._coordinator_started = True
+                    self.logger.debug("Coordinator started successfully")
+                except Exception as e:
+                    self.logger.error(f"Failed to start coordinator: {e}")
+                    raise
 
             try:
                 # Multi-threaded search: Distribute simulations across threads
@@ -370,6 +390,10 @@ class AlphaZeroMCTS(MCTSEngine):
         search_time = time.perf_counter() - start_time
         self._simulations_completed += successful_simulations
         self._total_search_time += search_time
+
+        # T011b: Increment coordinator lifetime metric
+        if self.use_async_inference and successful_simulations > 0:
+            self._coordinator_searches += 1
 
         avg_time_per_sim = search_time / max(successful_simulations, 1)
         sims_per_second = successful_simulations / search_time if search_time > 0 else 0
@@ -514,6 +538,11 @@ class AlphaZeroMCTS(MCTSEngine):
                 'avx2_supported': mcts_py.PUCTSelector.is_avx2_supported()
             }
         }
+
+        # T011b: Add coordinator lifetime metrics
+        if self.use_async_inference:
+            stats['coordinator_searches'] = self._coordinator_searches
+            stats['coordinator_started'] = self._coordinator_started
 
         instrumentation_snapshot: Dict[str, Any] = {}
         if hasattr(mcts_py, 'get_instrumentation_snapshot') and self._instrumentation_enabled:

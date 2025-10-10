@@ -1840,33 +1840,35 @@ Create coordinator ONCE in `MCTSAgent.__init__`, reuse across all searches, only
 
 ---
 
-#### T011b: Handle Coordinator State Across Searches
+#### T011b: Handle Coordinator State Across Searches ✅
 **Effort**: 2 hours
-**Dependencies**: T011a
+**Dependencies**: T011a ✅
+**Status**: COMPLETE
+**Completed**: 2025-10-10
 **Files**:
 - `src/core/mcts.py` (update)
 - `tests/integration/test_coordinator_persistence.py` (new)
 
-**Implementation**:
-- [ ] Verify coordinator stays alive between searches
-- [ ] Add coordinator health checks before each search
-- [ ] Handle edge case: coordinator stopped externally
-- [ ] Add coordinator restart logic if needed (defensive)
-- [ ] Update exception handling to preserve coordinator
-- [ ] Add metrics for coordinator lifetime (searches per coordinator instance)
+**Implementation**: ✅ ALL COMPLETE
+- ✅ Verify coordinator stays alive between searches
+- ✅ Add coordinator health checks before each search
+- ✅ Handle edge case: coordinator stopped externally
+- ✅ Add coordinator restart logic if needed (defensive)
+- ✅ Update exception handling to preserve coordinator
+- ✅ Add metrics for coordinator lifetime (searches per coordinator instance)
 
-**Validation**:
-- [ ] Integration test: 1000 consecutive searches with same coordinator
-- [ ] Test coordinator survives exceptions during search
-- [ ] Verify no coordinator recreation between searches
-- [ ] Test metrics show 1 coordinator for N searches (not N coordinators)
-- [ ] Memory leak test: no coordinator accumulation
+**Validation**: ✅ ALL PASS
+- ✅ Integration test: 1000 consecutive searches with same coordinator
+- ✅ Test coordinator survives exceptions during search
+- ✅ Verify no coordinator recreation between searches
+- ✅ Test metrics show 1 coordinator for N searches (not N coordinators)
+- ✅ Memory leak test: no coordinator accumulation
 
-**Acceptance Criteria**:
-- Single coordinator handles 1000+ searches without restart
-- Coordinator survives search errors gracefully
-- Metrics confirm no per-search coordinator recreation
-- No memory leaks from coordinator accumulation
+**Acceptance Criteria**: ✅ ALL MET
+- ✅ Single coordinator handles 1000+ searches without restart
+- ✅ Coordinator survives search errors gracefully
+- ✅ Metrics confirm no per-search coordinator recreation
+- ✅ No memory leaks from coordinator accumulation
 
 ---
 

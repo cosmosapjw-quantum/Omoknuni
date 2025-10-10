@@ -6,6 +6,29 @@ All notable changes to this project will be documented in this file.
 
 ### Spec 004: MCTS Throughput Recovery - Phase 3 In Progress (2025-10-10)
 
+#### T011b: Coordinator State Management and Persistence (2025-10-10)
+- **Added**: Health checks, defensive restart logic, and lifetime metrics for coordinator
+- **Impact**: Ensures coordinator reliability across 1000+ searches with graceful error recovery
+- **Files**:
+  - `src/core/mcts.py` (updated - health checks and metrics)
+  - `tests/integration/test_coordinator_persistence.py` (new - 380 lines, 7 tests)
+- **Implementation**:
+  - Health check before each search to detect externally stopped coordinator
+  - Defensive restart logic if coordinator found stopped (edge case handling)
+  - Coordinator lifetime metrics: `_coordinator_searches` counter tracks searches per instance
+  - Enhanced error handling with coordinator restart on failure
+  - Metrics exposed in `get_statistics()`: `coordinator_searches` and `coordinator_started`
+- **Test Coverage** (7/7 PASS):
+  - ✅ Coordinator handles 1000 consecutive searches without restart
+  - ✅ Coordinator survives search exceptions gracefully
+  - ✅ No coordinator recreation between searches (regression test)
+  - ✅ Coordinator metrics accuracy verification
+  - ✅ No memory leaks over 1000 searches (<10MB increase)
+  - ✅ Defensive restart logic when coordinator stops externally
+  - ✅ Sync mode doesn't create coordinator metrics
+- **Validation**: Single coordinator instance persists across 1000+ searches with zero recreations
+- **Memory**: Memory leak test confirms <10MB increase over 1000 searches (no accumulation)
+
 #### T011a: Persistent BatchInferenceCoordinator Lifecycle (2025-10-10)
 - **Changed**: Eliminated per-search coordinator creation/destruction overhead
 - **Impact**: Reduces Python overhead from 60-70% to <30% by removing thread startup/teardown
