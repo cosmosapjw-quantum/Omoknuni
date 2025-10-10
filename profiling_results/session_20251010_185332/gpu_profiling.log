@@ -1,0 +1,42 @@
+No model_path provided. Initializing default AlphaZeroNet weights for benchmark use.
+
+================================================================================
+GPU Profiling Summary - session_1760090052
+================================================================================
+
+Device: NVIDIA GeForce RTX 3060 Ti (compute 8.6)
+Memory: 7831 MB
+Duration: 10.25s
+
+------------------------------Workload Statistics-------------------------------
+  Total batches:    100
+  Total samples:    3200
+  Avg batch size:   32.0
+  Avg throughput:   312.1 samples/sec
+
+--------------------------------Timing Breakdown--------------------------------
+  H2D transfer:     0.000 ms
+  Inference:        51.906 ms
+  D2H transfer:     0.000 ms
+  Total per batch:  51.906 ms
+
+--------------------------------GPU Utilization---------------------------------
+  Average:          10.8%
+  Median (P50):     11.0%
+  P95:              17.0%
+  Target (80%):     ✗ FAIL
+
+----------------------------------Memory Usage----------------------------------
+  Average:          1324 MB (16.9%)
+  Peak:             1343 MB
+  Total available:  7831 MB
+
+---------------------------------Power & Energy---------------------------------
+  Average power:    72.2 W
+  Total energy:     740.7 J (0.2057 Wh)
+================================================================================
+
+GPU Profiling Results:
+  Avg GPU Utilization: 10.8%
+  Avg Memory Usage: 1323.98MB
+  Avg Power: 0.0W

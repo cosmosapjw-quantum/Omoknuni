@@ -6,12 +6,13 @@ ResNet-based architecture with Squeeze-Excitation blocks for board game position
 Optimized for RTX 3060 Ti (8GB VRAM) with mixed precision support.
 
 Architecture:
-- Initial 3x3 conv layer (input_channels -> 256)
-- 20 Residual blocks with SE attention (256 channels each)
+- Initial 3x3 conv layer (input_channels -> 192)
+- 15 Residual blocks with SE attention (192 channels each)
 - Policy head: 1x1 conv + linear layer
 - Value head: 1x1 conv + global average pool + linear layers
 
-Target: ~10M parameters, fits with batch size 64 in 8GB VRAM
+Model size: ~10M parameters (fits with batch size 64 in 8GB VRAM)
+Inference target: <10ms per batch of 64 with FP16 mixed precision
 """
 
 import torch
@@ -477,10 +478,12 @@ def create_model_for_game(game: str, **kwargs) -> AlphaZeroNet:
     """
     game = game.lower()
 
-    # Set optimized defaults for RTX 3060 Ti (8GB VRAM) - maximize usage
+    # Set optimized defaults for RTX 3060 Ti (8GB VRAM)
+    # Reduced from 20 blocks × 256 channels (23.8M params) to achieve target 10M params
+    # and improve inference speed by 2.36× (180ms → 76ms estimated)
     default_kwargs = {
-        'num_blocks': 20,      # Original spec - more representation capacity
-        'hidden_channels': 256, # Original spec - better feature learning
+        'num_blocks': 15,      # Reduced from 20 for faster inference (GPU bottleneck fix)
+        'hidden_channels': 192, # Reduced from 256 to achieve ~10M parameter target
         'use_se': True
     }
     default_kwargs.update(kwargs)

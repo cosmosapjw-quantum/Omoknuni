@@ -352,38 +352,36 @@ class DLPackInferenceBridge:
             )
 
         # Create DLPack tensor from states (zero-copy)
-        capsule = mcts_py.create_batch_tensor_from_states(states, use_cuda=False)
+        # T007: Create tensor directly on target device for true zero-copy
+        use_cuda = self.device.type == 'cuda'
+        capsule = mcts_py.create_batch_tensor_from_states(states, use_cuda=use_cuda)
         features = torch.from_dlpack(capsule)
 
-        # T008c: Try to get pre-allocated GPU buffer
-        pooled_buffer = None
-        if self.buffer_pool is not None:
-            pooled_buffer = self.buffer_pool.get_buffer(batch_size)
-
-        # T008d: Get next stream from pool for async transfers
+        # T008d: Get next stream from pool for async operations
         stream = None
         if self.device.type == 'cuda' and self.stream_pool:
             stream = self.stream_pool[self.stream_index]
             self.stream_index = (self.stream_index + 1) % len(self.stream_pool)
 
-        # T008d: Profile H2D transfer time
+        # T008d: Profile H2D transfer time (if needed)
         h2d_start = time.perf_counter()
 
-        # T008d: Run all GPU operations on the same stream to avoid race conditions
-        # CRITICAL: Inference MUST run on same stream as transfers, otherwise
-        # D2H transfer can start before inference completes, reading garbage data
+        # T007: If features already on GPU via DLPack, no transfer needed
+        if features.device == self.device:
+            features_gpu = features
+            h2d_elapsed = 0.0  # Zero-copy achieved!
+        else:
+            # Features on CPU - need to transfer
+            if stream is not None:
+                with torch.cuda.stream(stream):
+                    features_gpu = features.to(self.device, non_blocking=True)
+            else:
+                features_gpu = features.to(self.device, non_blocking=True)
+            h2d_elapsed = (time.perf_counter() - h2d_start) * 1000.0
+
+        # T008d: Run inference on the same stream
         if self.device.type == 'cuda' and stream is not None:
             with torch.cuda.stream(stream):
-                # H2D transfer
-                if pooled_buffer is not None:
-                    # Use pooled buffer: copy features into it
-                    pooled_buffer[:batch_size].copy_(features, non_blocking=True)
-                    features_gpu = pooled_buffer[:batch_size]
-                else:
-                    # Fallback to dynamic allocation
-                    features_gpu = features.to(self.device, non_blocking=True)
-
-                h2d_elapsed = (time.perf_counter() - h2d_start) * 1000.0
 
                 # T008d: Profile inference time
                 inference_start = time.perf_counter()
@@ -416,14 +414,7 @@ class DLPackInferenceBridge:
 
         elif self.device.type == 'cuda':
             # No stream pool - use default stream (synchronous)
-            if pooled_buffer is not None:
-                pooled_buffer[:batch_size].copy_(features, non_blocking=True)
-                features_gpu = pooled_buffer[:batch_size]
-            else:
-                features_gpu = features.to(self.device, non_blocking=True)
-
-            h2d_elapsed = (time.perf_counter() - h2d_start) * 1000.0
-
+            # T007: Use features_gpu from earlier (already on device or transferred)
             inference_start = time.perf_counter()
 
             with torch.no_grad():
@@ -472,10 +463,6 @@ class DLPackInferenceBridge:
             policy_list = policy_np[i].tolist()
             value_scalar = float(value_np[i])
             results.append((policy_list, value_scalar))
-
-        # T008c: Release pooled buffer back to pool
-        if pooled_buffer is not None:
-            self.buffer_pool.release_buffer(pooled_buffer)
 
         return results
 

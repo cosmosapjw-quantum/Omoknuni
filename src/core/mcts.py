@@ -310,7 +310,9 @@ class AlphaZeroMCTS(MCTSEngine):
                         """Worker thread running continuous simulations."""
                         thread_sims = sims_per_thread + (remainder if thread_id == 0 else 0)
                         runner = self.simulation_runners[thread_id]
-                        return runner.run_continuous(root_state, self.root_index, self.async_queue, thread_sims)
+                        # Extract C++ state from wrapper for C++ function call
+                        cpp_state = root_state.cpp_state if hasattr(root_state, 'cpp_state') else root_state
+                        return runner.run_continuous(cpp_state, self.root_index, self.async_queue, thread_sims)
 
                     with self._executor_lock:
                         if self._executor is None:
@@ -324,8 +326,10 @@ class AlphaZeroMCTS(MCTSEngine):
                     self.logger.info(f"Multi-threaded search: {self.num_threads} threads, "
                                      f"{successful_simulations}/{simulations} sims completed")
                 else:
+                    # Extract C++ state from wrapper for C++ function call
+                    cpp_state = root_state.cpp_state if hasattr(root_state, 'cpp_state') else root_state
                     successful_simulations = self.simulation_runners[0].run_continuous(
-                        root_state, self.root_index, self.async_queue, simulations
+                        cpp_state, self.root_index, self.async_queue, simulations
                     )
             except Exception:
                 # T011a: Preserve coordinator on exceptions - don't stop it
@@ -344,10 +348,12 @@ class AlphaZeroMCTS(MCTSEngine):
                     local_success = 0
                     local_fail = 0
                     local_total = sims_per_thread + (remainder if thread_id == 0 else 0)
+                    # Extract C++ state from wrapper for C++ function call
+                    cpp_state = root_state.cpp_state if hasattr(root_state, 'cpp_state') else root_state
                     for _ in range(local_total):
                         if self.tree.get_node_count() >= self.tree.get_max_nodes():
                             break
-                        if self.simulation_runner.run_simulation(root_state, self.root_index, callback):
+                        if self.simulation_runner.run_simulation(cpp_state, self.root_index, callback):
                             local_success += 1
                         else:
                             local_fail += 1

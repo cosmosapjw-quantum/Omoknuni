@@ -1,0 +1,28 @@
+         8933 function calls (7366 primitive calls) in 0.046 seconds
+
+   Ordered by: cumulative time
+   List reduced from 175 to 20 due to restriction <20>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+    39/24    0.001    0.000    0.045    0.002 /usr/lib/python3.12/threading.py:637(wait)
+    40/25    0.001    0.000    0.044    0.002 /usr/lib/python3.12/threading.py:323(wait)
+        3    0.000    0.000    0.038    0.013 /home/cosmosapjw/omoknuni/src/core/cpp_inference_bridge.py:111(batch_inference)
+        2    0.003    0.002    0.035    0.017 /home/cosmosapjw/omoknuni/src/core/mcts.py:802(fast_batch_callback)
+        3    0.000    0.000    0.032    0.011 /home/cosmosapjw/omoknuni/src/neural/inference_worker.py:507(_run_inference_with_precision)
+    444/3    0.001    0.000    0.032    0.011 /home/cosmosapjw/omoknuni/venv/lib/python3.12/site-packages/torch/nn/modules/module.py:1769(_wrapped_call_impl)
+    444/3    0.001    0.000    0.032    0.011 /home/cosmosapjw/omoknuni/venv/lib/python3.12/site-packages/torch/nn/modules/module.py:1777(_call_impl)
+        3    0.000    0.000    0.032    0.011 /home/cosmosapjw/omoknuni/src/neural/model.py:377(forward)
+        3    0.000    0.000    0.023    0.008 /home/cosmosapjw/omoknuni/src/neural/inference_worker.py:928(batch_inference)
+       45    0.001    0.000    0.020    0.000 /home/cosmosapjw/omoknuni/src/neural/model.py:124(forward)
+       99    0.000    0.000    0.007    0.000 /home/cosmosapjw/omoknuni/venv/lib/python3.12/site-packages/torch/nn/modules/conv.py:547(forward)
+       99    0.000    0.000    0.007    0.000 /home/cosmosapjw/omoknuni/venv/lib/python3.12/site-packages/torch/nn/modules/conv.py:530(_conv_forward)
+       45    0.001    0.000    0.007    0.000 /home/cosmosapjw/omoknuni/src/neural/model.py:56(forward)
+       99    0.007    0.000    0.007    0.000 {built-in method torch.conv2d}
+       99    0.000    0.000    0.004    0.000 /home/cosmosapjw/omoknuni/venv/lib/python3.12/site-packages/torch/nn/modules/linear.py:124(forward)
+       99    0.004    0.000    0.004    0.000 {built-in method torch._C._nn.linear}
+        3    0.000    0.000    0.003    0.001 /home/cosmosapjw/omoknuni/src/neural/model.py:225(forward)
+       99    0.000    0.000    0.003    0.000 /home/cosmosapjw/omoknuni/venv/lib/python3.12/site-packages/torch/nn/modules/batchnorm.py:159(forward)
+        3    0.000    0.000    0.003    0.001 /home/cosmosapjw/omoknuni/src/neural/model.py:296(forward)
+       99    0.000    0.000    0.002    0.000 /home/cosmosapjw/omoknuni/venv/lib/python3.12/site-packages/torch/nn/functional.py:2786(batch_norm)
+
+

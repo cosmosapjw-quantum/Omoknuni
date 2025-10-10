@@ -1,0 +1,19 @@
+✓ Loaded C++ profiling data
+✓ Loaded GPU profiling data
+✓ Loaded memory profiling data
+
+============================================================
+PROFILING SUMMARY
+============================================================
+Session: 20251010_185332
+Configuration: gomoku with 8 threads
+
+Top Bottlenecks:
+  🔴 GPU: Low utilization (89.2%)
+
+Performance Metrics:
+  GPU Utilization: 10.8%
+  GPU Memory: 1323.98MB
+  Peak Memory: 0.0MB
+  Tree Size: 35937 nodes
+============================================================
