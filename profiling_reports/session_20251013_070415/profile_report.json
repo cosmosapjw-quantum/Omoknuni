@@ -1,0 +1,87 @@
+{
+  "session_id": "20251013_070415",
+  "configuration": {
+    "game_type": "gomoku",
+    "threads": 4,
+    "simulations": 1600,
+    "batch_size": 32,
+    "timeout_ms": 2.0
+  },
+  "metrics": {
+    "python": {
+      "elapsed_time": 0.23781470401445404,
+      "gil_metrics": {
+        "total_time_seconds": 0.23806301498552784,
+        "thread_metrics": {},
+        "contention_events": [],
+        "summary": {
+          "num_threads": 0,
+          "gil_utilization": 0.0,
+          "avg_gil_time_per_thread": 0.0,
+          "avg_nogil_time_per_thread": 0.0,
+          "avg_wait_time_per_thread": 0.0,
+          "total_contention_events": 0,
+          "gil_efficiency": 0.0
+        },
+        "top_wait_hotspots": []
+      },
+      "top_functions": []
+    },
+    "memory": {
+      "samples_mb": [
+        0.07891368865966797,
+        0.10699176788330078,
+        0.17852115631103516,
+        0.1806640625,
+        0.1826467514038086,
+        0.18372154235839844,
+        0.18577289581298828,
+        0.18706130981445312,
+        0.19088268280029297,
+        0.1921710968017578
+      ],
+      "peak_mb": 0.1921710968017578,
+      "avg_mb": 0.1667346954345703
+    },
+    "thread_scaling": [
+      {
+        "threads": 1,
+        "elapsed": 1.39342388001387,
+        "throughput": 1148.2507390242756,
+        "efficiency": 1.0
+      },
+      {
+        "threads": 2,
+        "elapsed": 3.3490528580150567,
+        "throughput": 477.74701321026646,
+        "efficiency": 0.4160650605078045
+      },
+      {
+        "threads": 4,
+        "elapsed": 3.279580911010271,
+        "throughput": 487.8672133468181,
+        "efficiency": 0.4248786408457987
+      },
+      {
+        "threads": 8,
+        "elapsed": 3.421815042005619,
+        "throughput": 467.58810174093935,
+        "efficiency": 0.4072177668601125
+      },
+      {
+        "threads": 12,
+        "elapsed": 4.294747694017133,
+        "throughput": 372.5480782558905,
+        "efficiency": 0.3244483679343962
+      }
+    ]
+  },
+  "bottlenecks": [
+    {
+      "category": "Python",
+      "operation": "GIL contention",
+      "percentage": 100.0,
+      "severity": "high"
+    }
+  ]
+}

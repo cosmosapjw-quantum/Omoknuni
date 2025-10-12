@@ -1,0 +1,18 @@
+================================================================================
+COMPREHENSIVE MCTS PROFILING REPORT
+Session: 20251013_070415
+================================================================================
+
+Configuration:
+  game_type: gomoku
+  threads: 4
+  simulations: 1600
+  batch_size: 32
+  timeout_ms: 2.0
+
+Top Bottlenecks:
+  - Python: GIL contention (100.0%)
+
+Performance Metrics:
+  C++ throughput: 0.0 sims/sec
+  Peak memory: 0.2MB
