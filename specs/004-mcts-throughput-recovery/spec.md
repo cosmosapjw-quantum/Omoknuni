@@ -82,12 +82,16 @@
 - **Memory Efficiency**: 1MB queue, 270MB tree (10M nodes), 1MB DLPack buffers
 
 ### Performance Status
-- **Baseline**: 3,831 sims/sec (12.8% of 30k target) - Spec 003 result
-- **Phase 1+2 Complete**: All critical optimizations implemented (T001-T010, inc. T006c, T008f)
+
+**CRITICAL STATUS UPDATE (2025-10-12)**:
+- **Current Regression**: 2,147 sims/sec (56% of baseline, cause UNKNOWN)
+- **Baseline**: 3,831 sims/sec (configuration unknown, needs investigation)
+- **Phase 1+2 Complete**: All critical optimizations implemented (T001-T010, T006c, T008f)
 - **Phase 3 Partial**: T011 (coordinator lifecycle) + T014 (batched results) complete
-- **Expected (with all optimizations)**: ~12-25k sims/sec (theoretical from Phase 1+2+3)
-- **Actual Performance**: **NEEDS MEASUREMENT** - T016 benchmark suite required
-- **Target**: ≥25,000 sims/sec (achievable with implemented optimizations + tuning)
+- **Expected (with T006c+T008f)**: 18-36k sims/sec (theoretical, UNVALIDATED)
+- **Actual Performance**: **UNKNOWN** - T016 benchmarking CRITICAL NEXT STEP
+- **Blockers**: T017 (find baseline config) + T016 (measure actual gains) required
+- **Target**: ≥25,000 sims/sec (path unclear until T016/T017 complete)
 
 ### Critical Path Forward
 1. ✅ **~~T006c~~** - Condition variables (COMPLETE)

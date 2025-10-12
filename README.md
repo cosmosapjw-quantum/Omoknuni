@@ -4,22 +4,22 @@ A production-ready AlphaZero-style reinforcement learning engine for board games
 
 ## Project Status
 
-🚀 **Spec 004 Phase 2: 85% Complete** - Critical Missing Optimizations Identified
+🔴 **Spec 004 Phase 2: Complete - Performance Regression Under Investigation**
 
 ### Current Status
-- **Version**: 1.0.0-alpha + Spec 004 (Phase 2 85% Complete)
+- **Version**: 1.0.0-alpha + Spec 004 (Phase 2 Complete, Validation Pending)
 - **Alpha Release Date**: 2025-10-01
 - **Spec 002**: ✅ COMPLETE (2025-10-03) - C++ Simulation Runner (7× Python baseline)
 - **Spec 003**: ✅ COMPLETE (2025-10-05) - Async inference batching with comprehensive optimization
 - **Spec 004**: 🟡 IN PROGRESS (Started 2025-10-06) - MCTS Throughput Recovery
   - Phase 1: ✅ COMPLETE (T001 ✅ T001b ✅ T002 ✅ T003 ✅ T004 ✅ T005 ✅)
-  - Phase 2: 🟡 85% COMPLETE (T006/T006b/T007a-g/T008a-b,e/T009a-f/T010 ✅, **T006c/T008f CRITICAL**)
-  - Phase 3: 🟡 80% COMPLETE (T011 ✅ T012 ✅ T013 ✅ T014 ✅, T015 pending)
-  - Phase 4: ⏸️ NOT STARTED (T016-T025)
-  - Target: 25,000+ sims/sec (6.8× current performance)
-- **Current Performance**: 3,831 sims/sec peak (12.8% of 30k target)
-- **Critical Missing**: **T006c** (condition variables: 1.3-1.5× speedup) + **T008f** (FP16: 1.5-2× speedup)
-- **Expected Path**: 3,831 → +T006c: 12-18k → +T008f: 18-36k → +tuning: ≥25k sims/sec
+  - Phase 2: ✅ COMPLETE (T006/T006b/T006c/T007a-g/T008a-b,e,f/T009a-f/T010 ✅) **UNVALIDATED**
+  - Phase 3: 🟡 80% COMPLETE (T011 ✅ T014 ✅, T012/T013/T015 pending)
+  - Phase 4: 🔴 CRITICAL (T016 benchmarking + T017 baseline investigation) **NEXT PRIORITY**
+  - Target: 25,000+ sims/sec (11.6× current performance)
+- **Current Performance**: 2,147 sims/sec (REGRESSION from 3,831 baseline, cause under investigation)
+- **Implemented**: **T006c** (condition variables ✅) + **T008f** (FP16 mixed precision ✅) - impact UNVALIDATED
+- **Expected Path**: Current 2,147 → validate optimizations → expected 18-36k → +tuning: ≥25k sims/sec
 
 ### Spec 003 Complete: Performance Analysis & Optimization
 

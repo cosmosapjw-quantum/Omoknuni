@@ -2,9 +2,11 @@
 
 ## Executive Summary
 
-This specification addresses the critical performance bottleneck in our MCTS implementation, which currently achieves only **3,831 simulations/second (12.8% of the 30,000 target)**. Through comprehensive analysis and optimization, we define a path to achieve **≥25,000 simulations/second** while maintaining search quality.
+This specification addresses the critical performance bottleneck in our MCTS implementation. **Baseline performance: 3,831 sims/sec. Current performance: 2,147 sims/sec (56% REGRESSION, cause under investigation)**. Through comprehensive analysis and optimization, we define a path to achieve **≥25,000 simulations/second** while maintaining search quality.
 
 **Key Finding**: GPU inference accounts for only 32.8% of runtime while MCTS overhead consumes 67.2%, indicating the bottleneck is CPU-side coordination, not neural network evaluation.
+
+**Critical Status (2025-10-12)**: Phase 1+2 optimizations COMPLETE but UNVALIDATED. T016 benchmarking and T017 baseline investigation are NEXT PRIORITY to measure actual performance impact.
 
 ## Document Structure
 
@@ -121,14 +123,14 @@ Total copies: 0 (only GPU transfers)
 
 ## Performance Targets
 
-| Metric | Current | Target | Expected |
-|--------|---------|--------|----------|
-| Throughput | 3,831 sims/sec | 25,000 | 26,000 |
-| GPU Utilization | 32.8% | 85% | 85% |
-| Collision Rate | 18.2% | ≤5% | 4.7% |
-| Thread Efficiency | 42% @ 4 threads | 75% @ 8 | 78% |
-| Batch Size | Variable | 48 avg | 48 |
-| Memory Usage | <1GB | <1GB | ~500MB |
+| Metric | Baseline | Current | Target | Expected |
+|--------|----------|---------|--------|----------|
+| Throughput | 3,831 sims/sec | 2,147 sims/sec | 25,000 | 18-36k |
+| GPU Utilization | 32.8% | UNKNOWN | 85% | 85% |
+| Collision Rate | 18.2% | UNKNOWN | ≤5% | 4.7% |
+| Thread Efficiency | 42% @ 4 threads | UNKNOWN | 75% @ 8 | 78% |
+| Batch Size | Variable | UNKNOWN | 48 avg | 64 |
+| Memory Usage | <1GB | <1GB | <1GB | ~500MB |
 
 ## Quality Guarantees
 
@@ -150,7 +152,7 @@ Total copies: 0 (only GPU transfers)
 - A/B quality comparison
 - Gradual rollout (10% → 100%)
 
-## Implementation Status (Updated 2025-10-09)
+## Implementation Status (Updated 2025-10-12)
 
 - [✅] Specification complete
 - [✅] Technical research complete
@@ -164,43 +166,61 @@ Total copies: 0 (only GPU transfers)
   - Root pre-expansion ✅
   - Thread affinity ✅
   - Collision metrics ✅
-- [🟡] **Phase 2 implementation 85% COMPLETE** (T006-T010)
+- [✅] **Phase 2 implementation COMPLETE** (T006-T010) **UNVALIDATED**
   - Lock-free MPMC queue ✅ (T006)
   - AsyncInferenceQueue integration ✅ (T006b)
-  - 🔴 **CRITICAL MISSING: T006c** - Replace polling with condition variables (1.3-1.5× speedup)
+  - Condition variables ✅ (T006c, commit 2253a97) **UNVALIDATED**
   - DLPack tensor bridge ✅ (T007a-g complete)
-  - Python inference bridge 🟡 (T008a-b,e ✅; T008c-d skipped)
-  - 🔴 **CRITICAL MISSING: T008f** - Enable FP16 mixed precision (1.5-2× GPU speedup)
+  - Python inference bridge ✅ (T008a-b,e,f ✅; T008c-d skipped)
+  - FP16 mixed precision ✅ (T008f, commit 2253a97) **UNVALIDATED**
   - Per-thread memory arenas ✅ (T009a-f complete)
   - Pending expansions map replaced ✅ (T010)
-- [ ] Phase 3 implementation (not started)
-- [ ] Validation complete
+- [🟡] **Phase 3 implementation 80% COMPLETE** (T011-T015)
+  - Persistent coordinator lifecycle ✅ (T011)
+  - Batched result processing ✅ (T014)
+  - T012/T013/T015 pending
+- [🔴] **Phase 4 CRITICAL NEXT STEPS** (T016-T025)
+  - **T016**: Comprehensive benchmarking **HIGHEST PRIORITY**
+  - **T017**: Baseline configuration investigation **CRITICAL**
+  - Validation scripts created (profile_tensor_creation.py, validate_fp16_inference.py)
 
 ## Critical Path Forward
 
-**Two critical optimizations remain to achieve 25k sims/sec target:**
+**Performance Regression Investigation Required:**
 
-1. **T006c: Replace Polling with Condition Variables** (CRITICAL - 1 day)
-   - **Problem**: Current polling wastes 67% of CPU time (10μs sleep loops)
-   - **Solution**: Use `std::condition_variable` for efficient blocking
-   - **Impact**: **1.3-1.5× throughput improvement** (12-18k sims/sec)
-   - **Status**: Ready to implement (full code examples in tasks.md)
+**Current Status**: Phase 1+2 optimizations implemented but performance REGRESSED from 3,831 to 2,147 sims/sec (44% loss).
 
-2. **T008f: Enable FP16 Mixed Precision** (CRITICAL - 2 hours)
-   - **Problem**: FP16 not validated despite RTX 3060 Ti having tensor cores
-   - **Solution**: Validate `torch.cuda.amp.autocast()` and benchmark
-   - **Impact**: **1.5-2× GPU inference speedup** (18-36k sims/sec)
-   - **Status**: Ready to implement (full code examples in tasks.md)
+**Critical Next Steps:**
 
-3. **T016: Run Comprehensive Benchmarks** (HIGH PRIORITY - 2 days)
-   - Measure actual performance gains from Phase 1+2 optimizations
-   - Validate 25k sims/sec target achievement
+1. **T017: Baseline Configuration Investigation** (CRITICAL - 2 days)
+   - **Problem**: 3,831 baseline configuration unknown, can't reproduce
+   - **Action**: Archaeological dig through git history, configs, logs
+   - **Goal**: Find exact configuration that achieved 3,831 sims/sec
+   - **Status**: Script created (find_baseline_config.py), ready to run
 
-4. **T018-T019: Tune Parameters** (2 days)
+2. **T016: Run Comprehensive Benchmarks** (HIGHEST PRIORITY - 2 days)
+   - **Problem**: T006c and T008f implemented but impact UNKNOWN
+   - **Action**: Full benchmark suite (games × threads × batch sizes × timeouts)
+   - **Goal**: Measure actual performance of current implementation
+   - **Expected**: 18-36k sims/sec (if optimizations working)
+   - **Status**: Test suite exists, validation scripts created
+
+3. **Validate FP16 Mixed Precision** (HIGH PRIORITY - 1 hour)
+   - **Problem**: T008f marked complete but never validated
+   - **Action**: Run validate_fp16_inference.py to confirm FP16 working
+   - **Goal**: Prove ≥1.5× speedup, <0.01 MSE
+   - **Status**: Script created and ready
+
+4. **Profile Tensor Creation** (MEDIUM PRIORITY - 1 hour)
+   - **Problem**: 7.5ms overhead identified in review.pdf
+   - **Action**: Run profile_tensor_creation.py to diagnose
+   - **Goal**: Reduce to <1.0ms per batch (7× speedup)
+   - **Status**: Script created and ready
+
+5. **T018-T019: Tune Parameters** (2 days)
+   - **Prerequisite**: Complete T016/T017 first
    - Optimize batch size, timeout, virtual loss magnitude
    - Fine-tune for maximum throughput
-
-5. **Phase 3 & 4**: Final optimizations and validation (optional if target met)
 
 ## Success Criteria
 
@@ -224,6 +244,6 @@ For questions or clarifications about this specification, refer to the technical
 
 ---
 
-**Document Version**: 1.2.0
-**Last Updated**: 2025-10-09
-**Status**: Phase 2 85% Complete - T006c and T008f critical for 25k target
+**Document Version**: 1.3.0
+**Last Updated**: 2025-10-12
+**Status**: Phase 1+2 Complete but UNVALIDATED - T016/T017 critical to measure actual performance

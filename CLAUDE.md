@@ -18,11 +18,12 @@ This is a high-performance AlphaZero-style reinforcement learning engine targeti
 - **CPU**: Shared-tree MCTS with 2-4 threads using Structure-of-Arrays memory layout (optimal efficiency)
 - **GPU**: Asynchronous micro-batched neural network inference (batch size 64, 0.5-1.0ms timeout)
 - **Target Hardware**: AMD Ryzen 5900X + NVIDIA RTX 3060 Ti (8GB VRAM)
-- **Current Performance**: 3,831 sims/sec peak (12.8% of 30k target, Spec 003 complete, Spec 004 Phase 2 85% complete)
+- **Current Performance**: 2,147 sims/sec (REGRESSION from 3,831 baseline, cause under investigation)
 - **Performance Goals**: 80-92% GPU utilization, <1GB tree memory, 200-300 games/hour self-play
 - **Bottleneck**: MCTS overhead (67.2% of time) vs GPU inference (32.8%), requires architectural redesign
-- **Spec 004 Status**: Phase 1 ✅ (WU-UCT, epoch clearing, busy-edge, root pre-expansion, metrics), Phase 2 🟡 85% (lock-free queue, DLPack, thread arenas complete; **T006c condition variables** and **T008f FP16** critical missing)
-- **Expected Performance**: +T006c (condition variables): 12-18k sims/sec, +T008f (FP16): 18-36k sims/sec, Target: ≥25k sims/sec
+- **Spec 004 Status**: Phase 1 ✅ (complete), Phase 2 ✅ (complete, T006c+T008f implemented but UNVALIDATED), Phase 3 🟡 (80% complete)
+- **Critical Next Steps**: T016 benchmarking + T017 baseline investigation to measure actual T006c+T008f impact
+- **Expected Performance**: +T006c+T008f: 18-36k sims/sec (theoretical, needs validation), Target: ≥25k sims/sec
 
 ## Architecture Overview
 
@@ -31,12 +32,12 @@ The codebase follows a hybrid approach with Python orchestration and C++/pybind1
 ### Core Components
 - **C++ Simulation Runner** (`cpp_extensions/mcts/simulation_runner.cpp`): Zero-GIL MCTS simulation pipeline (select → expand → backup) achieving 1,744+ sims/sec (7× Python baseline), ready for 30k+ with GPU batching
 - **MCTS Engine** (`cpp_extensions/mcts/`): C++17 implementation with WU-UCT virtual loss, busy-edge masking, AVX2-vectorized PUCT selection (3.6-5.2x speedup), epoch-based tree clearing (1M× speedup)
-- **Async Inference Queue** (`cpp_extensions/mcts/async_inference_queue.cpp`): Lock-free MPMC ring buffer (4096 entries) with turn-based synchronization, **requires T006c condition variables** to eliminate 67% CPU waste
+- **Async Inference Queue** (`cpp_extensions/mcts/async_inference_queue.cpp`): Lock-free MPMC ring buffer (4096 entries) with condition variables (T006c complete), eliminating polling waste
 - **DLPack Tensor Bridge** (`cpp_extensions/dlpack/`): Zero-copy tensor sharing (C++ ↔ PyTorch), pinned memory pools (4KB-4MB size classes), PyCapsule wrappers for torch.from_dlpack()
 - **Thread-Local Arenas** (`cpp_extensions/mcts/thread_local_arena.cpp`): 4096-node block allocation, 99.93% fast-path (thread-local), 0.07% slow-path (mutex fallback)
 - **Game Adapters** (`cpp_extensions/games/`): Uniform interface for Gomoku/Chess/Go with in-place move application, zero-copy feature extraction to DLPack tensors
 - **Python Bindings** (`cpp_extensions/mcts/python_bindings.cpp`): pybind11 module exposing SimulationRunner, PyInferenceCallback bridge, DLPack tensors, move storage API
-- **Neural Network** (`src/neural/`): ResNet with Squeeze-Excitation blocks (20 blocks, 256 channels), **requires T008f FP16 validation** for 2× GPU speedup
+- **Neural Network** (`src/neural/`): ResNet with Squeeze-Excitation blocks (20 blocks, 256 channels), FP16 mixed precision implemented (T008f complete, validation pending)
 - **Training Pipeline** (`src/training/`): Experience replay buffer using memory-mapped files, AdamW optimizer with cosine scheduling
 
 ### Memory Design
@@ -372,7 +373,7 @@ See `docs/mcts_cpp_runner.md` for detailed architecture and `docs/performance/cp
 ### Performance Targets (from specs)
 | Metric | Target | Achieved | Status |
 |--------|--------|----------|--------|
-| Simulations/sec | 30-40k | 3,831 (12.8% of target) | ⚠️ Architecture redesign needed |
+| Simulations/sec | 30-40k | 2,147 (7.2% of target) | 🔴 Regression under investigation |
 | GPU utilization | 80-92% | ~68% (batch 64) | ⚠️ Not the bottleneck |
 | Average batch size | 32-64 | 45-85 (optimal: 64) | ✅ Complete |
 | Batch timeout | ≤3ms | 0.5-1.0ms optimal | ✅ Complete |
@@ -385,11 +386,13 @@ See `docs/mcts_cpp_runner.md` for detailed architecture and `docs/performance/cp
 
 **Critical Finding (Spec 003)**: GPU inference is only 32.8% of total time. MCTS overhead (67.2%) from thread coordination, selection, and backup is the bottleneck. Current architecture can achieve max ~8k sims/sec even with full optimization. Achieving 30k requires fundamental architectural changes.
 
-**Spec 004 Progress (2025-10-09)**:
+**Spec 004 Progress (2025-10-12)**:
 - **Phase 1 Complete** (✅): WU-UCT virtual loss, epoch clearing, busy-edge masking, root pre-expansion, thread affinity, collision metrics
-- **Phase 2 85% Complete** (🟡): Lock-free queue (T006/T006b ✅), DLPack bridge (T007a-g ✅), Python integration (T008a-b,e ✅), thread arenas (T009a-f ✅), pending map replacement (T010 ✅)
-- **Critical Missing** (🔴): T006c condition variables (1.3-1.5× speedup, eliminates 67% CPU waste), T008f FP16 mixed precision (1.5-2× GPU speedup)
-- **Path to 30k**: Current 3,831 → +T006c 12-18k → +T008f 18-36k → +tuning ≥25k sims/sec (target achieved)
+- **Phase 2 Complete** (✅): Lock-free queue (T006/T006b ✅), condition variables (T006c ✅), DLPack bridge (T007a-g ✅), FP16 mixed precision (T008f ✅), Python integration (T008a-b,e ✅), thread arenas (T009a-f ✅), pending map replacement (T010 ✅)
+- **Phase 3 Partial** (🟡): Persistent coordinator (T011 ✅), batched results (T014 ✅), remaining optimizations pending
+- **Current Status** (🔴): Performance regression to 2,147 sims/sec (from 3,831 baseline), cause under investigation (T017)
+- **Critical Next Steps**: T016 benchmarking + T017 baseline investigation to validate T006c+T008f impact
+- **Path to 30k**: Current 2,147 → validate optimizations → expected 18-36k → +tuning ≥25k sims/sec (target)
 
 See `specs/004-mcts-throughput-recovery/spec.md` for detailed status and `review.pdf` for comprehensive analysis.
 
