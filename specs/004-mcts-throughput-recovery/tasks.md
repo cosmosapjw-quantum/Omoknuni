@@ -2822,18 +2822,109 @@ T021 (Soak Tests) → T022 (Migration) → T023 (Docs) → T024 (Configs)
 - Optimization tuning (T013, T015, T018-T019)
 - Documentation tasks (T021-T024)
 
+## Needs Decision 🔴 CRITICAL BLOCKER
+
+**Date**: 2025-10-13
+**Identified By**: T016/T017 Benchmarking and Profiling
+**Status**: BLOCKING ALL FURTHER OPTIMIZATION
+
+### Critical Performance Regression Discovered
+
+After completing all Phase 1 and Phase 2 optimizations (T001-T014), comprehensive benchmarking revealed a **catastrophic performance regression**:
+
+**Performance Results:**
+- **Current Best**: 2,235 sims/sec (4 threads)
+- **Baseline (Spec 003)**: 3,831 sims/sec (8 threads)
+- **Regression**: -42% from baseline
+- **Target**: 25,000 sims/sec
+- **Achievement**: 8.9% of target
+
+**Thread Scaling Completely Broken:**
+- 1 thread: 1,364 sims/sec (100% efficient)
+- 2 threads: 1,241 sims/sec (45% efficient) ⚠️ HUGE DROP
+- 4 threads: 2,235 sims/sec (41% efficient)
+- 8 threads: 1,450 sims/sec (13% efficient)
+- 12 threads: 1,025 sims/sec (6% efficient) 🔴 CATASTROPHIC
+
+### Root Cause
+
+**Severe Thread Contention**: Adding threads makes performance WORSE instead of better. Parallel efficiency collapses to <50% with just 2 threads, and <10% with 12 threads.
+
+**Evidence**:
+1. Profiler reports "100% GIL contention" but C++ should release GIL
+2. GPU utilization only 64% vs 80-92% target (CPU can't feed GPU fast enough)
+3. All optimizations ARE enabled and working (T006c, T008f, T007, T009)
+4. Single-thread performance is low (1,364 sims/sec vs expected 5-8k)
+
+**Artifact**: Full analysis in `docs/performance/T016_T017_benchmark_results.md`
+
+### Decision Required
+
+**Options:**
+
+1. **RECOMMENDED: Root Cause Investigation** (2-3 days)
+   - Profile thread contention with perf/vtune
+   - Instrument AsyncInferenceQueue with detailed timing
+   - Compare against Spec 003 commit (git bisect)
+   - Identify exact bottleneck in C++ layer
+   - **Rationale**: Can't proceed without understanding why parallelization is broken
+
+2. **Compare Against Spec 003** (1 day)
+   - Checkout e933bc5 (Spec 003 complete)
+   - Run identical benchmark to verify baseline
+   - Use git bisect to find regression commit
+   - **Rationale**: Determine if regression is from recent changes or older
+
+3. **Single-Thread Optimization First** (1-2 days)
+   - Focus on improving single-thread from 1,364 → 5-8k sims/sec
+   - Then fix parallelization separately
+   - **Rationale**: Build strong foundation before adding threads
+
+4. **Revert Recent Changes** (½ day)
+   - Disable T006c (condition variables)
+   - Disable T008f (FP16)
+   - Test each optimization in isolation
+   - **Rationale**: Determine if specific optimization introduced regression
+
+### Recommendation
+
+**Proceed with Option 1 + Option 2 in parallel:**
+1. Profile current implementation to identify contention point
+2. Compare against Spec 003 baseline to confirm regression
+3. Use findings to guide targeted fix
+
+**DO NOT proceed with T018-T020 tuning** until thread contention is resolved. Parameter tuning will have minimal impact when parallelization is fundamentally broken.
+
+### Required Actions Before Continuing
+
+- [ ] Profile thread contention in C++ (identify exact bottleneck)
+- [ ] Compare against Spec 003 baseline (verify 3,831 sims/sec)
+- [ ] Git bisect to find regression commit (if baseline runs fine)
+- [ ] Fix thread contention bottleneck
+- [ ] Re-benchmark to confirm fix
+- [ ] Only then proceed with T018-T020 tuning
+
+### Impact
+
+**Timeline**: +2-4 days (investigation + fix)
+**Target Achievability**: Unknown until contention resolved
+**Risk**: HIGH - fundamental architecture issue, not a tuning problem
+
+---
+
 ## Success Tracking
 
 Progress dashboard tracking:
-- Throughput: Current vs Target (25k)
-- GPU Utilization: Current vs Target (85%)
-- Collision Rate: Current vs Target (5%)
-- Tasks Complete: X/25
-- Tests Passing: X/Y
-- Quality Metrics: Within tolerance
+- Throughput: **2,235 sims/sec** vs Target (25k) = **8.9%** ⚠️
+- GPU Utilization: **64%** vs Target (85%) = **75%** ⚠️
+- Collision Rate: Unknown vs Target (5%)
+- Tasks Complete: **16/25** (64%)
+- Tests Passing: All unit tests pass
+- Quality Metrics: Not measured (blocked by performance issue)
+- **Critical Blocker**: Thread contention preventing scale-out
 
 Weekly milestones:
-- Week 1: 12k sims/sec (Phase 1 complete)
-- Week 2: 20k sims/sec (Phase 2 complete)
-- Week 3: 25k sims/sec (Phase 3 complete)
-- Week 4: Validated and documented
+- Week 1: ~~12k sims/sec~~ **3.8k achieved** (Phase 1 complete)
+- Week 2: ~~20k sims/sec~~ **2.2k achieved** (Phase 2 complete, REGRESSION)
+- Week 3: **BLOCKED** - Must fix thread contention first
+- Week 4: **BLOCKED** - Cannot proceed to validation
