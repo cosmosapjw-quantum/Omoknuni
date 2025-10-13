@@ -6,10 +6,22 @@ description: |
   Zero-copy tensor bridge between C++ and Python using DLPack protocol
   for efficient GPU inference without data copying or GIL overhead.
 
+  **⚠️ PERFORMANCE CRITICAL (2025-10-13 Validation):**
+  - Current Implementation: 7.5ms tensor creation overhead (T-VALID-2)
+  - Root Cause: Feature extraction loop NOT parallelized with OpenMP
+  - Required Fix: Add `#pragma omp parallel for` to dlpack_bridge.cpp:431-434
+  - Expected Improvement: 7.5ms → <1.0ms with 12-thread parallelization
+
+  **Memory Model Clarification:**
+  - Uses PINNED CPU MEMORY (kDLCUDAHost), NOT direct GPU device memory (kDLCUDA)
+  - Tensor resides in pinned host memory for fast H2D GPU transfers (~0.24ms)
+  - PyTorch receives CPU-accessible tensor, then transfers to GPU as needed
+
 dependencies:
   - dlpack.h (DLPack protocol headers)
-  - CUDA runtime (for pinned memory)
+  - CUDA runtime (for pinned host memory allocation via cudaMallocHost)
   - PyTorch 2.0+ (DLPack support)
+  - OpenMP (CRITICAL: for parallel feature extraction)
 
 classes:
   DLPackTensorBridge:
@@ -189,9 +201,15 @@ performance_metrics:
     improvement: 3.9x
 
   end_to_end_batch_prep:
-    current: 5ms (64 states)
-    optimized: 0.5ms (64 states)
-    improvement: 10x
+    baseline_python: 5ms (64 states, Python loops)
+    current_implementation: 7.5ms (64 states, T-VALID-2 measured)
+    target_with_openmp: <1.0ms (64 states, parallelized)
+
+  validation_results_2025_10_13:
+    measured_overhead: 7.50 ± 0.20 ms per batch-64
+    bottleneck: Sequential feature extraction loop
+    required_fix: OpenMP parallelization
+    expected_speedup: 7-10× with 12 threads
 
 tensor_format:
   gomoku:

@@ -77,10 +77,17 @@ public:
 
 Zero-copy tensor bridge between C++ and Python using DLPack protocol.
 
+**⚠️ CRITICAL PERFORMANCE NOTE (2025-10-13):**
+- Feature extraction loop currently NOT parallelized with OpenMP
+- Measured overhead: 7.5ms per batch-64 (T-VALID-2)
+- Required fix: Add `#pragma omp parallel for` to `dlpack_bridge.cpp:431-434`
+- Expected improvement: 7.5ms → <1.0ms with 12-thread parallelization
+
 ```cpp
 class DLPackTensorBridge {
 private:
-    // Pinned memory pool for GPU transfers
+    // Pinned CPU memory pool (NOT GPU device memory)
+    // DLPack tensors use kDLCUDAHost device type (pinned host memory)
     struct PinnedBuffer {
         void* data;
         size_t size;
@@ -104,6 +111,7 @@ public:
     );
 
     // Direct feature extraction into pinned memory
+    // TODO: Parallelize this loop with OpenMP (7.5ms bottleneck)
     void extract_features_direct(
         const IGameState* state,
         float* output_buffer,
@@ -117,8 +125,8 @@ public:
 
 // Memory layout per batch:
 // - Batch 64 × 36 channels × 15×15 = 518,400 floats = 2MB
-// - Pre-allocated pinned memory pool: 8MB (4 buffers)
-// - Double buffering for async GPU transfers
+// - Pre-allocated pinned CPU memory pool: 8MB (4 buffers)
+// - Double buffering for async GPU transfers (H2D copy ~0.24ms)
 ```
 
 ### 4. ThreadLocalArena

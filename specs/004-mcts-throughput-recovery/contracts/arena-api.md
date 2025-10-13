@@ -27,7 +27,7 @@ Current MCTS implementation uses global malloc/free for node allocation:
 - **Cache misses**: Nodes scattered across memory pages
 - **Overhead**: malloc metadata adds 8-16 bytes per allocation
 
-With 30k simulations/second and ~100 node allocations per simulation, we perform **3M allocations/second**. At 50ns per malloc, this is **150ms/second = 15% overhead**.
+With 8k simulations/second target (realistic) and ~100 node allocations per simulation, we perform **800k allocations/second**. At 50ns per malloc, this is **40ms/second = 4% overhead**.
 
 ### 1.2 Research: Existing Arena Allocators
 

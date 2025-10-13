@@ -205,23 +205,36 @@ performance_optimizations:
 
 benchmarks:
   throughput:
-    baseline: 3,831 sims/sec
-    optimized: 26,000 sims/sec
-    improvement: 6.8x
+    baseline_original: 3,831 sims/sec (configuration TBD)
+    current_regression: 2,147 sims/sec (cause under investigation)
+    target_realistic: 8,000-10,000 sims/sec (revised 2025-10-13)
+    target_minimum: 6,000 sims/sec
+    improvement_expected: 3.7-4.7x from current
+
+  validation_results_2025_10_13:
+    fp16_speedup: 1.72× (52.83ms → 30.69ms @ batch-64, T-VALID-1)
+    tensor_creation_overhead: 7.5ms (needs OpenMP fix, T-VALID-2)
 
   latency:
     baseline:
-      queue: 2ms
-      inference: 3ms
-      total: 5ms
-    optimized:
-      queue: 0.1ms
-      inference: 1.5ms
-      total: 1.6ms
+      queue: 2ms (estimated)
+      inference: 3ms (estimated)
+      total: 5ms (estimated)
+    target_optimized:
+      queue: <0.5ms
+      inference_fp32: ~8ms @ batch-64
+      inference_fp16: ~5ms @ batch-64 (validated: 1.72× speedup)
+      tensor_creation: <1ms (after OpenMP fix, currently 7.5ms)
+      total: <6ms
 
   gpu_utilization:
-    baseline: 32%
-    optimized: 85%
+    baseline: ~55-68%
+    target: 80-85%
+
+  hardware_limits_2025_10_13:
+    gpu_model: RTX 3060 Ti
+    max_throughput_fp16: 8,000-10,000 states/sec
+    rationale: Hardware physically cannot exceed 10k states/sec @ FP16
 
 usage_example: |
   ```cpp

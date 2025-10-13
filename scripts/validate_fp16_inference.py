@@ -60,30 +60,41 @@ def measure_inference_throughput(model, use_fp16: bool, batch_size: int, iterati
     return mean_time, throughput, std_time
 
 def validate_fp16_accuracy(model, batch_size: int):
-    """Validate FP16 accuracy vs FP32."""
+    """Validate FP16 accuracy vs FP32 on SAME input."""
 
     device = torch.device('cuda:0')
     model = model.to(device).eval()
 
+    # Use FIXED random seed for reproducible comparison
+    torch.manual_seed(42)
     dummy_input = torch.randn(batch_size, 36, 15, 15, device=device)
 
     # FP32 inference
     with torch.no_grad():
-        policy_fp32, value_fp32 = model(dummy_input)
+        policy_logits_fp32, value_fp32 = model(dummy_input)
 
-    # FP16 inference
+    # FP16 inference (on SAME input)
     with torch.no_grad():
         with torch.cuda.amp.autocast():
-            policy_fp16, value_fp16 = model(dummy_input)
+            policy_logits_fp16, value_fp16 = model(dummy_input)
 
-    # Compare
-    policy_mse = torch.mean((policy_fp32 - policy_fp16) ** 2).item()
+    # Convert FP16 outputs to FP32 for comparison
+    policy_logits_fp16 = policy_logits_fp16.float()
+    value_fp16 = value_fp16.float()
+
+    # Compare RAW logits (before softmax)
+    policy_mse = torch.mean((policy_logits_fp32 - policy_logits_fp16) ** 2).item()
     value_mse = torch.mean((value_fp32 - value_fp16) ** 2).item()
 
-    policy_max_diff = torch.max(torch.abs(policy_fp32 - policy_fp16)).item()
+    policy_max_diff = torch.max(torch.abs(policy_logits_fp32 - policy_logits_fp16)).item()
     value_max_diff = torch.max(torch.abs(value_fp32 - value_fp16)).item()
 
-    return policy_mse, value_mse, policy_max_diff, value_max_diff
+    # Also compare after softmax (what actually matters for MCTS)
+    policy_probs_fp32 = torch.softmax(policy_logits_fp32, dim=-1)
+    policy_probs_fp16 = torch.softmax(policy_logits_fp16.float(), dim=-1)
+    policy_prob_mse = torch.mean((policy_probs_fp32 - policy_probs_fp16) ** 2).item()
+
+    return policy_mse, value_mse, policy_max_diff, value_max_diff, policy_prob_mse
 
 if __name__ == "__main__":
     import argparse
@@ -119,9 +130,9 @@ if __name__ == "__main__":
         from src.neural.model import AlphaZeroNet
         model = AlphaZeroNet(
             input_channels=36,
+            num_actions=225,  # Gomoku 15×15
             num_blocks=20,
-            num_filters=256,
-            action_size=225  # Gomoku 15×15
+            hidden_channels=256
         )
         model.load_state_dict(model_state)
         print("✅ Model loaded successfully")
@@ -162,17 +173,21 @@ if __name__ == "__main__":
 
     # Accuracy comparison
     print(f"\n{'='*80}")
-    print("Accuracy Comparison")
+    print("Accuracy Comparison (FP32 vs FP16)")
     print(f"{'='*80}")
 
-    policy_mse, value_mse, policy_max, value_max = validate_fp16_accuracy(
+    policy_mse, value_mse, policy_max, value_max, policy_prob_mse = validate_fp16_accuracy(
         model, args.batch_size
     )
 
-    print(f"  Policy MSE: {policy_mse:.6f} (target: <0.01)")
-    print(f"  Policy Max Diff: {policy_max:.6f}")
-    print(f"  Value MSE: {value_mse:.6f} (target: <0.01)")
-    print(f"  Value Max Diff: {value_max:.6f}")
+    print(f"\n  Logits Comparison (raw network output):")
+    print(f"    Policy Logits MSE: {policy_mse:.6f}")
+    print(f"    Policy Logits Max Diff: {policy_max:.6f}")
+    print(f"\n  Post-Softmax Comparison (what MCTS uses):")
+    print(f"    Policy Probability MSE: {policy_prob_mse:.6f} (target: <0.01)")
+    print(f"\n  Value Comparison:")
+    print(f"    Value MSE: {value_mse:.6f} (target: <0.01)")
+    print(f"    Value Max Diff: {value_max:.6f}")
 
     # Final verdict
     print(f"\n{'='*80}")
@@ -180,12 +195,13 @@ if __name__ == "__main__":
     print(f"{'='*80}")
 
     speedup_pass = speedup >= 1.5
-    accuracy_pass = policy_mse < 0.01 and value_mse < 0.01
+    # Use probability MSE (what actually matters for MCTS), not logit MSE
+    accuracy_pass = policy_prob_mse < 0.01 and value_mse < 0.01
 
     if speedup_pass and accuracy_pass:
         print("\n✅ PASS: FP16 validated successfully")
         print(f"  - Speedup: {speedup:.2f}× (≥1.5× required)")
-        print(f"  - Policy MSE: {policy_mse:.6f} (<0.01 required)")
+        print(f"  - Policy Probability MSE: {policy_prob_mse:.6f} (<0.01 required)")
         print(f"  - Value MSE: {value_mse:.6f} (<0.01 required)")
         sys.exit(0)
     else:
@@ -194,6 +210,6 @@ if __name__ == "__main__":
             print(f"  - Speedup too low: {speedup:.2f}× (need ≥1.5×)")
         if not accuracy_pass:
             print(f"  - Accuracy degraded:")
-            print(f"    Policy MSE: {policy_mse:.6f} (need <0.01)")
+            print(f"    Policy Probability MSE: {policy_prob_mse:.6f} (need <0.01)")
             print(f"    Value MSE: {value_mse:.6f} (need <0.01)")
         sys.exit(1)

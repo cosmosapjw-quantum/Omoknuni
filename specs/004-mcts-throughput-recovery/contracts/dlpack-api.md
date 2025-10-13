@@ -1,13 +1,33 @@
 # DLPack Tensor Bridge API Specification
 
-**Version**: 1.0.0
-**Status**: Design Complete
+**Version**: 1.1.0 (Updated with Validation Results)
+**Status**: Design Complete, Implementation Validated (2025-10-13)
 **Author**: Claude Code
-**Date**: 2025-10-08
+**Date**: 2025-10-08 (Updated: 2025-10-13)
+
+## ⚠️ CRITICAL PERFORMANCE NOTE (2025-10-13 Validation)
+
+**T-VALID-2 Findings:**
+- **Measured Overhead**: 7.50 ± 0.20 ms per batch-64 (target: <1.0ms)
+- **Root Cause**: Feature extraction loop NOT parallelized with OpenMP
+- **Location**: `cpp_extensions/mcts/dlpack_bridge.cpp:431-434`
+- **Required Fix**:
+  ```cpp
+  #pragma omp parallel for schedule(static) if(batch_size > 8)
+  for (int i = 0; i < batch_size; ++i) {
+      float* state_buffer = data + (i * state_size);
+      states[i]->extract_features_to_buffer(state_buffer);
+  }
+  ```
+- **Expected Improvement**: 7.5ms → <1.0ms with 12-thread parallelization
+
+See [validation_report_2025-10-13.md](../../../docs/performance/validation_report_2025-10-13.md) for detailed results.
 
 ## Overview
 
 This document specifies the C++ API for zero-copy tensor exchange between C++ MCTS simulation and PyTorch neural network inference using the DLPack protocol.
+
+**Memory Model**: Uses PINNED CPU MEMORY (kDLCUDAHost), NOT direct GPU device memory (kDLCUDA). Tensor resides in pinned host memory for fast H2D GPU transfers (~0.24ms).
 
 ## DLPack Background
 
@@ -60,9 +80,9 @@ typedef struct {
 ```
 
 **Device Types**:
-- `kDLCPU = 1`: CPU memory
-- `kDLCUDA = 2`: CUDA GPU memory
-- `kDLCUDAHost = 3`: CUDA pinned host memory
+- `kDLCPU = 1`: CPU memory (pageable)
+- `kDLCUDA = 2`: CUDA GPU device memory (on-device)
+- `kDLCUDAHost = 3`: CUDA pinned host memory (CPU-accessible, fast GPU transfers) ← **WE USE THIS**
 
 **Data Types**:
 - `kDLFloat = 2`: Floating-point (float32 for us)
@@ -455,14 +475,15 @@ try {
 
 ## Performance Targets
 
-| Operation | Target | Notes |
-|-----------|--------|-------|
-| `create_batch_tensor(64)` | <0.5ms | Including feature extraction |
-| Feature extraction per state | <10μs | Direct write to buffer |
-| Buffer allocation (cached) | <1μs | From BufferPool |
-| Buffer allocation (new) | <100μs | cudaMallocHost call |
-| PyTorch capsule consumption | <50μs | torch.from_dlpack() overhead |
-| **Total overhead** | <1ms | vs 5-10ms for numpy conversion |
+| Operation | Target | Current (T-VALID-2) | Status |
+|-----------|--------|---------------------|--------|
+| `create_batch_tensor(64)` | <1.0ms | 7.50 ± 0.20 ms | ❌ NEEDS FIX |
+| Feature extraction per state | <10μs | ~117μs (7.5ms / 64) | ❌ NEEDS OPENMP |
+| Feature extraction per state (with OpenMP) | <10μs | <16μs (1ms / 64) | ⏳ PENDING FIX |
+| Buffer allocation (cached) | <1μs | Not measured | N/A |
+| Buffer allocation (new) | <100μs | Not measured | N/A |
+| PyTorch capsule consumption | <50μs | Not measured | ✅ (validated functional) |
+| **Total overhead** | <1ms | 7.5ms | ❌ **CRITICAL BLOCKER** |
 
 ## Integration with BatchInferenceCoordinator
 

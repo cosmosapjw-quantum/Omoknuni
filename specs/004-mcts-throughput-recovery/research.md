@@ -280,18 +280,32 @@ Threads | Throughput | Efficiency | Collision Rate
 4. **Python overhead eliminatable** - DLPack provides zero-copy bridge
 5. **Thread affinity matters** - 15-20% gain on Ryzen 5900X
 
-### Expected Outcome
-- **Baseline**: 3,831 sims/sec
-- **After Phase 1**: ~12,000 sims/sec (3.1x)
-- **After Phase 2**: ~20,000 sims/sec (5.2x)
-- **After Phase 3**: ~26,000 sims/sec (6.8x)
-- **Success Criteria**: ≥25,000 sims/sec ✓
+### Expected Outcome (REVISED 2025-10-13)
+
+**Baseline Performance:**
+- 3,831 sims/sec (original baseline, configuration TBD via T017)
+- 2,147 sims/sec (current regression, cause under investigation)
+
+**Validated Optimizations:**
+- FP16 mixed precision: 1.72× GPU speedup (T-VALID-1)
+- Tensor creation bottleneck: 7.5ms overhead requires OpenMP fix (T-VALID-2)
+
+**Expected Performance Progression:**
+- **After Phase 1**: ~4,000 sims/sec (2× from current regression)
+- **After Phase 2**: ~7,000 sims/sec (1.75× with FP16 + OpenMP fix)
+- **After Phase 3**: ~8,000-10,000 sims/sec (1.2-1.4× with tuning)
+- **Success Criteria**: ≥8,000 sims/sec (hardware-grounded target)
+
+**Rationale for Revised Targets:**
+- RTX 3060 Ti @ FP16: Maximum 8,000-10,000 states/sec GPU throughput
+- Original 25k-30k targets exceed GPU hardware capabilities
+- Achieving >10k would require model pruning or multi-GPU (out of scope)
 
 ### Future Work
-1. **GPU-Accelerated MCTS**: CUDA selection kernel
-2. **Larger Models**: Scaling to 40+ blocks
-3. **Multi-GPU**: Root parallelization for >100k sims/sec
-4. **Hardware Upgrade**: RTX 4090 could reach 40k+ sims/sec
+1. **GPU-Accelerated MCTS**: CUDA selection kernel (research phase)
+2. **Model Optimization**: Pruning/quantization to reduce inference time
+3. **Multi-GPU**: Root parallelization for >20k sims/sec
+4. **Hardware Upgrade**: RTX 4090 could reach 15-20k sims/sec (still bounded by model size)
 
 ## References
 

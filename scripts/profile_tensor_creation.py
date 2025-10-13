@@ -14,14 +14,14 @@ def profile_tensor_creation(batch_size: int, iterations: int, detailed: bool = F
 
     try:
         import mcts_py
-        from src.games.gomoku import GomokuState
+        import alphazero_py
     except ImportError as e:
         print(f"❌ Import error: {e}")
         print("Make sure MCTS extension is built: python -m pip install -e .")
         return None
 
-    # Create states
-    states = [GomokuState() for _ in range(batch_size)]
+    # Create states (use alphazero_py which has the game implementations)
+    states = [alphazero_py.GomokuState(board_size=15) for _ in range(batch_size)]
 
     timings = []
     for i in range(iterations):

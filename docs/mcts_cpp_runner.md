@@ -4,7 +4,7 @@
 **Last Updated:** 2025-10-07
 **Spec:** `specs/002-cpp-simulation-runner/`
 
-This guide documents the C++ MCTS simulation runner implementation, which replaces the Python simulation loop to achieve 30-40k simulations/second (vs 246 sims/sec Python baseline).
+This guide documents the C++ MCTS simulation runner implementation, which replaces the Python simulation loop to achieve 8,000 simulations/second target (realistic, hardware-grounded, vs 246 sims/sec Python baseline).
 
 ---
 

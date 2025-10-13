@@ -36,8 +36,12 @@ pip install pybind11[global]>=2.10.0  # For DLPack support
 
 ```bash
 # Set optimization flags for Ryzen 5900X
+# IMPORTANT: -fopenmp is CRITICAL for DLPack feature extraction parallelization
 export CFLAGS="-O3 -march=znver3 -mtune=znver3 -fopenmp"
 export CXXFLAGS="-O3 -march=znver3 -mtune=znver3 -fopenmp -std=c++17"
+
+# Verify OpenMP is available
+echo | cpp -fopenmp -dM | grep -i open
 
 # Enable CUDA if available
 export CUDA_HOME=/usr/local/cuda-12.1
@@ -118,6 +122,10 @@ python scripts/benchmark_throughput.py --tag optimized --game gomoku
 
 # Generate comparison report
 python scripts/compare_benchmarks.py baseline optimized
+
+# Validation tests (T-VALID-1 and T-VALID-2)
+python scripts/validate_fp16_inference.py  # Should show 1.72× speedup
+python scripts/profile_tensor_creation.py  # Should show 7.5ms overhead
 ```
 
 ## Configuration
@@ -198,39 +206,47 @@ Run the validation script to verify optimizations:
 python scripts/validate_optimizations.py
 ```
 
-Expected output:
+Expected output (REVISED TARGETS 2025-10-13):
 ```
 MCTS Throughput Recovery - Validation Report
 ============================================
 
 Throughput:
-  Baseline:   3,831 sims/sec
-  Optimized: 26,142 sims/sec
-  Improvement: 6.82x ✓
+  Baseline:   3,831 sims/sec (original)
+  Current:    2,147 sims/sec (regression under investigation)
+  Optimized:  8,000-10,000 sims/sec (target range)
+  Improvement: 3.7-4.7x from current ✓
 
 GPU Utilization:
-  Baseline:  32.8%
-  Optimized: 85.3% ✓
+  Baseline:  ~55-68%
+  Optimized: 80-85% ✓
 
 Collision Rate:
-  Baseline:  18.2%
-  Optimized:  4.7% ✓
+  Baseline:  Unknown (needs T016 benchmarking)
+  Optimized:  <5% ✓
 
 Batch Efficiency:
-  Average Size: 48.3 / 64 (75.5%) ✓
-  Timeout Rate: 22.3%
-  Size Trigger: 77.7%
+  Average Size: 48-64 (target 75%+) ✓
+  Timeout Rate: <30%
+  Size Trigger: >70%
 
 Thread Efficiency (8 threads):
-  Baseline:  42.3%
-  Optimized: 78.6% ✓
+  Target: ≥75% ✓
 
 Search Quality:
-  Policy Agreement: 96.2% ✓
-  Value MSE: 0.008 ✓
-  Win Rate vs Baseline: 99.8% ✓
+  Policy Agreement: ≥95% ✓
+  Value MSE: ≤0.01 ✓
+  Win Rate vs Baseline: ≥99.5% ✓
 
-All validation checks PASSED!
+FP16 Mixed Precision (T-VALID-1):
+  Speedup: 1.72× ✓
+  Policy MSE: 0.000007 ✓
+  Value MSE: 0.000000 ✓
+
+Tensor Creation (T-VALID-2):
+  Current: 7.5ms ❌
+  Target: <1.0ms
+  Fix Required: OpenMP parallelization in dlpack_bridge.cpp
 ```
 
 ### Troubleshooting

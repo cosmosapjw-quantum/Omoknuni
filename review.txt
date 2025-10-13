@@ -1,0 +1,245 @@
+Current MCTS Throughput Bottlenecks
+1. Inefficient Multi-Threading & GIL Contention: The existing MCTS search isn’t effectively utilizing all 12
+CPU cores. In early tests, adding threads yielded minimal speedup (~12.5% efficiency scaling to 8 threads)
+  1 . The root cause was Python’s GIL and synchronous inference calls: originally each simulation would
+
+acquire the GIL to call the neural network, forcing threads to run one at a time. Even after introducing batch
+inference, threads are often idle waiting for inference to complete. Recent profiling shows ~60% of the
+total search time is spent with threads waiting (idle) rather than doing useful work 2 . This indicates the
+parallelism is not fully exploited – threads frequently block on shared resources (the neural network and
+tree updates). In short, the current design doesn’t keep all CPU cores busy; either they contend for the GIL
+or they stall waiting for batched inference results.
+
+
+2. Python Integration Overhead: Crossing the Python/C++ boundary and preparing data for the neural
+network still adds significant latency. In the current code, each batch inference involves packaging game
+states into Python objects and then into tensors. Before recent optimizations, creating the input tensor for a
+batch took ~7.5 ms per batch 2 – an enormous overhead given the GPU computation itself was ~8.2 ms
+for 32 states 3 . This overhead came from copying features for each state and constructing a PyTorch
+tensor in Python. Although a DLPack-based zero-copy bridge was implemented to mitigate this, the
+investigation found it wasn’t fully eliminating copies (using pinned CPU memory instead of true device
+memory, incurring ~0.24 ms H2D copy) 4 . The GIL is still a factor as well: even though batch inference
+reduces Python calls from N per simulation to 1 per batch, that one call still holds the GIL during tensor
+creation and model inference setup. In fact, as of the latest measurements, Python/GIL overhead accounts
+for ~67% of the total search time, while actual GPU compute is only ~33% 2 . All the pybind11 calls, state
+cloning in Python, and result parsing add up. (Notably, the design previously cloned game state objects
+multiple times per simulation: once for the C++ tree, and again for the Python callback – this duplication of
+work further wasted time, though the new batch API should reduce it.)
+
+
+3. Neural Network Bottleneck (Throughput Limit): Even if the MCTS code were perfectly efficient, the
+neural network inference throughput is a hard cap. A Ryzen 5900X can schedule tens of thousands of
+playouts per second, but the 10M-param PyTorch model on a single RTX 3060 Ti cannot evaluate 30k
+positions per second. Empirically, a batch of 32 on this GPU takes ~8.24 ms, i.e. about 3,885 states/sec
+maximum in FP32 3 . With optimized FP16 mixed precision, the model might reach ~7,500–10,000 states/
+sec at best 5 . This is the upper bound of simulations/sec no matter how fast the tree search runs, since
+each simulation requires a policy/value evaluation. Currently, the MCTS isn’t even hitting that upper bound –
+the GPU was only ~55% utilized at ~2k sims/sec 3 6 . That under-utilization is due to the coordination
+overhead above, but even if we fix that, 30k sims/sec with a neural net of this size is unrealistic on this
+hardware. The network would be the choke point beyond ~7–10k simulations/sec.
+
+
+4. Other Micro-inefficiencies: There are several smaller issues that cumulatively hurt throughput. For
+example, the search still does a lot of memory allocation and copying: every simulation clones a game
+state (deep-copying the board) and constructs a path vector. The current implementation clones the root
+state for each simulation and then clones it again for the inference queue (and until recently, cloned yet
+again inside submit_request ) – that’s 2–3 separate allocations and memory copies per simulation. Each
+clone of a Gomoku state isn’t huge (~36 planes * 15×15 floats, a few KB), but at tens of thousands of
+
+
+
+
+                                                      1
+iterations it adds up. Similarly, while the tree data structure is highly optimized, there is still contention on
+atomic updates (e.g. many threads incrementing the root visit count and updating values). The code
+attempts to batch backups to reduce atomic ops 7 , but if many threads explore the same region of the
+tree, they will still contend on those cache lines. There’s also overhead from scanning and managing the
+pending results buffer: currently each worker thread periodically scans through a fixed 4096-slot ring buffer
+to find completed inferences 8 . In worst-case scenarios (lots of frequent checks with few results), that’s
+wasted CPU work. These factors aren’t as catastrophic as the first three issues, but they are “low-hanging
+fruit” inefficiencies that keep the implementation far from theoretical maximum throughput.
+
+
+Recommendations for Speeding Up MCTS
+1. Fully Embrace Batch Asynchronous Inference (Minimize Python/GIL Time): You should ensure the
+new batched inference pipeline is used everywhere and is as lean as possible. The goal is to hold the GIL
+for only a tiny fraction of each batch. The PyBatchInferenceCallback already consolidates many
+Python calls into one 9 – make sure the batch inference function itself does minimal Python work. In
+particular,    leverage   the    DLPack      zero-copy     bridge       you    implemented:     use
+ mcts_py.create_batch_tensor_from_states to extract features in C++ and get a PyTorch tensor via
+torch.from_dlpack        10 . This avoids Python loops over states and should cut that 7.5 ms tensor-prep
+
+overhead   down    to    ~0.5–1  ms      (mostly      memory        copy      in    C++).    Indeed,
+ create_batch_tensor_from_states will extract all state features directly into a pinned buffer in C+
++ 11 – no Python layer per state. Double-check that this function is working as expected (the investigation
+noted it was using pinned host memory, which is fine). With this in place, the only GIL-held section per
+batch is the model forward pass. PyTorch’s internal threads will do the heavy lifting of the GPU kernel
+launch, and those don’t require the GIL. In summary, use the batch inference bridge to its full extent:
+one GIL acquisition per batch, no Python-side feature processing, and let PyTorch handle the rest. This will
+drastically lower Python overhead.
+
+
+2. Reduce Thread Idle Time – Tune Batching and Parallelism: The batch size and timing need to be
+balanced so that CPU threads are kept busy without starving the GPU. Currently, threads often sit idle for
+~1 ms waiting for a batch of 32 to fill or return 2 . You might experiment with a smaller batch or shorter
+timeout to cut down waiting. For example, try batch size 16 with correspondingly shorter delay – this would
+dispatch inferences more frequently. Yes, smaller batches are slightly less GPU-efficient, but if your threads
+are 60% idle, you have room to trade some GPU utilization for more responsiveness. The goal is to find a
+sweet spot where the GPU is, say, ~80% utilized and threads aren’t sleeping much. Similarly, consider
+increasing the number of parallel simulation threads to use all 12 physical cores (if you haven’t already). The
+current best run used only 4 threads for ~2.1k sims/sec 12 . With all 12 cores active, you have more workers
+generating requests, which might keep the pipeline fuller. (Be careful with using 24 hyperthreads – those
+can lead to diminishing returns or even contention on memory bandwidth. It’s probably optimal to use 12
+threads pinned to the 12 real cores of the 5900X.) Also, ensure threads are pinned intelligently – your
+code already sets thread affinity per thread local ID 13 14 . Make sure this affinity actually groups threads
+to minimize cross-CCD chatter. For example, if using 12 threads, try to keep them confined 6-and-6 on each
+CCD’s cores (to leverage the two 32MB L3 caches effectively). Proper CPU pinning can yield small gains (your
+docs note ~1.15× improvement from better locality) 15 14 . In short, fine-tune the parallelism
+parameters (thread count, batch size, batch timeout) to reduce the dead time. We want threads
+continuously doing useful work – either traversing the tree or expanding nodes – while the GPU is
+continuously crunching on available batches.
+
+
+
+
+                                                       2
+3. Optimize Internal Coordination (Locks and Atomics): The MCTS core itself can be streamlined further
+to handle high thread counts. You’ve already implemented virtual loss and “busy-edge” locking to prevent
+duplicate expansions. Continue to use those so threads don’t collide on the same node. The new batched
+backup mechanism is a great optimization: by accumulating updates and doing one atomic add per node
+  7 , it cuts down on contention. Make sure that is functioning correctly under heavy load (verify that all
+
+threads still see consistent values, and that no thread ever reads half-updated stats). If contention on the
+root node (or other high-visit nodes) remains an issue, you could consider techniques like reducing lock
+frequency on those nodes. For instance, one idea is virtual loss free search at root (temporarily allow
+multiple threads to explore different moves from the root without virtual loss, then fix up visit counts at the
+end). You actually have a parallel_mode="virtual_loss_free" option – if it’s stable, test whether it
+improves throughput without harming search quality. Another idea is a transposition table to avoid re-
+expanding identical states. Transpositions are less important in Gomoku, but in games like chess or Go they
+can reduce redundant network evaluations (your roadmap noted adding transposition tables with a target
+of ~40k sims/sec) 16 . Implementing a transposition cache would let you reuse prior NN results for
+duplicate states, effectively increasing sims/sec (because some “simulations” skip the expensive NN call).
+This is complex to get right (requires thread-safe caching and careful state hashing), but it’s worth
+substantial speedups in some domains. Finally, review the pending result handling: scanning a 4096-slot
+buffer each loop is not terribly efficient. You might change that to a dynamic list of active requests. For
+example, maintain a queue of “in-flight” request IDs that each thread adds to when it submits, and remove
+when processed. That way, processing completed results can iterate only over currently active slots instead
+of all 4096. This micro-optimization would save CPU cycles in the tight loop, especially as you push towards
+tens of thousands of sims/sec. The key is to eliminate any unnecessary waiting or work inside the
+simulation loop. Every cycle a thread spends spinning or scanning for results is a cycle not spent selecting
+or expanding.
+
+
+4. Streamline Game State Management: The cost of cloning game states and applying moves should be
+minimized. One improvement is to reuse state objects via a pool – e.g. allocate one state instance per
+thread and reset it to root for each new simulation instead of cloning from scratch. If your game state
+supports an efficient copy_from() or an undo move operation, you could avoid a full malloc/free cycle
+per simulation. For instance, clone the root state once, then for each simulation either: (a) copy the root’s
+internal data into a thread-local state (memcpy of board arrays, etc.), or (b) maintain a stack of moves and
+simply replay/undo moves on a single state object. Gomoku has a relatively simple state representation
+(15×15 board); copying 225 cells is not huge, but doing it 30k times/sec could still consume a few percent of
+your time. A quick pool allocator or object reuse mechanism can help here. You’ve implemented a thread-
+local memory arena for nodes (and noted 99.93% fast-path allocation) 17 ; consider something analogous
+for game states if cloning shows up in profiles. Also, verify that the feature extraction for the neural net is
+efficient. Ideally, extract_features_to_buffer() (called by your DLPack bridge) is just a structured
+memory copy of internal state arrays 11 . If it’s doing any complex computation per call, try to precompute
+caches or use vectorized operations. The bottom line is that each simulation should traverse the tree and
+update the state with as little overhead as possible beyond the essential math. By recycling state objects
+and using iterative deepening of state (rather than new clones), you’ll squeeze out a bit more performance.
+
+
+5. Set Realistic Throughput Expectations: Given the above constraints, expecting >30k simulations/sec
+with a 10M-parameter neural net on your hardware is not realistic. Even after aggressive optimizations,
+the GPU will be the gating factor around 7k–10k sims/sec 5 (and that’s if the MCTS coordination
+overhead is nearly eliminated). To truly exceed 30k, you’d likely need to simplify the model or use additional
+hardware. Since you prefer to keep the network flexible in Python (no C++ libtorch) and your GPU is mid-
+
+
+
+
+                                                      3
+range, a realistic goal is on the order of 5,000–10,000 sims/sec under optimal conditions. Indeed, if you
+implement all the improvements above, you might approach the higher end of that range: e.g. ~8k sims/sec
+with ~80–90% GPU utilization and minimal CPU wait time. Pushing beyond that would require measures like
+network pruning or multi-GPU parallelism, which trade off either model accuracy or system complexity.
+It’s worth noting that quality improvements (like better batching, transpositions, smarter root parallelism)
+can sometimes let you get more “effective” searches without brute-forcing raw simulation count. In other
+words, 30k intelligent sims/sec may not be attainable, but you can focus on maximizing the useful
+simulations per second. Based on current data, the best-case throughput on your 5900X + 3060 Ti is likely in
+the mid four-figure sims/sec (perhaps an order of magnitude below the original 30k target). It’s important
+to align goals with this reality – otherwise you risk chasing diminishing returns or destabilizing the
+architecture for the sake of a number.
+
+
+6. Don’t Shy Away from Architectural Changes if Needed: The existing design is quite complex (shared
+tree with lock-free queues, batch threads, etc.), and it has introduced some regressions (recent changes
+dropped throughput from ~3.8k to ~2.1k sims/sec due to coordination overhead) 12 2 . If after
+addressing the points above you’re still far from saturation, consider more radical changes. For example,
+some practitioners run multiple searches in parallel (e.g. self-play games concurrently) to better utilize the
+GPU – this doesn’t raise single-search sims/sec, but increases hardware utilization. Another idea is using
+policy networks to narrow the search (reducing branching factor so fewer simulations are needed for the
+same result quality). However, these stray from pure throughput optimization and into AI design choices.
+Within the confines of your current system, the recommendations above (eliminating GIL overhead, tuning
+batch timing, optimizing locking, reusing states, etc.) are the “surgical fixes” most likely to recover
+performance. We’ve essentially identified that the MCTS coordination itself is the bottleneck now, not the
+raw math in C++ 2 . So your focus should be on making that coordination as lightweight as possible. Every
+thread should continuously either be descending the tree or doing backprop – never stalled. Every inference
+request should be processed with minimal Python involvement and in big enough batches to keep the GPU
+busy – but not so big that CPUs twiddle their thumbs.
+
+
+By applying these improvements, you should see a dramatic increase in simulations/sec. Conservatively, a
+few thousand sims/sec is achievable on your hardware with the full AlphaZero algorithm (and perhaps
+~10k in the most optimistic case with FP16 and perfect parallelism). This is a far cry from the >30k originally
+hoped for, but it is a realistic ceiling given the hardware and network. The critical path is now clear: reduce
+overhead at every step – let C++ handle state and tree work, batch the expensive calls, use all cores
+effectively – and accept that the neural net’s speed ultimately limits the throughput. In summary, by being
+blunt about these limitations and addressing each inefficiency head-on, you can upgrade the MCTS to be as
+fast as your CPU/GPU combo will allow, and avoid chasing an over-optimistic metric that isn’t attainable
+without compromising the neural network’s role in the search. 18 2
+
+
+Sources:
+
+
+     • Performance stats from current implementation (sims/sec, thread scaling, GPU util) 18      19   2
+
+     • Design documentation of the async batch inference system 9 11 10
+     • Optimization plans from project specs (virtual loss, zero-copy, FP16, etc.) 5 16
+
+
+
+
+                                                      4
+ 1   18   mcts_cpp_runner.md
+https://github.com/cosmosapjw-quantum/omoknuni/blob/0171a31e1633a18d105f5086568719888417a634/docs/
+mcts_cpp_runner.md
+
+ 2   3    4    5    6    12   17   19   tasks.md
+https://github.com/cosmosapjw-quantum/omoknuni/blob/0171a31e1633a18d105f5086568719888417a634/specs/004-mcts-
+throughput-recovery/tasks.md
+
+ 7   8    13   14   15   continuous_simulation_runner.cpp
+https://github.com/cosmosapjw-quantum/omoknuni/blob/0171a31e1633a18d105f5086568719888417a634/cpp_extensions/
+mcts/continuous_simulation_runner.cpp
+
+ 9   batch_inference_coordinator.hpp
+https://github.com/cosmosapjw-quantum/omoknuni/blob/0171a31e1633a18d105f5086568719888417a634/cpp_extensions/
+mcts/batch_inference_coordinator.hpp
+
+10   dlpack_inference_bridge.py
+https://github.com/cosmosapjw-quantum/omoknuni/blob/0171a31e1633a18d105f5086568719888417a634/src/core/
+dlpack_inference_bridge.py
+
+11   dlpack_bridge.cpp
+https://github.com/cosmosapjw-quantum/omoknuni/blob/0171a31e1633a18d105f5086568719888417a634/cpp_extensions/
+mcts/dlpack_bridge.cpp
+
+16   mcts_guide.md
+https://github.com/cosmosapjw-quantum/omoknuni/blob/0171a31e1633a18d105f5086568719888417a634/mcts_guide.md
+
+
+
+
+                                                            5
+

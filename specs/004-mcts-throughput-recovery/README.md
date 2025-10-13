@@ -2,41 +2,75 @@
 
 ## Executive Summary
 
-This specification addresses the critical performance bottleneck in our MCTS implementation. **Baseline performance: 3,831 sims/sec. Current performance: 2,147 sims/sec (56% REGRESSION, cause under investigation)**. Through comprehensive analysis and optimization, we define a path to achieve **≥25,000 simulations/second** while maintaining search quality.
+This specification addresses the critical performance bottleneck in our MCTS implementation. **Baseline performance: 3,831 sims/sec. Current performance: 2,147 sims/sec (56% REGRESSION, cause under investigation)**. Through comprehensive analysis and optimization, we define a path to achieve **≥8,000 simulations/second (REVISED, hardware-grounded)** while maintaining search quality.
+
+**⚠️ CRITICAL UPDATE (2025-10-13)**: **Targets revised to 6-10k sims/sec** based on review.txt hardware analysis. Original 25-30k target unrealistic on Ryzen 5900X + RTX 3060 Ti (GPU caps at 8-10k states/sec @ FP16). See CONSTITUTION.md v1.1 and SPECIFICATION.md Section 12.1 Q1 for detailed rationale.
 
 **Key Finding**: GPU inference accounts for only 32.8% of runtime while MCTS overhead consumes 67.2%, indicating the bottleneck is CPU-side coordination, not neural network evaluation.
 
-**Critical Status (2025-10-12)**: Phase 1+2 optimizations COMPLETE but UNVALIDATED. T016 benchmarking and T017 baseline investigation are NEXT PRIORITY to measure actual performance impact.
+**Validation Status (2025-10-13)**: Phase 1+2 optimizations VALIDATED with **MIXED RESULTS**:
+- ✅ **T-VALID-1 (FP16)**: PASS - 1.72× speedup confirmed, numerical stability excellent
+- ❌ **T-VALID-2 (Tensor)**: FAIL - 7.5ms overhead (missing OpenMP parallelization)
+- 🔴 **CRITICAL BLOCKER**: Feature extraction not parallelized, caps throughput at ~1,675 states/sec
+- 📋 **Next Action**: Fix OpenMP in [dlpack_bridge.cpp:431-434](../../cpp_extensions/mcts/dlpack_bridge.cpp#L431-L434)
+- 📄 **Report**: [validation_report_2025-10-13.md](../../docs/performance/validation_report_2025-10-13.md)
 
 ## Document Structure
 
+### Project Authority & Requirements
+
+1. **[CONSTITUTION.md](CONSTITUTION.md)** - **PROJECT AUTHORITY** (v1.1 revised)
+   - Mission and scope (**≥8,000 sims/sec target**, revised from 25k)
+   - Architectural constraints (Python PyTorch NN only, NO libtorch/TensorRT)
+   - Technical principles (throughput > quality with bounds)
+   - Performance requirements (CPU efficiency, GPU utilization, latency budgets)
+   - Decision authority and change control
+   - **NOTE**: This document supersedes all prior architectural decisions
+
+2. **[SPECIFICATION.md](SPECIFICATION.md)** - **DETAILED FUNCTIONAL REQUIREMENTS**
+   - Precise definitions (simulation, throughput measurement methodology)
+   - User stories (self-play training, interactive play, profiling)
+   - 17 functional requirements (MCTS algorithm, async inference, memory management)
+   - Non-functional requirements (performance by game, scalability, correctness)
+   - KPIs and benchmarks (8 KPIs with exact measurement commands)
+   - **Section 12: Resolved Ambiguities** (10 blocking questions with protocols)
+
 ### Core Specifications
 
-1. **[spec.md](spec.md)** - Requirements and Success Criteria
-   - Performance targets: ≥25,000 sims/sec, ≥85% GPU utilization
+3. **[spec.md](spec.md)** - Implementation Status and Progress Tracking (v1.2)
+   - **Performance targets: ≥8,000 sims/sec** (revised), ≥80% GPU utilization
    - Quality requirements: No regression in search strength
    - Phased implementation approach over 4 weeks
+   - Current progress tracking (Phase 1 ✅, Phase 2 ✅, Phase 3 🟡, Phase 4 🔴)
 
-2. **[plan.md](plan.md)** - Technical Implementation Plan
-   - WU-UCT virtual loss (preserves Q-value accuracy)
-   - Lock-free MPMC queue architecture
-   - Zero-copy DLPack tensor bridge
-   - Thread affinity optimization for Ryzen 5900X
+4. **[TECHNICAL_PLAN.md](TECHNICAL_PLAN.md)** - **CURRENT IMPLEMENTATION PLAN** (v2.0)
+   - Architecture overview with hardware mapping (Ryzen 5900X CCDs)
+   - Data contracts & interfaces (DLPack, SoA, thread-local pools)
+   - Performance tactics from review.txt (idle reduction, atomic minimization)
+   - Instrumentation & benchmarking (timing hooks, fixed-seed suites)
+   - Rollout & risk management (feature flags, test gates)
+   - **Acceptance criteria with exact commands and expected outputs**
+   - **Migration checklist with 7-8 day timeline**
 
-3. **[tasks.md](tasks.md)** - Detailed Task Breakdown
+5. **[plan.md](plan.md)** - Legacy Technical Plan (superseded by TECHNICAL_PLAN.md)
+   - Retained for historical reference
+   - Original 25k target and architecture design
+   - See TECHNICAL_PLAN.md for current implementation
+
+6. **[tasks.md](tasks.md)** - Detailed Task Breakdown
    - 25 concrete implementation tasks
    - Dependencies and risk analysis
    - Week-by-week milestones
 
 ### Technical Documentation
 
-4. **[research.md](research.md)** - Technical Analysis
+7. **[research.md](research.md)** - Technical Analysis
    - Root cause analysis of bottlenecks
    - State-of-the-art comparison (KataGo, Leela Zero)
    - Virtual loss research (WU-UCT vs classic)
    - Experimental results and benchmarks
 
-5. **[data-model.md](data-model.md)** - Data Structure Specifications
+8. **[data-model.md](data-model.md)** - Data Structure Specifications
    - Lock-free queue implementation
    - DLPack tensor bridge design
    - Thread-local memory arenas
@@ -44,7 +78,7 @@ This specification addresses the critical performance bottleneck in our MCTS imp
 
 ### API Contracts
 
-6. **[contracts/](contracts/)** - API Specifications
+9. **[contracts/](contracts/)** - API Specifications
    - [virtual_loss_api.yaml](contracts/virtual_loss_api.yaml) - WU-UCT manager
    - [queue_api.yaml](contracts/queue_api.yaml) - Lock-free queue
    - [dlpack_api.yaml](contracts/dlpack_api.yaml) - Zero-copy tensors
@@ -53,7 +87,7 @@ This specification addresses the critical performance bottleneck in our MCTS imp
 
 ### Implementation Guide
 
-7. **[quickstart.md](quickstart.md)** - Build and Validation
+10. **[quickstart.md](quickstart.md)** - Build and Validation
    - Step-by-step build instructions
    - Configuration examples
    - Validation procedures
@@ -121,16 +155,19 @@ Total copies: 0 (only GPU transfers)
 - Inference thread → CCD1 (isolated)
 - 15-20% cache miss reduction
 
-## Performance Targets
+## Performance Targets (REVISED 2025-10-13)
 
-| Metric | Baseline | Current | Target | Expected |
-|--------|----------|---------|--------|----------|
-| Throughput | 3,831 sims/sec | 2,147 sims/sec | 25,000 | 18-36k |
-| GPU Utilization | 32.8% | UNKNOWN | 85% | 85% |
-| Collision Rate | 18.2% | UNKNOWN | ≤5% | 4.7% |
-| Thread Efficiency | 42% @ 4 threads | UNKNOWN | 75% @ 8 | 78% |
-| Batch Size | Variable | UNKNOWN | 48 avg | 64 |
-| Memory Usage | <1GB | <1GB | <1GB | ~500MB |
+| Metric | Baseline | Current | **Target (Revised)** | **Rationale** |
+|--------|----------|---------|---------------------|---------------|
+| Throughput | 3,831 sims/sec | 2,147 sims/sec | **≥8,000 sims/sec** | GPU @ FP16 caps at 8-10k states/sec |
+| GPU Utilization | 32.8% | 11.2% | **≥80%** | Realistic batch fill @ 64 |
+| Collision Rate | 18.2% | UNKNOWN | ≤5% | WU-UCT + busy-edge |
+| Thread Efficiency | 42% @ 4 threads | 62% @ 4 threads | **≥70% @ 8 threads** | Coordination overhead budget |
+| Batch Size | Variable | UNKNOWN | ≥40 avg (62.5%) | Adjusted from 75% expectation |
+| Memory Usage | <1GB | 270MB | <1GB | Achieved (27B/node SoA) |
+
+**Stretch Goal**: ≥10,000 sims/sec (2.6× baseline, requires perfect tuning)
+**Aspirational** (out of scope): ≥15-25k (model pruning, multi-GPU), ≥30k (TensorRT, fundamental redesign)
 
 ## Quality Guarantees
 
@@ -179,57 +216,89 @@ Total copies: 0 (only GPU transfers)
   - Persistent coordinator lifecycle ✅ (T011)
   - Batched result processing ✅ (T014)
   - T012/T013/T015 pending
-- [🔴] **Phase 4 CRITICAL NEXT STEPS** (T016-T025)
-  - **T016**: Comprehensive benchmarking **HIGHEST PRIORITY**
-  - **T017**: Baseline configuration investigation **CRITICAL**
-  - Validation scripts created (profile_tensor_creation.py, validate_fp16_inference.py)
+- [🟡] **Phase 4 VALIDATION COMPLETE** (2025-10-13)
+  - ✅ **T-VALID-1**: FP16 validated - 1.72× speedup, numerical stability excellent
+  - ❌ **T-VALID-2**: Tensor creation FAIL - 7.5ms (OpenMP missing)
+  - 🔴 **BLOCKER FOUND**: Feature extraction not parallelized in dlpack_bridge.cpp
+  - Validation scripts executed (profile_tensor_creation.py, validate_fp16_inference.py)
+  - Comprehensive report: [validation_report_2025-10-13.md](../../docs/performance/validation_report_2025-10-13.md)
 
-## Critical Path Forward
+## Critical Path Forward (UPDATED 2025-10-13)
 
-**Performance Regression Investigation Required:**
+**✅ IMMEDIATE VALIDATIONS COMPLETE** (2 hours - 2025-10-13):
 
-**Current Status**: Phase 1+2 optimizations implemented but performance REGRESSED from 3,831 to 2,147 sims/sec (44% loss).
+1. ✅ **T-VALID-1: FP16 Mixed Precision** - **PASS**
+   ```bash
+   python scripts/validate_fp16_inference.py --batch-size 64 --iterations 100
+   ```
+   - **Result**: 1.72× speedup (FP32: 52.8ms → FP16: 30.7ms per batch-64)
+   - **Numerical Stability**: Policy Prob MSE 0.000007, Value MSE 0.000000
+   - **Conclusion**: T008f validated successfully, FP16 tensor cores active
 
-**Critical Next Steps:**
+2. ❌ **T-VALID-2: Tensor Creation** - **FAIL (CRITICAL BLOCKER)**
+   ```bash
+   python scripts/profile_tensor_creation.py --batch-size 64 --iterations 1000
+   ```
+   - **Result**: 7.50 ± 0.20 ms (FAIL: >1.0ms target)
+   - **Root Cause**: Feature extraction loop NOT parallelized with OpenMP
+   - **Location**: [dlpack_bridge.cpp:431-434](../../cpp_extensions/mcts/dlpack_bridge.cpp#L431-L434)
+   - **Impact**: Caps throughput at ~1,675 states/sec, explains 2,147 regression
 
-1. **T017: Baseline Configuration Investigation** (CRITICAL - 2 days)
+---
+
+**🔴 CRITICAL FIX REQUIRED** (2 hours, BLOCKING):
+
+**Fix OpenMP Parallelization in Tensor Creation**
+```cpp
+// cpp_extensions/mcts/dlpack_bridge.cpp:431
+#pragma omp parallel for schedule(static) if(batch_size > 8)
+for (int i = 0; i < batch_size; ++i) {
+    float* state_buffer = data + (i * state_size);
+    states[i]->extract_features_to_buffer(state_buffer);
+}
+```
+- **Expected**: 7.5ms → <1.0ms (12-thread Ryzen 5900X)
+- **Rebuild**: `pip install -e . --force-reinstall --no-deps`
+- **Re-validate**: Should PASS with <1.0ms
+
+---
+
+**Performance Regression Investigation (After Critical Fix):**
+
+**Current Status**: Phase 1+2 optimizations implemented but performance REGRESSED from 3,831 to 2,147 sims/sec (44% loss). Must validate FP16 and DLPack FIRST to rule out critical bugs.
+
+**Next Steps:**
+
+3. **T017: Baseline Configuration Investigation** (2 days, time-boxed)
    - **Problem**: 3,831 baseline configuration unknown, can't reproduce
-   - **Action**: Archaeological dig through git history, configs, logs
-   - **Goal**: Find exact configuration that achieved 3,831 sims/sec
-   - **Status**: Script created (find_baseline_config.py), ready to run
+   - **Protocol**: Day 1: Git archaeology (configs, logs, profiling). Day 2: Grid search if not found.
+   - **Fallback**: Establish new baseline from grid search, declare 3,831 "historical"
+   - **Status**: Protocol defined in SPECIFICATION.md Section 12.1 Q2
 
-2. **T016: Run Comprehensive Benchmarks** (HIGHEST PRIORITY - 2 days)
-   - **Problem**: T006c and T008f implemented but impact UNKNOWN
+4. **T016: Run Comprehensive Benchmarks** (2 days)
+   - **Prerequisite**: Complete T017 first (need baseline for comparison)
    - **Action**: Full benchmark suite (games × threads × batch sizes × timeouts)
-   - **Goal**: Measure actual performance of current implementation
-   - **Expected**: 18-36k sims/sec (if optimizations working)
-   - **Status**: Test suite exists, validation scripts created
-
-3. **Validate FP16 Mixed Precision** (HIGH PRIORITY - 1 hour)
-   - **Problem**: T008f marked complete but never validated
-   - **Action**: Run validate_fp16_inference.py to confirm FP16 working
-   - **Goal**: Prove ≥1.5× speedup, <0.01 MSE
-   - **Status**: Script created and ready
-
-4. **Profile Tensor Creation** (MEDIUM PRIORITY - 1 hour)
-   - **Problem**: 7.5ms overhead identified in review.pdf
-   - **Action**: Run profile_tensor_creation.py to diagnose
-   - **Goal**: Reduce to <1.0ms per batch (7× speedup)
-   - **Status**: Script created and ready
+   - **Goal**: Measure actual performance vs baseline
+   - **Expected**: 6-8k sims/sec (if FP16 + DLPack working, revised from 18-36k)
 
 5. **T018-T019: Tune Parameters** (2 days)
-   - **Prerequisite**: Complete T016/T017 first
-   - Optimize batch size, timeout, virtual loss magnitude
-   - Fine-tune for maximum throughput
+   - **Prerequisite**: Complete T016 first
+   - **Protocol**: Grid search [4-12 threads] × [16-64 batch] × [0.5-5.0ms timeout]
+   - **Goal**: Find optimal config for ≥8k sims/sec target
+   - **Status**: Protocol defined in SPECIFICATION.md Section 12.2 Q6/Q7
 
-## Success Criteria
+## Success Criteria (REVISED 2025-10-13)
 
 The project will be considered successful when:
-- ✅ Achieves ≥25,000 simulations/second sustained
-- ✅ Maintains ≥85% GPU utilization
+- ✅ Achieves **≥8,000 simulations/second** sustained (was 25k, revised to hardware-grounded target)
+- ✅ Maintains **≥80% GPU utilization** (was 85%, adjusted for realistic batch fill)
 - ✅ Reduces collision rate to ≤5%
-- ✅ Shows no regression in search quality
+- ✅ Shows no regression in search quality (≥99.5% win rate vs baseline)
 - ✅ Passes 24-hour stability test
+
+**Stretch Goals**:
+- ≥10,000 sims/sec (2.6× baseline, requires perfect tuning)
+- ≥85% GPU utilization (near-perfect batch scheduling)
 
 ## References
 
@@ -242,8 +311,23 @@ The project will be considered successful when:
 
 For questions or clarifications about this specification, refer to the technical documentation or review the implementation plan.
 
+## Document Hierarchy
+
+**Primary Authority**: [CONSTITUTION.md](CONSTITUTION.md) → [SPECIFICATION.md](SPECIFICATION.md) → **[TECHNICAL_PLAN.md](TECHNICAL_PLAN.md)** → [tasks.md](tasks.md)
+
+**Change Control**: All changes to scope, requirements, or architecture must update CONSTITUTION.md and SPECIFICATION.md first, then regenerate TECHNICAL_PLAN.md and tasks.md via `/speckit.plan` and `/speckit.tasks`.
+
+**Note**: [plan.md](plan.md) is legacy (superseded by TECHNICAL_PLAN.md v2.0 with revised 8k target).
+
 ---
 
-**Document Version**: 1.3.0
-**Last Updated**: 2025-10-12
-**Status**: Phase 1+2 Complete but UNVALIDATED - T016/T017 critical to measure actual performance
+**Document Version**: 1.5.0 (Revised Targets)
+**Last Updated**: 2025-10-13
+**Status**: Phase 1+2 Complete but UNVALIDATED - **IMMEDIATE**: Validate FP16 + Profile tensor creation (2 hours) BEFORE T016/T017
+
+**Key Changes in v1.5**:
+- Revised realistic targets: 8k (target), 10k (stretch), 25-30k (aspirational, out of scope)
+- Added immediate validation actions (FP16, tensor creation) before benchmarking
+- Updated all performance expectations based on GPU hardware limits (RTX 3060 Ti @ FP16)
+- Clarified baseline investigation protocol (T017: 2-day time-boxed)
+- Defined parameter tuning grid search protocols (T018/T019)

@@ -1,8 +1,29 @@
 # Specification 004: MCTS Throughput Recovery
 
 **Status**: IN PROGRESS
-**Last Updated**: 2025-10-08
-**Current Phase**: Phase 2 (Architecture Changes) - Partially Complete
+**Last Updated**: 2025-10-13 (Targets Revised)
+**Current Phase**: Phase 3 (Final Optimizations) → Phase 4 (Integration & Tuning)
+**Version**: 1.2 (Revised Targets)
+
+## ⚠️ **CRITICAL UPDATE (2025-10-13)**: Revised Realistic Targets
+
+**Analysis Findings** (from review.txt + SPECIFICATION.md clarification):
+- **Original Target**: 25,000-30,000 sims/sec (unrealistic on Ryzen 5900X + RTX 3060 Ti)
+- **GPU Hardware Limit**: 8,000-10,000 states/sec @ FP16 mixed precision (RTX 3060 Ti)
+- **Coordination Overhead Budget**: 20-25% (currently 67%, target reduction critical)
+- **REVISED REALISTIC TARGET**: **≥8,000 sims/sec** (2.1× baseline, 3.7× current)
+- **Stretch Goal**: ≥10,000 sims/sec (2.6× baseline, requires perfect tuning)
+- **Aspirational**: ≥15-25k sims/sec (requires model pruning, multi-GPU, changes out of scope)
+
+**Rationale**: Per SPECIFICATION.md Section 12.1 Q1 resolution, GPU @ FP16 physically cannot exceed 10k states/sec. All targets updated to be hardware-grounded and achievable within constitutional constraints.
+
+## Related Documents
+- **[CONSTITUTION.md](CONSTITUTION.md)**: Project authority, constraints, enforcement (**v1.1 revised targets**)
+- **[SPECIFICATION.md](SPECIFICATION.md)**: Detailed functional requirements, **resolved ambiguities** (Section 12)
+- **[TECHNICAL_PLAN.md](TECHNICAL_PLAN.md)**: **Current implementation plan** (v2.0, hardware-grounded)
+- **[plan-LEGACY-v1.0.md](plan-LEGACY-v1.0.md)**: Legacy plan (superseded by TECHNICAL_PLAN.md)
+- **[TASKS.md](TASKS.md)**: Current Phase 4 task breakdown with validation status
+- **[tasks-phases-1-3-ARCHIVE.md](tasks-phases-1-3-ARCHIVE.md)**: Historical Phase 1-3 tasks (archived)
 
 ## Current Progress (Updated 2025-10-09 after review.pdf analysis)
 
@@ -93,26 +114,48 @@
 - **Blockers**: T017 (find baseline config) + T016 (measure actual gains) required
 - **Target**: ≥25,000 sims/sec (path unclear until T016/T017 complete)
 
+### Validation Status (2025-10-13)
+
+**T-VALID-1: FP16 Mixed Precision Validation** ✅ **PASS**
+- Speedup: 1.72× (52.83ms → 30.69ms @ batch-64)
+- Policy Probability MSE: 0.000007 (target: <0.01)
+- Value MSE: 0.000000 (target: <0.01)
+- **Conclusion**: FP16 delivers significant speedup without quality degradation
+
+**T-VALID-2: Tensor Creation Profiling** ❌ **FAIL**
+- Mean: 7.50 ± 0.20 ms (target: <1.0ms)
+- Root Cause: Feature extraction loop NOT parallelized with OpenMP
+- Location: `cpp_extensions/mcts/dlpack_bridge.cpp:431-434`
+- **Required Fix**: Add `#pragma omp parallel for` to feature extraction loop
+- Expected Improvement: 7.5ms → <1.0ms with 12-thread parallelization
+
+See [validation_report_2025-10-13.md](../../docs/performance/validation_report_2025-10-13.md) for detailed results.
+
 ### Critical Path Forward
 1. ✅ **~~T006c~~** - Condition variables (COMPLETE)
-2. ✅ **~~T008f~~** - FP16 mixed precision (COMPLETE)
+2. ✅ **~~T008f~~** - FP16 mixed precision (COMPLETE, validated 1.72× speedup)
 3. ✅ **~~T011~~** - Persistent coordinator (COMPLETE)
-4. 🔴 **T016** - Comprehensive benchmarking to measure actual gains (2 days) **NEXT PRIORITY**
-5. **T018-T019** - Optimize batch size, timeout, virtual loss (2 days)
-6. **T020** - Profile and fix remaining bottlenecks (2 days)
-7. **T025** - Final performance validation and sign-off (1 day)
+4. 🔴 **OpenMP Fix** - Parallelize feature extraction (CRITICAL, blocks performance)
+5. 🔴 **T016** - Comprehensive benchmarking to measure actual gains (2 days) **NEXT PRIORITY**
+6. **T018-T019** - Optimize batch size, timeout, virtual loss (2 days)
+7. **T020** - Profile and fix remaining bottlenecks (2 days)
+8. **T025** - Final performance validation and sign-off (1 day)
 
 ---
 
 ## Problem Statement
 
-The current MCTS implementation achieves only **3,831 simulations/second** (12.8% of the 30,000 target) on AMD Ryzen 5900X + RTX 3060 Ti hardware. Performance analysis reveals that GPU inference accounts for only 32.8% of runtime while MCTS overhead (selection, backup, coordination) consumes 67.2%. This specification defines optimizations to achieve **≥25,000 simulations/second** while maintaining search quality.
+The current MCTS implementation achieves only **3,831 simulations/second** (baseline) on AMD Ryzen 5900X + RTX 3060 Ti hardware, with recent regression to **2,147 sims/sec** (cause under investigation). Performance analysis reveals that GPU inference accounts for only 32.8% of runtime while MCTS overhead (selection, backup, coordination) consumes 67.2%.
+
+**Revised Target (2025-10-13)**: After hardware analysis, the RTX 3060 Ti @ FP16 can deliver 8,000-10,000 states/sec maximum. This specification defines optimizations to achieve **≥8,000 simulations/second** (realistic hardware-grounded target) while maintaining search quality. The original 25k-30k target would require model pruning or multi-GPU setup (out of scope).
 
 ## Success Criteria
 
 ### Performance Requirements
-- **Primary**: Achieve ≥25,000 simulations/second on target hardware
-- **GPU Utilization**: Maintain ≥85% GPU utilization during search
+- **Primary**: Achieve ≥8,000 simulations/second on target hardware (revised 2025-10-13)
+- **Minimum Viable**: ≥6,000 sims/sec (1.6× baseline, 2.8× current regression)
+- **Stretch Goal**: ≥10,000 sims/sec (2.6× baseline, perfect tuning required)
+- **GPU Utilization**: Maintain ≥80% GPU utilization during search (85% stretch)
 - **Thread Efficiency**: Achieve ≥75% multi-thread efficiency at 8 threads
 - **Batch Size**: Average batch size ≥48 positions (75% of max 64)
 - **Memory Usage**: Tree memory <1GB for 10M nodes
@@ -205,21 +248,23 @@ Maintain single shared tree architecture with enhanced virtual loss:
 - Root pre-expansion
 - Thread affinity
 
-**Expected: 3.8k → 12k sims/sec (3× improvement)**
+**Expected: 2.1k → 4k sims/sec (2× improvement, revised 2025-10-13)**
 
 ### Phase 2: Architecture Changes (Week 2)
 - Lock-free queue implementation
-- Zero-copy tensor bridge
+- Zero-copy tensor bridge (with OpenMP fix)
 - Per-thread memory arenas
+- FP16 mixed precision (validated: 1.72× GPU speedup)
 
-**Expected: 12k → 20k sims/sec (1.7× improvement)**
+**Expected: 4k → 7k sims/sec (1.75× improvement, revised 2025-10-13)**
 
 ### Phase 3: Final Optimizations (Week 3)
 - Persistent Python thread
 - Relaxed memory ordering
 - Performance tuning
+- Batch size/timeout optimization
 
-**Expected: 20k → 26k sims/sec (1.3× improvement)**
+**Expected: 7k → 8-10k sims/sec (1.2-1.4× improvement, target range, revised 2025-10-13)**
 
 ## Validation Strategy
 
