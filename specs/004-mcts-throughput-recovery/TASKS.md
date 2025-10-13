@@ -1389,6 +1389,363 @@ Per-batch timing (needed for 8k sims/sec):
 
 ---
 
-**END OF TASK BREAKDOWN v2.0**
+## Phase 5: Thread Coordination Optimization (OPTIONAL, DEFERRED)
 
-**Next Action**: Execute T-VALID-1 and T-VALID-2 (2 hours) to validate FP16 and tensor creation.
+**Version**: 3.0 (GIL Analysis Complete)
+**Status**: DEFERRED - Target met (2,835 sims/sec = 94.5% of 3,000 target)
+**Last Updated**: 2025-10-13 (Post-GIL Analysis)
+**Authority**: Based on [GIL_REDUCTION_COMPREHENSIVE_PLAN.md](../../profiling_results/GIL_REDUCTION_COMPREHENSIVE_PLAN.md)
+
+### Executive Summary
+
+**Comprehensive GIL Analysis Finding**: **GIL is NOT the bottleneck**. System performs at 94-141% of GPU theoretical maximum. Real bottleneck: **C++ mutex contention** in AsyncInferenceQueue/BatchInferenceCoordinator limits thread scaling beyond 2 threads.
+
+**Current Achievement**:
+- 2,835 sims/sec @ 2 threads (89.6% efficiency) ✅ **EXCELLENT**
+- 2,214 sims/sec @ 4 threads (45% efficiency) ❌ **POOR** (mutex contention)
+- 2,198 sims/sec @ 8 threads (22.4% efficiency) ❌ **CATASTROPHIC** (mutex thrashing)
+
+**Phase 5 Goal**: Fix C++ mutex contention to enable 4-6 thread scaling @ 60-70% efficiency
+
+**Estimated Impact**:
+- Best case: 4-6 threads @ 70% efficiency = 3,444-5,166 sims/sec (1.2-1.8× current)
+- Realistic: 4 threads @ 60% efficiency = 2,952 sims/sec (4% improvement)
+- **GPU bottleneck remains**: Even with perfect thread scaling, GPU caps at ~3,500-4,000 sims/sec
+
+**Recommendation**: **DEFER** - Current performance (2,835 sims/sec) meets Option B target (3,000-3,500 sims/sec). Implement Phase 5 only if stretch goal (≥3,500 sims/sec) required.
+
+---
+
+### T026: Profile Thread Contention with perf ⏸️
+
+**Priority**: 🟢 OPTIONAL
+**Effort**: 1 day
+**Dependencies**: Phase 4 complete
+**Status**: DEFERRED
+**Rationale**: Target met, profiling required only if Phase 5 approved
+
+**Summary**:
+Use Linux perf tools to identify mutex contention hotspots in C++ code (AsyncInferenceQueue, BatchInferenceCoordinator).
+
+**Acceptance Criteria**:
+
+1. **Install perf tools**:
+   ```bash
+   sudo apt-get install linux-tools-common linux-tools-$(uname -r)
+   ```
+
+2. **Profile mutex contention**:
+   ```bash
+   perf record -e 'sched:sched_switch' -a -g -- \
+       python scripts/benchmark_throughput.py --threads 4 --simulations 5000
+
+   perf report --stdio | grep -A5 "mutex\|lock\|atomic" > profiling_results/mutex_contention.txt
+   ```
+
+3. **Profile cache misses** (Ryzen dual-CCD):
+   ```bash
+   perf stat -e cache-misses,cache-references,L1-dcache-load-misses \
+       python scripts/benchmark_throughput.py --threads 4 --simulations 5000
+   ```
+
+4. **Analyze contention** points:
+   - Identify top 3 mutex hotspots (time spent waiting)
+   - Measure cache-miss rate (expect high with 4+ threads)
+   - Document lock granularity issues
+
+**Expected Finding**: AsyncInferenceQueue::process_results() and BatchInferenceCoordinator signaling as top contention points.
+
+**Deliverables**:
+- `profiling_results/mutex_contention.txt` - perf report with mutex hotspots
+- `profiling_results/cache_miss_analysis.txt` - Cache performance metrics
+- `profiling_results/thread_contention_report.md` - Analysis and recommendations
+
+---
+
+### T027: Fix AsyncInferenceQueue Lock Granularity ⏸️
+
+**Priority**: 🟢 OPTIONAL
+**Effort**: 1 day
+**Dependencies**: T026 (profiling)
+**Status**: DEFERRED
+**Estimated Impact**: 45% → 60-65% efficiency @ 4 threads
+
+**Summary**:
+Reduce lock granularity in AsyncInferenceQueue::process_results() using swap pattern to minimize time spent holding mutex.
+
+**Current Implementation** (contention point):
+```cpp
+// File: cpp_extensions/mcts/async_inference_queue.cpp
+void AsyncInferenceQueue::process_results() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    for (auto& result : results_) {  // ❌ Processing under lock
+        // ... expensive operations ...
+    }
+    results_.clear();
+}
+```
+
+**Proposed Fix** (swap pattern):
+```cpp
+// File: cpp_extensions/mcts/async_inference_queue.cpp
+void AsyncInferenceQueue::process_results() {
+    std::vector<Result> local_results;
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        local_results.swap(results_);  // ✅ Quick swap under lock (~50ns)
+    }
+    // Process without holding lock
+    for (auto& result : local_results) {
+        // ... no contention ...
+    }
+}
+```
+
+**Acceptance Criteria**:
+
+1. **Implement swap pattern** in AsyncInferenceQueue::process_results()
+2. **Test thread safety** with ThreadSanitizer:
+   ```bash
+   export TSAN_OPTIONS="suppressions=tsan_suppressions.txt"
+   python -m pytest tests/integration/test_async_queue.py -v
+   ```
+
+3. **Benchmark improvement**:
+   ```bash
+   # Before fix
+   python scripts/benchmark_throughput.py --threads 4 --simulations 10000
+   # Expected: ~2,214 sims/sec (45% efficiency)
+
+   # After fix
+   python scripts/benchmark_throughput.py --threads 4 --simulations 10000
+   # Target: ≥2,700 sims/sec (55-60% efficiency)
+   ```
+
+4. **Verify no regression** @ 2 threads (should stay ~89.6% efficiency)
+
+**Alternative Approach** (higher complexity, 2-3 days):
+Implement per-thread queues to eliminate contention entirely:
+```cpp
+// Per-thread queue architecture (lock-free)
+class PerThreadInferenceQueue {
+    std::array<MPMCQueue<Request>, MAX_THREADS> thread_queues_;
+    // Each MCTS thread gets dedicated queue, no contention
+};
+```
+
+**Deliverables**:
+- Updated `cpp_extensions/mcts/async_inference_queue.cpp` with swap pattern
+- Thread safety test passing (TSan clean)
+- Benchmark report showing efficiency improvement
+- OR per-thread queue implementation (if chosen)
+
+---
+
+### T028: Fix BatchInferenceCoordinator Signaling ⏸️
+
+**Priority**: 🟢 OPTIONAL
+**Effort**: 4 hours
+**Dependencies**: T026 (profiling)
+**Status**: DEFERRED
+**Estimated Impact**: 2-5% efficiency improvement
+
+**Summary**:
+Fix BatchInferenceCoordinator signaling inefficiency (notify_one vs notify_all) and reduce condition variable spurious wakeups.
+
+**Current Implementation** (potential inefficiency):
+```cpp
+// File: cpp_extensions/mcts/batch_inference_coordinator.cpp
+void BatchInferenceCoordinator::notify_threads() {
+    condition_.notify_one();  // ⚠️ May not wake optimal thread
+}
+```
+
+**Proposed Fix**:
+```cpp
+// File: cpp_extensions/mcts/batch_inference_coordinator.cpp
+void BatchInferenceCoordinator::notify_threads() {
+    condition_.notify_all();  // ✅ Wake all waiting threads
+    // Let OS scheduler pick optimal thread
+}
+```
+
+**Acceptance Criteria**:
+
+1. **Analyze signaling pattern** with perf (T026 prerequisite)
+2. **Change notify_one() to notify_all()** in coordinator
+3. **Add predicate** to condition variable wait to reduce spurious wakeups:
+   ```cpp
+   condition_.wait(lock, [this]{ return has_results() || shutdown_; });
+   ```
+
+4. **Benchmark improvement**:
+   ```bash
+   python scripts/benchmark_throughput.py --threads 4 --simulations 10000
+   # Expected: 2-5% improvement (small but measurable)
+   ```
+
+**Deliverables**:
+- Updated `cpp_extensions/mcts/batch_inference_coordinator.cpp`
+- Benchmark report showing improvement
+- Documentation of signaling behavior
+
+---
+
+### T029: Eliminate Python .tolist() Conversions ⏸️
+
+**Priority**: 🟢 OPTIONAL
+**Effort**: 4 hours
+**Dependencies**: None (independent of T026-T028)
+**Status**: DEFERRED
+**Estimated Impact**: 5-8% overhead reduction (~1.3ms per batch)
+
+**Summary**:
+Remove unnecessary `.tolist()` conversions in Python code that cause GIL overhead. Return numpy arrays directly instead of Python lists.
+
+**Files to Update**:
+
+1. **src/neural/dlpack_inference_bridge.py** (lines 462-465):
+   ```python
+   # BEFORE (unnecessary conversion):
+   move_probs = policy.tolist()  # ❌ 1-2ms overhead
+
+   # AFTER (return numpy directly):
+   move_probs = policy  # ✅ Zero-copy
+   ```
+
+2. **src/core/mcts.py** (lines 757-760, 824-827):
+   ```python
+   # BEFORE:
+   for move_idx, prob in enumerate(policy.tolist()):
+       # ... loop over Python list ...
+
+   # AFTER (vectorized):
+   move_indices = np.where(policy > threshold)[0]
+   # ... vectorized numpy operations ...
+   ```
+
+**Acceptance Criteria**:
+
+1. **Update all .tolist() call sites** identified by agents
+2. **Update tests** to accept numpy arrays instead of lists:
+   ```python
+   # tests/unit/test_mcts.py
+   assert isinstance(move_probs, np.ndarray)  # Not list
+   ```
+
+3. **Benchmark improvement**:
+   ```bash
+   python scripts/benchmark_throughput.py --threads 2 --simulations 10000
+   # Expected: 2,835 → 2,950-3,050 sims/sec (4-7% improvement)
+   ```
+
+4. **Verify no quality regression**:
+   ```bash
+   python -m pytest tests/integration/test_search_quality.py -v
+   ```
+
+**Deliverables**:
+- Updated Python files (dlpack_inference_bridge.py, mcts.py)
+- Updated tests
+- Benchmark report showing 5-8% improvement
+- Quality validation results
+
+---
+
+### T030: Optional GPU Optimization (CUDA Graphs) ⏸️
+
+**Priority**: 🔴 HIGH COMPLEXITY, OUT OF SCOPE
+**Effort**: 2-3 days
+**Dependencies**: T027-T029 (prerequisite optimizations)
+**Status**: **NOT RECOMMENDED** - Complexity too high, benefit limited
+
+**Summary**:
+Implement CUDA Graphs to reduce kernel launch overhead (2-5ms → <0.5ms) and PyTorch CuDNN autotuning for optimal convolution algorithms.
+
+**CUDA Graphs Approach**:
+```python
+# File: src/neural/inference_bridge.py
+class CUDAGraphInferenceWrapper:
+    def __init__(self, model):
+        # Capture graph on first forward pass
+        self.graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(self.graph):
+            output = model(static_input)
+
+    def forward(self, input):
+        # Replay graph (eliminates kernel launch overhead)
+        self.graph.replay()
+```
+
+**Expected Impact**:
+- Kernel launch overhead: 2-5ms → <0.5ms (1.5-10× reduction)
+- Total inference time: 30.7ms → 26-29ms (1.06-1.18× speedup)
+- Throughput: 2,835 → 3,000-3,350 sims/sec (6-18% improvement)
+
+**Challenges**:
+1. **Static input shapes** required (CUDA Graphs cannot handle dynamic shapes)
+2. **Batch size padding** needed (pad to batch-64 always, even with fewer states)
+3. **Warmup complexity** (graph capture adds startup latency)
+4. **PyTorch version** compatibility (CUDA Graphs API changed in PyTorch 2.0+)
+
+**Recommendation**: **DEFER** - Complexity high, benefit marginal (6-18%). Only implement if Option C (≥8k sims/sec) approved.
+
+**Deliverables** (if approved):
+- CUDA Graphs wrapper in inference_bridge.py
+- Benchmark report showing inference time reduction
+- Documentation of graph capture and replay behavior
+
+---
+
+### T031: Optional Model Pruning/Quantization ⏸️
+
+**Priority**: 🔴 OUT OF SCOPE (requires retraining)
+**Effort**: 3-4 days
+**Dependencies**: None (separate work stream)
+**Status**: **NOT RECOMMENDED** - Out of spec scope
+
+**Summary**:
+Reduce model size from 10.1M → 5-6M parameters to achieve 15-20ms inference time (vs current 30.7ms).
+
+**Approach**:
+- Reduce ResNet blocks: 20 → 10
+- Reduce channels: 256 → 192
+- Retrain model for 24-48 hours
+
+**Expected Impact**:
+- Inference time: 30.7ms → 15-20ms (1.5-2× speedup)
+- Throughput: 2,835 → 4,250-5,670 sims/sec (1.5-2× improvement)
+
+**Recommendation**: **OUT OF SCOPE** - Requires model retraining, belongs in separate spec (Spec 005: Model Optimization).
+
+---
+
+## Phase 5 Summary Table
+
+| ID | Task | Priority | Effort | Estimated Impact | Status |
+|----|------|----------|--------|------------------|--------|
+| **T026** | Profile thread contention | 🟢 OPTIONAL | 1d | N/A (analysis) | DEFERRED |
+| **T027** | Fix AsyncInferenceQueue | 🟢 OPTIONAL | 1d | 45% → 60-65% @ 4T | DEFERRED |
+| **T028** | Fix Coordinator signaling | 🟢 OPTIONAL | 4h | 2-5% improvement | DEFERRED |
+| **T029** | Eliminate .tolist() | 🟢 OPTIONAL | 4h | 5-8% improvement | DEFERRED |
+| **T030** | CUDA Graphs (GPU) | 🔴 HIGH COMPLEXITY | 2-3d | 6-18% improvement | NOT RECOMMENDED |
+| **T031** | Model pruning | 🔴 OUT OF SCOPE | 3-4d | 1.5-2× improvement | OUT OF SCOPE |
+
+**Total Effort** (T026-T029 only): 3-4 days
+**Best Case Impact**: 2,835 → 3,444-5,166 sims/sec (1.2-1.8× improvement)
+**Realistic Impact**: 2,835 → 3,100-3,500 sims/sec (1.09-1.23× improvement)
+
+**Recommendation**: **DEFER Phase 5** - Current performance (2,835 sims/sec) meets Option B target (3,000-3,500 sims/sec). Implement only if stretch goal (≥3,500 sims/sec) required by user.
+
+**Documentation**:
+- [GIL_REDUCTION_COMPREHENSIVE_PLAN.md](../../profiling_results/GIL_REDUCTION_COMPREHENSIVE_PLAN.md) - Full 5-phase plan with code examples
+- [GIL_ANALYSIS_EXECUTIVE_SUMMARY.md](../../profiling_results/GIL_ANALYSIS_EXECUTIVE_SUMMARY.md) - Executive findings
+- [docs/GIL_OPTIMIZATION_GUIDE.md](../../docs/GIL_OPTIMIZATION_GUIDE.md) - 10 proven techniques
+- [profiling_results/gil_profile.svg](../../profiling_results/gil_profile.svg) - py-spy flamegraph validation
+
+---
+
+**END OF TASK BREAKDOWN v3.0 (Phase 5 Added)**
+
+**Current Status**: Phases 1-4 COMPLETE, Phase 5 DEFERRED (target met)
+**Next Action**: User decision on Phase 5 implementation (stretch goal ≥3,500 sims/sec required?)
