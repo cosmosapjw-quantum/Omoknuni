@@ -1,16 +1,16 @@
 {
-  "timestamp": 1760342191.679417,
+  "timestamp": 1760350538.1131277,
   "results": [
     {
       "game": "gomoku",
-      "threads": 2,
-      "simulations": 1600,
-      "total_time_sec": 0.8443986079946626,
-      "throughput_sims_per_sec": 1894.839694015831,
+      "threads": 4,
+      "simulations": 5000,
+      "total_time_sec": 1.8580745859999297,
+      "throughput_sims_per_sec": 2690.9576384465922,
       "avg_batch_size": 48.0,
-      "gpu_utilization_percent": 65.0,
-      "cpu_utilization_percent": 3.3,
-      "memory_mb": 100.0,
+      "gpu_utilization_percent": 80.0,
+      "cpu_utilization_percent": 2.9,
+      "memory_mb": 14.1328125,
       "optimizations": {
         "T006c_condition_variables": true,
         "T008f_fp16_mixed_precision": true,

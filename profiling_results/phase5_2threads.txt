@@ -1,0 +1,38 @@
+/home/cosmosapjw/omoknuni/src/core/dlpack_inference_bridge.py:393: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with torch.cuda.amp.autocast():
+Benchmark Configuration:
+  Device: cuda
+  Optimizations enabled:
+    ✅ T006c_condition_variables
+    ✅ T008f_fp16_mixed_precision
+    ✅ T007_dlpack_zero_copy
+    ✅ T009_thread_local_arenas
+
+Thread Scaling Benchmark (gomoku):
+==================================================
+Running benchmark: gomoku, 2 threads, 1600 sims...
+  Throughput: 2120 sims/sec
+  Total time: 0.75 sec
+  GPU utilization: 79.0%
+  CPU utilization: 2.9%
+
+
+======================================================================
+BENCHMARK SUMMARY
+======================================================================
+
+Configuration: gomoku, 2 threads
+  Throughput: 2120 sims/sec
+  Total time: 0.75 sec
+  Avg batch size: 48.0
+  GPU utilization: 79.0%
+  CPU utilization: 2.9%
+  Memory: 100.0 MB
+
+Best Performance: 2120 sims/sec
+  Configuration: 2 threads, gomoku
+
+Target Achievement: 8.5% of 25k sims/sec target
+  ❌ Below target
+======================================================================
+Results saved to: results/benchmarks/throughput_latest.json

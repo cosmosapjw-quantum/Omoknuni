@@ -54,8 +54,10 @@ uint64_t AsyncInferenceQueue::submit_request(std::unique_ptr<IGameState> state,
 
     pending_count_.fetch_add(1, std::memory_order_relaxed);
 
-    // T006c: Notify waiting coordinator thread
-    request_ready_.notify_one();
+    // T028: Notify all waiting threads (not just one) for optimal thread wakeup
+    // Using notify_all() allows OS scheduler to pick the best thread to wake
+    // instead of potentially waking a suboptimal thread with notify_one()
+    request_ready_.notify_all();
 
     return request_id;
 }

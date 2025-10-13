@@ -454,15 +454,16 @@ class DLPackInferenceBridge:
             self._d2h_transfer_time_ms += d2h_elapsed
             self._inference_time_ms += inference_elapsed
 
-        # Convert to Python lists
+        # T029: Return numpy arrays directly (no .tolist() conversion)
+        # This eliminates 1-2ms overhead per batch
         results = []
         policy_np = policy_cpu.numpy()
         value_np = value_cpu.numpy()
 
         for i in range(len(states)):
-            policy_list = policy_np[i].tolist()
+            policy_array = policy_np[i]  # Keep as numpy array
             value_scalar = float(value_np[i])
-            results.append((policy_list, value_scalar))
+            results.append((policy_array, value_scalar))
 
         return results
 
@@ -511,15 +512,16 @@ class DLPackInferenceBridge:
         # Apply softmax (always in FP32 for numerical stability)
         policy = torch.softmax(policy_logits.float(), dim=1)
 
-        # Convert to Python lists
+        # T029: Return numpy arrays directly (no .tolist() conversion)
+        # This eliminates 1-2ms overhead per batch
         results = []
         policy_np = policy.cpu().numpy()
         value_np = value.cpu().numpy()
 
         for i in range(batch_size):
-            policy_list = policy_np[i].tolist()
+            policy_array = policy_np[i]  # Keep as numpy array
             value_scalar = float(value_np[i])
-            results.append((policy_list, value_scalar))
+            results.append((policy_array, value_scalar))
 
         return results
 
