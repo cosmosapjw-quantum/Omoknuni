@@ -1,67 +1,16 @@
 {
-  "timestamp": 1760071915.7019436,
+  "timestamp": 1760342191.679417,
   "results": [
     {
       "game": "gomoku",
-      "threads": 1,
-      "simulations": 1000,
-      "total_time_sec": 0.8854582628700882,
-      "throughput_sims_per_sec": 1129.3587082903725,
-      "avg_batch_size": 48.0,
-      "gpu_utilization_percent": 79.0,
-      "cpu_utilization_percent": 4.1,
-      "memory_mb": 5.63671875,
-      "optimizations": {
-        "T006c_condition_variables": true,
-        "T008f_fp16_mixed_precision": true,
-        "T007_dlpack_zero_copy": true,
-        "T009_thread_local_arenas": true
-      }
-    },
-    {
-      "game": "gomoku",
       "threads": 2,
-      "simulations": 1000,
-      "total_time_sec": 0.7378570099826902,
-      "throughput_sims_per_sec": 1355.2761395103632,
+      "simulations": 1600,
+      "total_time_sec": 0.8443986079946626,
+      "throughput_sims_per_sec": 1894.839694015831,
       "avg_batch_size": 48.0,
-      "gpu_utilization_percent": 78.0,
-      "cpu_utilization_percent": 3.7,
+      "gpu_utilization_percent": 65.0,
+      "cpu_utilization_percent": 3.3,
       "memory_mb": 100.0,
-      "optimizations": {
-        "T006c_condition_variables": true,
-        "T008f_fp16_mixed_precision": true,
-        "T007_dlpack_zero_copy": true,
-        "T009_thread_local_arenas": true
-      }
-    },
-    {
-      "game": "gomoku",
-      "threads": 4,
-      "simulations": 1000,
-      "total_time_sec": 0.7212886470369995,
-      "throughput_sims_per_sec": 1386.4075139792178,
-      "avg_batch_size": 48.0,
-      "gpu_utilization_percent": 78.0,
-      "cpu_utilization_percent": 2.1,
-      "memory_mb": 20.77734375,
-      "optimizations": {
-        "T006c_condition_variables": true,
-        "T008f_fp16_mixed_precision": true,
-        "T007_dlpack_zero_copy": true,
-        "T009_thread_local_arenas": true
-      }
-    },
-    {
-      "game": "gomoku",
-      "threads": 8,
-      "simulations": 1000,
-      "total_time_sec": 0.7122867051512003,
-      "throughput_sims_per_sec": 1403.929053803869,
-      "avg_batch_size": 48.0,
-      "gpu_utilization_percent": 76.0,
-      "cpu_utilization_percent": 2.1,
-      "memory_mb": 53.453125,
       "optimizations": {
         "T006c_condition_variables": true,
         "T008f_fp16_mixed_precision": true,
