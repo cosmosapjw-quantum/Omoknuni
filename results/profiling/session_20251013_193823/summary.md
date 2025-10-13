@@ -1,4 +1,4 @@
-# MCTS Profiling Report - 20251013_070415
+# MCTS Profiling Report - 20251013_193823
 
 ## Executive Summary
 
@@ -13,7 +13,7 @@
 |--------|-------|
 | C++ Throughput | 0.0 sims/sec |
 | Best Thread Count | 1 threads |
-| Peak Throughput | 1148.3 sims/sec |
+| Peak Throughput | 1176.2 sims/sec |
 
 ### Recommendations
 

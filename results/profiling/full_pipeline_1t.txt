@@ -4,4 +4,4 @@ usage: benchmark_throughput.py [-h] [--quick] [--simulations SIMULATIONS]
                                [--device {cuda,cpu}]
                                [--compare-baseline COMPARE_BASELINE]
                                [--output OUTPUT]
-benchmark_throughput.py: error: unrecognized arguments: --iterations 3
+benchmark_throughput.py: error: unrecognized arguments: --output-json results/profiling/full_pipeline_1t.json

@@ -1,0 +1,108 @@
+/home/cosmosapjw/omoknuni/src/core/dlpack_inference_bridge.py:393: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with torch.cuda.amp.autocast():
+Benchmark Configuration:
+  Device: cuda
+  Optimizations enabled:
+    ✅ T006c_condition_variables
+    ✅ T008f_fp16_mixed_precision
+    ✅ T007_dlpack_zero_copy
+    ✅ T009_thread_local_arenas
+
+Thread Scaling Benchmark (gomoku):
+==================================================
+Running benchmark: gomoku, 1 threads, 5000 sims...
+  Throughput: 1214 sims/sec
+  Total time: 4.12 sec
+  GPU utilization: 39.0%
+  CPU utilization: 3.3%
+
+Running benchmark: gomoku, 2 threads, 5000 sims...
+  Throughput: 2354 sims/sec
+  Total time: 2.12 sec
+  GPU utilization: 61.0%
+  CPU utilization: 1.7%
+
+Running benchmark: gomoku, 4 threads, 5000 sims...
+  Throughput: 1570 sims/sec
+  Total time: 3.19 sec
+  GPU utilization: 26.0%
+  CPU utilization: 0.8%
+
+Running benchmark: gomoku, 6 threads, 5000 sims...
+  Throughput: 1473 sims/sec
+  Total time: 3.39 sec
+  GPU utilization: 50.0%
+  CPU utilization: 2.1%
+
+Running benchmark: gomoku, 8 threads, 5000 sims...
+  Throughput: 1958 sims/sec
+  Total time: 2.55 sec
+  GPU utilization: 60.0%
+  CPU utilization: 1.3%
+
+Running benchmark: gomoku, 12 threads, 5000 sims...
+  Throughput: 1478 sims/sec
+  Total time: 3.38 sec
+  GPU utilization: 46.0%
+  CPU utilization: 2.9%
+
+
+======================================================================
+BENCHMARK SUMMARY
+======================================================================
+
+Configuration: gomoku, 1 threads
+  Throughput: 1214 sims/sec
+  Total time: 4.12 sec
+  Avg batch size: 48.0
+  GPU utilization: 39.0%
+  CPU utilization: 3.3%
+  Memory: 4.6 MB
+
+Configuration: gomoku, 2 threads
+  Throughput: 2354 sims/sec
+  Total time: 2.12 sec
+  Avg batch size: 48.0
+  GPU utilization: 61.0%
+  CPU utilization: 1.7%
+  Memory: 100.0 MB
+
+Configuration: gomoku, 4 threads
+  Throughput: 1570 sims/sec
+  Total time: 3.19 sec
+  Avg batch size: 48.0
+  GPU utilization: 26.0%
+  CPU utilization: 0.8%
+  Memory: 100.0 MB
+
+Configuration: gomoku, 6 threads
+  Throughput: 1473 sims/sec
+  Total time: 3.39 sec
+  Avg batch size: 48.0
+  GPU utilization: 50.0%
+  CPU utilization: 2.1%
+  Memory: 100.0 MB
+
+Configuration: gomoku, 8 threads
+  Throughput: 1958 sims/sec
+  Total time: 2.55 sec
+  Avg batch size: 48.0
+  GPU utilization: 60.0%
+  CPU utilization: 1.3%
+  Memory: 100.0 MB
+
+Configuration: gomoku, 12 threads
+  Throughput: 1478 sims/sec
+  Total time: 3.38 sec
+  Avg batch size: 48.0
+  GPU utilization: 46.0%
+  CPU utilization: 2.9%
+  Memory: 2008.6 MB
+
+Best Performance: 2354 sims/sec
+  Configuration: 2 threads, gomoku
+
+Target Achievement: 9.4% of 25k sims/sec target
+  ❌ Below target
+======================================================================
+Results saved to: results/profiling/comprehensive_benchmarks/thread_scaling.json

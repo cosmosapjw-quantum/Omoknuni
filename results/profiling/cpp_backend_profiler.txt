@@ -1,0 +1,7 @@
+Simulations requested: 5000
+Simulations completed: 5000
+Elapsed (ns): 11659769479
+Throughput (sims/sec): 428.825
+Tree nodes: 995700 / 1000000
+Instrumentation stages captured: 7
+Top stage: expansion (24355.6 ns avg)

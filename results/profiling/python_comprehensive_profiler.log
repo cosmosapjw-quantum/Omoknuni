@@ -1,0 +1,84 @@
+No model_path provided. Initializing default AlphaZeroNet weights for benchmark use.
+Comprehensive MCTS Profiler initialized
+Session ID: 20251013_193823
+Output directory: results/profiling/session_20251013_193823
+
+================================================================================
+COMPREHENSIVE MCTS PROFILING
+================================================================================
+
+=== Setting up game and MCTS engine ===
+Creating GPU inference worker (batch_size=64)...
+Creating MCTS engine (threads=6)...
+
+=== Profiling C++ Backend ===
+Running 5000 simulations...
+C++ profiling complete:
+  Total time: 2.834s
+  Simulations/sec: 1764.2
+
+  Top C++ operations:
+
+=== Profiling Python Coordination ===
+Running search with Python profiling...
+Python profiling complete:
+  Total time: 0.711s
+  GIL efficiency: 0.0%
+  Threads with GIL contention: 0
+
+=== Profiling Memory Usage ===
+Running searches while tracking memory...
+  Search 1/10: 0.1MB allocated
+  Search 2/10: 0.1MB allocated
+  Search 3/10: 0.2MB allocated
+  Search 4/10: 0.2MB allocated
+  Search 5/10: 0.2MB allocated
+  Search 6/10: 0.2MB allocated
+  Search 7/10: 0.2MB allocated
+  Search 8/10: 0.2MB allocated
+  Search 9/10: 0.2MB allocated
+  Search 10/10: 0.2MB allocated
+
+Memory profiling complete:
+  Peak memory: 0.2MB
+  Avg memory: 0.2MB
+
+  Top memory allocations:
+    /home/cosmosapjw/omoknuni/venv/lib/python3.12/site-packages/torch/cuda/memory.py:321: 0.1MB
+    /home/cosmosapjw/omoknuni/venv/lib/python3.12/site-packages/torch/cuda/memory.py:323: 0.1MB
+    /home/cosmosapjw/omoknuni/venv/lib/python3.12/site-packages/torch/cuda/memory.py:337: 0.0MB
+    /usr/lib/python3.12/tracemalloc.py:558: 0.0MB
+    /usr/lib/python3.12/tracemalloc.py:115: 0.0MB
+
+=== Profiling Thread Contention ===
+  Testing with 1 threads...
+    Throughput: 1176.2 sims/sec
+    Parallel efficiency: 100.0%
+  Testing with 2 threads...
+    Throughput: 301.1 sims/sec
+    Parallel efficiency: 25.6%
+  Testing with 4 threads...
+    Throughput: 521.6 sims/sec
+    Parallel efficiency: 44.3%
+  Testing with 8 threads...
+    Throughput: 659.8 sims/sec
+    Parallel efficiency: 56.1%
+  Testing with 12 threads...
+    Throughput: 481.7 sims/sec
+    Parallel efficiency: 41.0%
+
+=== Bottleneck Analysis ===
+
+Identified bottlenecks:
+  🔴 Python: GIL contention (100.0%)
+
+=== Generating Report ===
+  JSON report: results/profiling/session_20251013_193823/profile_report.json
+  Text report: results/profiling/session_20251013_193823/profile_report.txt
+  Python profile: results/profiling/session_20251013_193823/python_profile.txt
+  Markdown summary: results/profiling/session_20251013_193823/summary.md
+
+✅ All reports saved to: results/profiling/session_20251013_193823
+
+✅ Profiling complete!
+📊 Reports saved to: results/profiling/session_20251013_193823
