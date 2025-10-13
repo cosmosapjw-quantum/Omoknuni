@@ -1,0 +1,125 @@
+{
+  "timestamp": 1760330316.5810971,
+  "results": [
+    {
+      "game": "gomoku",
+      "threads": 1,
+      "simulations": 1600,
+      "total_time_sec": 1.3010972769989166,
+      "throughput_sims_per_sec": 1229.731264744882,
+      "avg_batch_size": 48.0,
+      "gpu_utilization_percent": 48.0,
+      "cpu_utilization_percent": 4.2,
+      "memory_mb": 100.0,
+      "optimizations": {
+        "T006c_condition_variables": true,
+        "T008f_fp16_mixed_precision": true,
+        "T007_dlpack_zero_copy": true,
+        "T009_thread_local_arenas": true
+      }
+    },
+    {
+      "game": "gomoku",
+      "threads": 2,
+      "simulations": 1600,
+      "total_time_sec": 0.7257138490094803,
+      "throughput_sims_per_sec": 2204.7257361614693,
+      "avg_batch_size": 48.0,
+      "gpu_utilization_percent": 66.0,
+      "cpu_utilization_percent": 4.2,
+      "memory_mb": 100.0,
+      "optimizations": {
+        "T006c_condition_variables": true,
+        "T008f_fp16_mixed_precision": true,
+        "T007_dlpack_zero_copy": true,
+        "T009_thread_local_arenas": true
+      }
+    },
+    {
+      "game": "gomoku",
+      "threads": 4,
+      "simulations": 1600,
+      "total_time_sec": 0.7226865149859805,
+      "throughput_sims_per_sec": 2213.961332917688,
+      "avg_batch_size": 48.0,
+      "gpu_utilization_percent": 66.0,
+      "cpu_utilization_percent": 5.1,
+      "memory_mb": 12.37890625,
+      "optimizations": {
+        "T006c_condition_variables": true,
+        "T008f_fp16_mixed_precision": true,
+        "T007_dlpack_zero_copy": true,
+        "T009_thread_local_arenas": true
+      }
+    },
+    {
+      "game": "gomoku",
+      "threads": 6,
+      "simulations": 1600,
+      "total_time_sec": 0.7362925869820174,
+      "throughput_sims_per_sec": 2173.0491767657536,
+      "avg_batch_size": 48.0,
+      "gpu_utilization_percent": 61.0,
+      "cpu_utilization_percent": 4.2,
+      "memory_mb": 155.11328125,
+      "optimizations": {
+        "T006c_condition_variables": true,
+        "T008f_fp16_mixed_precision": true,
+        "T007_dlpack_zero_copy": true,
+        "T009_thread_local_arenas": true
+      }
+    },
+    {
+      "game": "gomoku",
+      "threads": 8,
+      "simulations": 1600,
+      "total_time_sec": 0.7280220500251744,
+      "throughput_sims_per_sec": 2197.7356316950472,
+      "avg_batch_size": 48.0,
+      "gpu_utilization_percent": 66.0,
+      "cpu_utilization_percent": 3.8,
+      "memory_mb": 100.0,
+      "optimizations": {
+        "T006c_condition_variables": true,
+        "T008f_fp16_mixed_precision": true,
+        "T007_dlpack_zero_copy": true,
+        "T009_thread_local_arenas": true
+      }
+    },
+    {
+      "game": "gomoku",
+      "threads": 10,
+      "simulations": 1600,
+      "total_time_sec": 0.7570604530046694,
+      "throughput_sims_per_sec": 2113.4375645297796,
+      "avg_batch_size": 48.0,
+      "gpu_utilization_percent": 61.0,
+      "cpu_utilization_percent": 4.2,
+      "memory_mb": 458.25390625,
+      "optimizations": {
+        "T006c_condition_variables": true,
+        "T008f_fp16_mixed_precision": true,
+        "T007_dlpack_zero_copy": true,
+        "T009_thread_local_arenas": true
+      }
+    },
+    {
+      "game": "gomoku",
+      "threads": 12,
+      "simulations": 1600,
+      "total_time_sec": 0.738539021986071,
+      "throughput_sims_per_sec": 2166.4393517045282,
+      "avg_batch_size": 48.0,
+      "gpu_utilization_percent": 65.0,
+      "cpu_utilization_percent": 5.5,
+      "memory_mb": 100.0,
+      "optimizations": {
+        "T006c_condition_variables": true,
+        "T008f_fp16_mixed_precision": true,
+        "T007_dlpack_zero_copy": true,
+        "T009_thread_local_arenas": true
+      }
+    }
+  ],
+  "baseline_comparison": null
+}

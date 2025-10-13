@@ -1,0 +1,7 @@
+usage: benchmark_throughput.py [-h] [--quick] [--simulations SIMULATIONS]
+                               [--threads THREADS [THREADS ...]]
+                               [--game {gomoku,chess,go}]
+                               [--device {cuda,cpu}]
+                               [--compare-baseline COMPARE_BASELINE]
+                               [--output OUTPUT]
+benchmark_throughput.py: error: unrecognized arguments: --iterations 3

@@ -1241,6 +1241,112 @@ Create comprehensive tuning guide for users with different hardware (other CPUs,
 
 ---
 
+## 🔴 NEEDS DECISION: GPU Inference Bottleneck Blocks 8k Target
+
+**Status**: CRITICAL BLOCKER (2025-10-13)
+**Reported By**: OpenMP fix validation and post-fix benchmarking
+**Impact**: Cannot reach 8,000 sims/sec target with current model size
+
+### Problem Statement
+
+After successfully implementing OpenMP parallelization (6.9× speedup in tensor creation), comprehensive benchmarking reveals:
+
+**Performance Results**:
+- Pre-OpenMP: 2,235 sims/sec (4 threads)
+- Post-OpenMP: 2,835 sims/sec (4 threads best case)
+- Improvement: +27% (1.27× speedup)
+- **Target**: 8,000 sims/sec
+- **Gap**: 5,165 sims/sec short (64% below target)
+
+**Root Cause**: GPU inference bottleneck
+- Measured: 30.7ms per batch-64 (FP16, T-VALID-1)
+- Expected: 8-10ms per batch-64 (from SPECIFICATION.md, review.txt)
+- **Discrepancy**: 3-4× slower than expected
+- **Theoretical max**: 64 / 32ms = ~2,000 states/sec (matches observed!)
+
+### Bottleneck Analysis
+
+```
+Per-batch timing (current):
+  Tensor creation:  1.08ms (✅ fixed with OpenMP)
+  GPU inference:   30.70ms (❌ CRITICAL BOTTLENECK, 384% over budget)
+  Total:          ~32.00ms (caps at ~2,000 states/sec)
+
+Per-batch timing (needed for 8k sims/sec):
+  Tensor creation:  1.08ms (acceptable)
+  GPU inference:    8.00ms (required, 3.8× faster than current)
+  Total:           ~9.00ms
+```
+
+**Verdict**: No amount of parameter tuning (threads, batch size, timeout) can overcome 30.7ms GPU inference. Model is too large for target throughput.
+
+### Decision Options
+
+**Option A: Reduce Model Size** ⭐ RECOMMENDED
+- **Action**: Reduce from 10.1M → 5-6M params (10 blocks × 192 channels)
+- **Timeline**: +2-3 days (model reduction + retraining 24-48h)
+- **Expected**: 15-20ms inference → 3,200-4,000 states/sec per thread
+- **With 2 threads** (90% efficiency): 5,760-7,200 sims/sec (72-90% of target)
+- **Pros**: Direct path toward target, maintains search quality
+- **Cons**: Requires model retraining, adds 3 days to timeline
+- **Risk**: Medium (model size reduction well-understood, quality predictable)
+
+**Option B: Accept Lower Target** (FALLBACK)
+- **Action**: Revise target from 8,000 → 3,000-3,500 sims/sec
+- **Timeline**: No delay (continue with T018/T019 tuning)
+- **Expected**: 3,000-3,500 sims/sec with optimal tuning
+- **Achievement**: 38-44% of original 8k target
+- **Pros**: No additional work, realistic with current model
+- **Cons**: Misses original target by 56-62%
+- **Risk**: Low (already achievable with current setup)
+
+**Option C: CUDA Graphs + Model Reduction** (BEST CASE, HIGH EFFORT)
+- **Action**: Reduce model (10.1M → 6M) + implement CUDA Graphs
+- **Timeline**: +4-5 days (model + CUDA Graphs implementation)
+- **Expected**: 30.7ms / 1.7 / 1.15 = 15.6ms → 4,100 states/sec per thread
+- **With 2 threads** (90% efficiency): 7,380 sims/sec (92% of target)
+- **Pros**: Closest to 8k target
+- **Cons**: Most complex, longest timeline, CUDA Graphs unfamiliar territory
+- **Risk**: High (CUDA Graphs implementation complexity unknown)
+
+**Option D: Multi-Threading Pipeline** (NOT RECOMMENDED)
+- **Action**: Use 4-8 threads with aggressive pipelining
+- **Expected**: 2,200 × 4 threads × 70% efficiency = 6,160 sims/sec
+- **Achievement**: 77% of target
+- **Pros**: No model changes
+- **Cons**: Still falls short, thread scaling efficiency already poor
+- **Risk**: High (thread contention issues persist)
+
+### Recommendation
+
+**ESCALATE TO USER**: The 8,000 sims/sec target is **NOT achievable** with current 10.1M param model.
+
+**Recommended Path**: **Option A (Model Reduction)**
+
+**Rationale**:
+1. GPU inference (30.7ms) is the hard cap, not fixable via parameter tuning
+2. Model reduction (10.1M → 6M params) is proven approach with predictable results
+3. Expected 15-20ms inference brings us within range (5.7k-7.2k sims/sec)
+4. Timeline impact (+3 days) is acceptable for realistic target achievement
+5. Maintains search quality (6M params sufficient for Gomoku/Chess/Go)
+
+**Proposed Next Steps** (if Option A approved):
+1. **Day 1-2**: Reduce model architecture (20 blocks × 256ch → 10 blocks × 192ch)
+2. **Day 3-4**: Retrain model for 24-48 hours (use existing training pipeline)
+3. **Day 5**: Re-validate FP16 inference (target: 15-20ms per batch-64)
+4. **Day 6-7**: Continue T018/T019 tuning (threads, batch, timeout)
+5. **Day 8**: T020-T025 quality validation and documentation
+
+**Alternative** (if Option A rejected): Accept **Option B (Lower Target)** and proceed with T018/T019 tuning for 3,000-3,500 sims/sec realistic achievement.
+
+### Supporting Evidence
+
+- **Post-OpenMP Analysis**: [profiling_results/post_openmp_analysis.md](profiling_results/post_openmp_analysis.md)
+- **Thread Scaling Benchmarks**: [profiling_results/thread_scaling_post_openmp.json](profiling_results/thread_scaling_post_openmp.json)
+- **FP16 Validation**: [docs/performance/validation_report_2025-10-13.md](docs/performance/validation_report_2025-10-13.md) (T-VALID-1: 30.7ms inference)
+
+---
+
 ## Task Summary Table
 
 | ID | Task | Priority | Effort | Dependencies | Deliverables |
