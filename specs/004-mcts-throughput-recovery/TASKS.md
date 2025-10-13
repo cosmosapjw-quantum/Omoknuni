@@ -1,9 +1,10 @@
 # Task Breakdown: MCTS Throughput Recovery (Phase 4)
 
-**Version**: 2.1 (Validation Complete, Critical Fix Required)
+**Version**: 2.2 (Target Revised, Tuning Phase)
 **Status**: Active
-**Last Updated**: 2025-10-13 (post-validation)
-**Target**: Achieve ≥8,000 sims/sec (2.1× baseline, 3.7× current) in 7-8 days
+**Last Updated**: 2025-10-13 (post-decision)
+**Target**: Achieve ≥3,000 sims/sec (REVISED, realistic with current model) in 3-4 days
+**Original Target**: 8,000 sims/sec (not achievable without model reduction)
 
 **Authority**: This task breakdown implements TECHNICAL_PLAN.md v2.0 acceptance criteria and SPECIFICATION.md v1.1 Section 12 resolved protocols.
 
@@ -1222,30 +1223,32 @@ Create comprehensive tuning guide for users with different hardware (other CPUs,
 
 ---
 
-## Final Success Criteria (Phase 4 Complete)
+## Final Success Criteria (Phase 4 Complete) - REVISED
 
-**PRIMARY GOALS (Must-Have)**:
-- ✅ Throughput: ≥8,000 sims/sec (achieved: _____ )
-- ✅ GPU Utilization: ≥80% (achieved: _____ %)
-- ✅ Thread Efficiency @ 8T: ≥70% (achieved: _____ %)
-- ✅ Win Rate: ≥99.5% (achieved: _____ %)
+**PRIMARY GOALS (Must-Have)** - REVISED for realistic achievement:
+- ✅ Throughput: ≥3,000 sims/sec (achieved: _____ ) - REVISED from 8,000
+- ✅ GPU Utilization: ≥70% (achieved: _____ %) - REVISED from 80%
+- ✅ Thread Efficiency @ 2-4T: ≥80% (achieved: _____ %) - REVISED from ≥70% @ 8T
+- ✅ Win Rate: ≥99.5% (achieved: _____ %) - UNCHANGED
 
 **SECONDARY GOALS (Should-Have)**:
-- ⭐ Coordination overhead: ≤30% (achieved: _____ %)
+- ⭐ Tensor creation: ≤1.5ms (achieved: 1.08ms ✅)
 - ⭐ Thread idle time: ≤20% (achieved: _____ %)
 - ⭐ Collision rate: ≤5% (achieved: _____ %)
 
 **STRETCH GOALS (Nice-to-Have)**:
-- 🌟 Throughput: ≥10,000 sims/sec
-- 🌟 GPU Utilization: ≥85%
+- 🌟 Throughput: ≥3,500 sims/sec (123% of current best)
+- 🌟 GPU Utilization: ≥80%
+- 🌟 Baseline recovery: Match 3,831 sims/sec Spec 003 baseline
 
 ---
 
-## 🔴 NEEDS DECISION: GPU Inference Bottleneck Blocks 8k Target
+## ✅ DECISION RESOLVED: Accept Realistic Target (Option B)
 
-**Status**: CRITICAL BLOCKER (2025-10-13)
+**Status**: RESOLVED (2025-10-13)
+**Decision**: Option B - Accept Lower Target (3,000-3,500 sims/sec)
 **Reported By**: OpenMP fix validation and post-fix benchmarking
-**Impact**: Cannot reach 8,000 sims/sec target with current model size
+**Original Impact**: Cannot reach 8,000 sims/sec target with current model size
 
 ### Problem Statement
 
@@ -1337,7 +1340,25 @@ Per-batch timing (needed for 8k sims/sec):
 4. **Day 6-7**: Continue T018/T019 tuning (threads, batch, timeout)
 5. **Day 8**: T020-T025 quality validation and documentation
 
-**Alternative** (if Option A rejected): Accept **Option B (Lower Target)** and proceed with T018/T019 tuning for 3,000-3,500 sims/sec realistic achievement.
+### ✅ Decision: Option B Accepted
+
+**User Decision** (2025-10-13): Accept realistic target of 3,000-3,500 sims/sec based on current model size constraints.
+
+**Revised Success Criteria**:
+- **Primary Target**: ≥3,000 sims/sec (106% of current 2,835 sims/sec)
+- **Stretch Target**: ≥3,500 sims/sec (123% of current)
+- **GPU Utilization**: Maintain ≥70% (current: 66-87%)
+- **Thread Efficiency**: Optimize for 2-4 threads (current best: 89.6% @ 2T)
+
+**Implementation Plan**:
+1. ✅ OpenMP fix complete (6.9× tensor creation speedup)
+2. 🔄 T018: Thread count optimization (find optimal 2-4 threads)
+3. 🔄 T019: Batch size/timeout optimization (currently batch-64, timeout varies)
+4. 🔄 T020: Profile-guided optimization (if needed to close gap to 3k)
+5. 🔄 T021-T025: Quality validation and documentation
+
+**Timeline**: 3-4 days (no model retraining delay)
+**Risk**: Low (target already within reach with current setup)
 
 ### Supporting Evidence
 
