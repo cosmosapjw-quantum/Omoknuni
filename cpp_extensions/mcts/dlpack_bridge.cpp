@@ -428,6 +428,10 @@ DLManagedTensor* create_batch_tensor_from_states(
     float* data = static_cast<float*>(buffer->data());
     size_t state_size = num_planes * height * width;
 
+    // Parallelize feature extraction with OpenMP
+    // Use static scheduling for predictable load distribution
+    // Only parallelize if batch_size > 8 to avoid threading overhead
+    #pragma omp parallel for schedule(static) if(batch_size > 8)
     for (int i = 0; i < batch_size; ++i) {
         float* state_buffer = data + (i * state_size);
         states[i]->extract_features_to_buffer(state_buffer);
