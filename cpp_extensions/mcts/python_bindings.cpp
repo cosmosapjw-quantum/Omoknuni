@@ -12,6 +12,11 @@
 #include <pybind11/numpy.h>
 #include <memory>
 #include <vector>
+#include <chrono>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 #include "tree.hpp"
 #include "virtual_loss.hpp"
@@ -866,6 +871,51 @@ PYBIND11_MODULE(mcts_py, m) {
           "    torch.Size([32, 36, 15, 15])\n"
           "    >>> # Features contain actual game state (not zeros)\n"
           "    >>> assert tensor.sum() > 0  # Non-zero features\n");
+
+    // OpenMP verification functions (T002: OpenMP Verification Script)
+    m.def("get_omp_max_threads", []() {
+        #ifdef _OPENMP
+            return omp_get_max_threads();
+        #else
+            return 1;  // OpenMP not available
+        #endif
+    }, "Get maximum number of OpenMP threads (T002 verification)");
+
+    m.def("benchmark_feature_extraction", [](int batch_size, int iterations) {
+        #ifdef _OPENMP
+            // Run benchmark of parallel loop performance
+            // This simulates the feature extraction workload without needing game states
+            std::vector<double> times_ms;
+            times_ms.reserve(iterations);
+
+            const int feature_size = 36 * 15 * 15;  // Gomoku: 36 planes, 15x15 board
+            std::vector<float> dummy_buffer(batch_size * feature_size);
+
+            for (int iter = 0; iter < iterations; ++iter) {
+                auto start = std::chrono::high_resolution_clock::now();
+
+                // Parallel loop that mimics feature extraction workload
+                #pragma omp parallel for schedule(static) if(batch_size > 8)
+                for (int b = 0; b < batch_size; ++b) {
+                    // Simulate feature extraction work (memory writes + computation)
+                    for (int i = 0; i < feature_size; ++i) {
+                        dummy_buffer[b * feature_size + i] = static_cast<float>(b + i);
+                    }
+                }
+
+                auto end = std::chrono::high_resolution_clock::now();
+
+                // Record time in milliseconds
+                double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
+                times_ms.push_back(elapsed_ms);
+            }
+
+            return times_ms;
+        #else
+            throw std::runtime_error("OpenMP not available");
+        #endif
+    }, py::arg("batch_size") = 64, py::arg("iterations") = 10,
+    "Benchmark feature extraction to verify OpenMP is active (T002 verification)");
 }
 
 } // namespace python

@@ -154,7 +154,8 @@ if(pybind11_FOUND)
     pybind11_add_module(mcts_py python_bindings.cpp dlpack_python.cpp)
 
     # Link with MCTS core library and games library (for IGameState)
-    target_link_libraries(mcts_py PRIVATE mcts_core utils_core)
+    # CRITICAL: Must link OpenMP explicitly when linking static library to shared object
+    target_link_libraries(mcts_py PRIVATE mcts_core utils_core OpenMP::OpenMP_CXX)
 
     # Include directories
     target_include_directories(mcts_py PRIVATE
