@@ -251,4 +251,43 @@
 
 ---
 
-**End of Analysis**
+## Update: GPU Profiling Complete (2025-10-14)
+
+### Profiling Results
+
+✅ **GPU inference profiling COMPLETE** - see `GPU_PROFILING_ANALYSIS_2025-10-14.md`
+
+**Key Findings**:
+1. GPU inference is FAST (75ms/batch-64 FP32, 61ms FP16)
+2. FP16 provides 1.21× speedup (validates T-VALID-1)
+3. Batch size scaling is excellent (85-93% efficiency)
+4. **GPU utilization is LOW (30% vs 80% target)** ❌
+5. **Bottleneck: Thread coordination / work submission** 🔴
+
+### Timeout Experiment (FAILED)
+
+Attempted **Option A** (reduce timeout 10ms → 1ms) to improve GPU utilization.
+
+**Result**: CATASTROPHIC FAILURE - see `TIMEOUT_EXPERIMENT_FAILURE_2025-10-14.md`
+- Throughput dropped 88% (1,800 → 192 sims/sec @ 8 threads)
+- 1ms timeout too short for batch accumulation
+- Coordinator cycles dominate overhead
+- **Reverted to 10ms** ✅
+
+**Lesson**: Low GPU utilization (30%) is NOT caused by slow batch submission. Threads are not generating enough NN evaluation requests (cache hits, tree search, or coordination overhead).
+
+### Corrected Next Steps
+
+**Do NOT proceed with Phase 1 T007-T009 state pooling** - still only 10-15% gain, not on critical path.
+
+**MUST profile thread idle time**:
+1. Where do threads spend time during MCTS search?
+2. What % of NN requests are cache hits?
+3. What's the coordinator cycle time?
+4. Are threads blocked by virtual loss contention?
+
+**Expected Outcome**: Identify actual bottleneck → targeted fix → 2-3× improvement
+
+---
+
+**End of Analysis (Updated 2025-10-14)**
