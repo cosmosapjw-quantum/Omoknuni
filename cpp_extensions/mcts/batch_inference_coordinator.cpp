@@ -102,10 +102,19 @@ void BatchInferenceCoordinator::stop() {
 }
 
 void BatchInferenceCoordinator::coordinator_loop() {
+    static int batch_counter = 0;  // DEBUG: Track batch number
     while (running_.load(std::memory_order_acquire)) {
         // Phase 1: Collect batch from queue
         // This blocks up to timeout_ms, returns early if batch_size reached
         std::vector<InferenceRequest> batch = queue_->collect_batch(batch_size_, timeout_ms_);
+
+        // DEBUG: Log batch collection (only first 10 batches to avoid spam)
+        if (batch_counter < 10 && !batch.empty()) {
+            std::cerr << "[BatchCoordinator #" << batch_counter
+                      << "] Collected batch: size=" << batch.size()
+                      << ", config: min_batch=" << batch_size_ << ", timeout=" << timeout_ms_ << "ms" << std::endl;
+        }
+        batch_counter++;
 
         // Check if batch is empty (timeout with no requests)
         if (batch.empty()) {

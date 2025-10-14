@@ -102,8 +102,8 @@ class AlphaZeroMCTS(MCTSEngine):
                  enable_value_clipping: bool = True,
                  num_threads: int = 8,
                  use_async_inference: bool = True,
-                 async_batch_size: int = 32,
-                 async_timeout_ms: float = 2.0,
+                 async_batch_size: int = 16,  # Reduced from 32 for better accumulation with 8 threads
+                 async_timeout_ms: float = 10.0,  # Increased from 2.0ms for better batching
                  enable_instrumentation: bool = False,
                  parallel_mode: str = "shared"):
         """Initialize high-performance MCTS engine.

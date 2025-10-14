@@ -164,11 +164,12 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
         completed += processed;
 
         // Yield briefly if no results available to avoid busy-waiting
+        // Reduced sleep duration to improve batch accumulation
         if (processed == 0) {
             bool all_submitted = submitted >= num_simulations;
             if (all_submitted || waiting_for_leaf) {
-                auto sleep_duration = waiting_for_leaf ? std::chrono::microseconds(50)
-                                                       : std::chrono::microseconds(100);
+                auto sleep_duration = waiting_for_leaf ? std::chrono::microseconds(10)  // Reduced from 50μs
+                                                       : std::chrono::microseconds(20);  // Reduced from 100μs
                 std::this_thread::sleep_for(sleep_duration);
             }
         }

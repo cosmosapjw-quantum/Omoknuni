@@ -6,6 +6,7 @@
 #include "async_inference_queue.hpp"
 #include "instrumentation.hpp"
 #include <chrono>
+#include <iostream>
 #include <limits>
 #include <thread>
 #include <unordered_set>
@@ -75,6 +76,15 @@ std::vector<InferenceRequest> AsyncInferenceQueue::collect_batch(size_t min_batc
 
     const auto timeout_duration = duration<double, std::milli>(timeout_ms);
     const auto deadline = steady_clock::now() + timeout_duration;
+
+    // DEBUG: Log collect_batch parameters (only first call)
+    static std::atomic<int> call_count{0};
+    int current_call = call_count.fetch_add(1);
+    if (current_call < 3) {
+        std::cerr << "[AsyncQueue #" << current_call
+                  << "] collect_batch called: min_batch=" << min_batch_size
+                  << ", timeout=" << timeout_ms << "ms, pending_count=" << pending_count_.load(std::memory_order_relaxed) << std::endl;
+    }
 
     // T006c: Wait for min_batch_size with timeout using condition variable (eliminates CPU waste)
     if (min_batch_size > 0 && timeout_ms > 0.0) {
