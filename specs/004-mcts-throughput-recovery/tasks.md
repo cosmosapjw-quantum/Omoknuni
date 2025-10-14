@@ -1845,6 +1845,69 @@ def test_lock_contention_with_threads():
 
 ---
 
+### ⚠️ NEEDS DECISION - CATASTROPHIC THREAD SCALING REGRESSION (2025-10-14)
+
+**Status**: 🔴 **CRITICAL KPI FAILURE - IMPLEMENTATION PAUSED**
+
+**Benchmark Results** (T014 Comprehensive Suite):
+- 1 thread: **1,197 sims/sec** (baseline) ✅
+- 2 threads: **255 sims/sec** (5× SLOWER than 1 thread!) ❌❌❌
+- 4 threads: **255 sims/sec** (5× SLOWER) ❌❌❌
+- 8 threads: **218 sims/sec** (5.5× SLOWER) ❌❌❌
+- Thread efficiency: **16.3%** (target ≥25%, actual ≥75%) ❌
+- Batch size: **22.9** (target 16-32) ✅
+- GPU utilization: **18%** (target 60-80%) ❌
+
+**Critical Finding**:
+Adding more threads makes performance **5× WORSE** instead of better. This is a catastrophic regression that blocks all progress.
+
+**Root Cause Hypothesis**:
+The `GPUInferenceWorker` fixture is **module-scoped** and shared across all tests. When multiple MCTS instances with different thread counts try to use the same worker concurrently, severe contention occurs.
+
+**Evidence**:
+1. Single MCTS with 8 threads: 1,752 sims/sec (works reasonably)
+2. Single MCTS with 1 thread: 1,197 sims/sec (good baseline)
+3. **New MCTS instance** with 2 threads (reusing same worker): **255 sims/sec** (broken)
+4. Pattern: Each new MCTS instance gets 5× slower than previous
+
+**Suspected Issues**:
+- Worker state pollution between tests
+- Coordinator lifecycle conflicts (multiple coordinators → same worker)
+- Batch queue conflicts (multiple MCTS engines → same inference queue)
+- Worker thread pool saturation
+
+**Decision Required**:
+
+**Option A: Fix GPUInferenceWorker Sharing**
+- Make worker fixture function-scoped (new worker per test)
+- Add proper cleanup between tests
+- Expected effort: 2-4 hours
+- Risk: Medium
+
+**Option B: Investigate First**
+- Profile 2-thread vs 1-thread case
+- Check worker internal state and queue metrics
+- Understand exact bottleneck
+- Expected effort: 1-2 hours
+- Risk: Low
+
+**Option C: Use Per-Test Mock (Temporary)**
+- Lightweight mock for thread scaling tests
+- Real GPU worker for throughput baseline only
+- Validates MCTS in isolation
+- Expected effort: 1 hour
+- Risk: Masks production issues
+
+**Recommendation**: **Option B** - Investigate first. The 5× degradation pattern suggests a fundamental architectural issue requiring proper root cause analysis.
+
+**References**:
+- Benchmark output: `COMPREHENSIVE_BENCHMARK_2025-10-14.txt`
+- Test file: `tests/performance/test_simulation_runner_performance.py:206-249`
+
+**Awaiting Decision**: Please specify Option A, B, or C to proceed.
+
+---
+
 ### ✅ DECISION RESOLVED - BATCHING FIX COMPLETE (2025-10-14)
 
 **Status**: ✅ **OPTION A COMPLETED - BATCHING NOW WORKING**
