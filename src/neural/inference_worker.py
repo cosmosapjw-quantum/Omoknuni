@@ -128,6 +128,8 @@ class GPUInferenceWorker(InferenceWorker):
             'total_inference_time': 0.0,
             'batch_sizes': deque(maxlen=1000),  # Recent batch sizes
             'inference_times': deque(maxlen=1000),  # Recent inference times
+            'nn_evaluations': 0,  # Total NN forward passes (for cache hit rate analysis)
+            'states_evaluated': 0,  # Total states processed (for cache hit rate analysis)
         }
         self._metrics_lock = threading.Lock()
 
@@ -1070,6 +1072,10 @@ class GPUInferenceWorker(InferenceWorker):
             self._metrics['inference_times'].append(inference_time)
             self._metrics['last_update_time'] = time.time()
 
+            # Track NN evaluations for cache hit rate analysis
+            self._metrics['nn_evaluations'] += 1  # One forward pass
+            self._metrics['states_evaluated'] += batch_size  # Number of states in this batch
+
             # Add GPU utilization metrics
             if 'gpu_utilization_samples' not in self._metrics:
                 self._metrics['gpu_utilization_samples'] = deque(maxlen=100)
@@ -1232,6 +1238,10 @@ class GPUInferenceWorker(InferenceWorker):
                 'total_requests': self._metrics['total_requests'],
                 'total_batches': self._metrics['total_batches'],
                 'total_inference_time': self._metrics['total_inference_time'],
+
+                # NN evaluation tracking (cache hit rate analysis)
+                'nn_evaluations': self._metrics['nn_evaluations'],
+                'states_evaluated': self._metrics['states_evaluated'],
 
                 # Micro-batching configuration
                 'current_optimal_batch': self._current_optimal_batch,

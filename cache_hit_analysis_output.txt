@@ -1,0 +1,73 @@
+No model_path provided. Initializing default AlphaZeroNet weights for benchmark use.
+[AsyncQueue #0] collect_batch called: min_batch=16, timeout=10ms, pending_count=0
+[BatchCoordinator #0] Collected batch: size=1, config: min_batch=16, timeout=10ms
+[AsyncQueue #1] collect_batch called: min_batch=16, timeout=10ms, pending_count=0
+[BatchCoordinator #1] Collected batch: size=16, config: min_batch=16, timeout=10ms
+[AsyncQueue #2] collect_batch called: min_batch=16, timeout=10ms, pending_count=209
+[BatchCoordinator #2] Collected batch: size=24, config: min_batch=16, timeout=10ms
+[BatchCoordinator #3] Collected batch: size=24, config: min_batch=16, timeout=10ms
+[BatchCoordinator #4] Collected batch: size=24, config: min_batch=16, timeout=10ms
+[BatchCoordinator #5] Collected batch: size=24, config: min_batch=16, timeout=10ms
+[BatchCoordinator #6] Collected batch: size=24, config: min_batch=16, timeout=10ms
+[BatchCoordinator #7] Collected batch: size=24, config: min_batch=16, timeout=10ms
+[BatchCoordinator #8] Collected batch: size=24, config: min_batch=16, timeout=10ms
+[BatchCoordinator #9] Collected batch: size=24, config: min_batch=16, timeout=10ms
+======================================================================
+CACHE HIT RATE ANALYSIS (Phase 1A)
+======================================================================
+
+Configuration:
+  Game:        gomoku
+  Simulations: 800
+  Threads:     8
+
+Device: cuda
+
+Creating GPUInferenceWorker...
+Creating MCTS engine...
+
+Running search with 800 simulations...
+
+======================================================================
+ANALYSIS RESULTS
+======================================================================
+
+Performance Metrics:
+  Total time:           0.905s
+  Throughput:           884.5 sims/sec
+  GPU utilization:      53.5%
+  Avg batch size:       22.9
+
+MCTS Statistics:
+  Total simulations:    800
+  Tree size (nodes):    178850
+
+NN Evaluation Statistics:
+  Total NN evaluations: 35
+  States evaluated:     801
+  Avg states/batch:     22.9
+
+Cache Hit Rate Analysis:
+  States evaluated:     801
+  Total simulations:    800
+  Evaluation ratio:     1.001
+  Cache hit rate:       -0.1%
+
+======================================================================
+INTERPRETATION
+======================================================================
+✅ LOW CACHE HIT RATE (-0.1%)
+
+Cache hits are NOT the bottleneck.
+- 100.1% of simulations require NN evaluations
+
+Low GPU utilization is caused by:
+  1. Thread coordination overhead (virtual loss, contention)
+  2. Tree search overhead (PUCT, state cloning)
+  3. Coordinator timing issues
+
+Next step: Enable C++ profiling (Phase 1B) to identify specific bottleneck.
+
+======================================================================
+
+Results saved to: /home/cosmosapjw/omoknuni/cache_hit_analysis_results.txt
