@@ -1843,6 +1843,55 @@ def test_lock_contention_with_threads():
 
 ## PHASE 2: Validation & Baseline Investigation
 
+---
+
+### ⚠️ NEEDS DECISION - CRITICAL BATCHING FAILURE (2025-10-14)
+
+**Status**: 🔴 **KPI FAILURE - IMPLEMENTATION PAUSED**
+
+**Benchmark Results** (Post-OpenMP Fix):
+- Throughput @ 8 threads: **2,923 sims/sec** (target ≥8,000) ❌
+- Batch size: **1.0** (target 32-64) ❌
+- Thread efficiency: **26.1%** (target ≥75%) ❌
+- Feature extraction: **0.06ms** (target <1ms) ✅
+
+**Root Cause Identified**:
+The inference batching system is NOT working. Each simulation gets its own GPU inference call (batch size = 1) instead of accumulating 32-64 requests. This creates a serial bottleneck that prevents thread scaling.
+
+**Impact Analysis**:
+- Current: 2,923 sims/sec (37% of target)
+- Expected with proper batching: 6,000-10,000 sims/sec (5-10× improvement)
+- Batching fix is a **MULTIPLIER** (much larger than CPU optimizations)
+
+**Decision Required**:
+
+**Option A: Fix Batching First** (RECOMMENDED)
+- Investigate AsyncInferenceQueue implementation
+- Implement batch accumulation + timeout mechanism
+- Expected gain: 5-10× throughput improvement
+- Justification: Largest impact, unblocks GPU utilization
+
+**Option B: Continue Phase 1 CPU Optimizations**
+- Implement T007-T013 (state pooling, condition variables, thread-local arenas)
+- Expected gain: 20-40% improvement (on top of broken batching)
+- Justification: Follow original plan, revisit batching later
+
+**Option C: Hybrid Approach**
+- Quick batching investigation (2-4 hours)
+- If simple fix: apply it
+- If complex: defer to after Phase 1
+
+**Recommendation**: **Option A** - Fix batching first. Phase 1 CPU optimizations (state pooling, condition variables) provide 20-40% gains, but fixing batching provides 500-1000% gain. The multiplier effect makes batching the clear priority.
+
+**References**:
+- Benchmark report: `BENCHMARK_RESULTS_2025-10-14.md`
+- Spec: Section 4.1 (acceptance criteria)
+- Plan: Section B4-B6 (async inference queue, batch coordination)
+
+**Awaiting Decision**: Please specify Option A, B, or C to proceed.
+
+---
+
 ### T014: Comprehensive Throughput Benchmark Suite
 
 **Goal**: Create comprehensive benchmark suite validating all Phase 1 optimizations.
