@@ -69,9 +69,13 @@ TARGET_BATCH_SIZE_MIN = 16  # Revised from 32
 TARGET_BATCH_SIZE_MAX = 32  # Revised from 64
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def inference_worker():
-    """Create real GPU inference worker with batch tracking."""
+    """Create real GPU inference worker with batch tracking.
+
+    Note: Function-scoped to prevent coordinator conflicts when multiple
+    MCTS instances reuse the same worker. Each test gets a fresh worker.
+    """
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 
     # Create a lightweight model for Gomoku (15x15, 36 planes)
@@ -126,7 +130,10 @@ def mcts_engine(inference_worker):
         enable_instrumentation=True
     )
 
-    return mcts
+    yield mcts
+
+    # Cleanup: Stop coordinator to prevent conflicts
+    mcts.close()
 
 
 def get_gpu_utilization() -> float:
