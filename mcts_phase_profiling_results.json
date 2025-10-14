@@ -1,0 +1,102 @@
+{
+  "performance": {
+    "throughput": 1483.1779391859718,
+    "thread_efficiency": 15.449770199853873,
+    "gpu_utilization": 61.09756097560975,
+    "elapsed_time": 0.6068051420006668
+  },
+  "phases": {
+    "selection": {
+      "avg_us": 0.0,
+      "total_s": 0.0,
+      "calls": 0,
+      "percentage": 0
+    },
+    "expansion": {
+      "avg_us": 0.0,
+      "total_s": 0.0,
+      "calls": 0,
+      "percentage": 0
+    },
+    "backup": {
+      "avg_us": 0.0,
+      "total_s": 0.0,
+      "calls": 0,
+      "percentage": 0
+    }
+  },
+  "contention": {
+    "expansion_conflicts": 0,
+    "busy_edges_masked": 0,
+    "selection_retries": 0,
+    "total_rate": 0.0
+  },
+  "bottleneck": "Balanced (no single dominant phase)",
+  "full_instrumentation": {
+    "expansion_conflict": {
+      "calls": 2,
+      "total_ns": 0,
+      "avg_ns": 0.0
+    },
+    "queue_try_get_result": {
+      "calls": 1350633,
+      "total_ns": 33626592,
+      "avg_ns": 24.89691278089607
+    },
+    "queue_process_results": {
+      "calls": 31349,
+      "total_ns": 315544993,
+      "avg_ns": 10065.55210692526
+    },
+    "queue_collect": {
+      "calls": 35,
+      "total_ns": 14858815,
+      "avg_ns": 424537.5714285714
+    },
+    "queue_submit": {
+      "calls": 801,
+      "total_ns": 493718761,
+      "avg_ns": 616377.9787765293
+    },
+    "virtual_loss_remove": {
+      "calls": 3,
+      "total_ns": 0,
+      "avg_ns": 0.0
+    },
+    "virtual_loss_apply": {
+      "calls": 1492,
+      "total_ns": 0,
+      "avg_ns": 0.0
+    },
+    "selection": {
+      "calls": 802,
+      "total_ns": 1875342,
+      "avg_ns": 2338.3316708229427
+    },
+    "tree_allocate_nodes": {
+      "calls": 801,
+      "total_ns": 9336709,
+      "avg_ns": 11656.315855181023
+    },
+    "unique_batch_positions": {
+      "calls": 801,
+      "total_ns": 0,
+      "avg_ns": 0.0
+    },
+    "tree_allocate_node": {
+      "calls": 1,
+      "total_ns": 12714,
+      "avg_ns": 12714.0
+    },
+    "busy_edge_masked": {
+      "calls": 181,
+      "total_ns": 0,
+      "avg_ns": 0.0
+    },
+    "tree_clear": {
+      "calls": 1,
+      "total_ns": 20,
+      "avg_ns": 20.0
+    }
+  }
+}

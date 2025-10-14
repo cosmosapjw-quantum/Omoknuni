@@ -1,0 +1,107 @@
+No model_path provided. Initializing default AlphaZeroNet weights for benchmark use.
+[AsyncQueue #0] collect_batch called: min_batch=16, timeout=10ms, pending_count=0
+[BatchCoordinator #0] Collected batch: size=1, config: min_batch=16, timeout=10ms
+[AsyncQueue #1] collect_batch called: min_batch=16, timeout=10ms, pending_count=0
+[BatchCoordinator #1] Collected batch: size=16, config: min_batch=16, timeout=10ms
+[AsyncQueue #2] collect_batch called: min_batch=16, timeout=10ms, pending_count=84
+[BatchCoordinator #2] Collected batch: size=24, config: min_batch=16, timeout=10ms
+[BatchCoordinator #3] Collected batch: size=24, config: min_batch=16, timeout=10ms
+[BatchCoordinator #4] Collected batch: size=24, config: min_batch=16, timeout=10ms
+[BatchCoordinator #5] Collected batch: size=12, config: min_batch=16, timeout=10ms
+[BatchCoordinator #6] Collected batch: size=1, config: min_batch=16, timeout=10ms
+[BatchCoordinator #7] Collected batch: size=16, config: min_batch=16, timeout=10ms
+[BatchCoordinator #8] Collected batch: size=24, config: min_batch=16, timeout=10ms
+[BatchCoordinator #9] Collected batch: size=24, config: min_batch=16, timeout=10ms
+======================================================================
+MCTS PHASE PROFILING (Phase 1B)
+======================================================================
+
+Configuration:
+  Game:        gomoku
+  Simulations: 800
+  Threads:     8
+
+Device: cuda
+
+Creating GPUInferenceWorker...
+Enabling C++ instrumentation...
+Creating MCTS engine...
+
+Warming up...
+
+Profiling search with 800 simulations...
+
+======================================================================
+PROFILING RESULTS
+======================================================================
+
+Performance Metrics:
+  Total time:           0.607s
+  Throughput:           1483.2 sims/sec
+  Total simulations:    900
+  GPU utilization:      61.1%
+  Avg batch size:       22.0
+  Thread efficiency:    15.4%
+
+Phase Timing Breakdown:
+  Selection:            0.0 μs/call  (0.0% of total)
+    Calls:              0
+    Total time:         0.000s
+
+  Expansion:            0.0 μs/call  (0.0% of total)
+    Calls:              0
+    Total time:         0.000s
+
+  Backup:               0.0 μs/call  (0.0% of total)
+    Calls:              0
+    Total time:         0.000s
+
+Virtual Loss Tracking:
+  Apply:                0.0 μs/call
+    Calls:              0
+  Remove:               0.0 μs/call
+    Calls:              0
+
+Contention Analysis:
+  Expansion conflicts:  0
+    Rate:               0.0% of simulations
+  Busy edges masked:    0
+    Rate:               0.0% of simulations
+  Selection retries:    0
+    Rate:               0.0% of simulations
+
+======================================================================
+BOTTLENECK IDENTIFICATION
+======================================================================
+
+Phase Bottleneck: Balanced (no single dominant phase)
+✅ LOW CONTENTION (0.0% conflict rate)
+
+Thread coordination is working well.
+
+🔴 VERY LOW THREAD EFFICIENCY (15.4%)
+
+Threads are spending most time idle or blocked!
+Likely causes:
+  1. Balanced (no single dominant phase) phase is too slow
+  2. Waiting for GPU inference results
+  3. Insufficient parallelism in tree structure
+
+⚠️  MODERATE GPU UTILIZATION (61.1%)
+
+======================================================================
+COMPREHENSIVE ANALYSIS
+======================================================================
+
+Primary Bottleneck: NO SINGLE DOMINANT PHASE
+Balanced load: Selection 0.0%, Expansion 0.0%, Backup 0.0%
+
+This suggests overall system overhead rather than phase-specific bottleneck.
+Likely causes:
+  1. Thread coordination overhead (0.0% conflicts)
+  2. Low thread efficiency (15.4%)
+  3. GPU underutilization (61.1%)
+
+======================================================================
+
+Detailed results saved to: /home/cosmosapjw/omoknuni/mcts_phase_profiling_results.json
