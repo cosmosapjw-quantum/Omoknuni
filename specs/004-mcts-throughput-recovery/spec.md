@@ -1,509 +1,627 @@
-# Specification 004: MCTS Throughput Recovery
+# Specification 004: MCTS Throughput Recovery & Multi-Actor Self-Play Data Generation
 
-**Status**: IN PROGRESS
-**Last Updated**: 2025-10-13 (Targets Revised)
-**Current Phase**: Phase 3 (Final Optimizations) → Phase 4 (Integration & Tuning)
-**Version**: 1.2 (Revised Targets)
-
-## ⚠️ **CRITICAL UPDATE (2025-10-13)**: Revised Realistic Targets
-
-**Analysis Findings** (from review.txt + SPECIFICATION.md clarification):
-- **Original Target**: 25,000-30,000 sims/sec (unrealistic on Ryzen 5900X + RTX 3060 Ti)
-- **GPU Hardware Limit**: 8,000-10,000 states/sec @ FP16 mixed precision (RTX 3060 Ti)
-- **Coordination Overhead Budget**: 20-25% (currently 67%, target reduction critical)
-- **REVISED REALISTIC TARGET**: **≥8,000 sims/sec** (2.1× baseline, 3.7× current)
-- **Stretch Goal**: ≥10,000 sims/sec (2.6× baseline, requires perfect tuning)
-- **Aspirational**: ≥15-25k sims/sec (requires model pruning, multi-GPU, changes out of scope)
-
-**Rationale**: Per SPECIFICATION.md Section 12.1 Q1 resolution, GPU @ FP16 physically cannot exceed 10k states/sec. All targets updated to be hardware-grounded and achievable within constitutional constraints.
-
-## Related Documents
-- **[CONSTITUTION.md](CONSTITUTION.md)**: Project authority, constraints, enforcement (**v1.1 revised targets**)
-- **[SPECIFICATION.md](SPECIFICATION.md)**: Detailed functional requirements, **resolved ambiguities** (Section 12)
-- **[TECHNICAL_PLAN.md](TECHNICAL_PLAN.md)**: **Current implementation plan** (v2.0, hardware-grounded)
-- **[plan-LEGACY-v1.0.md](plan-LEGACY-v1.0.md)**: Legacy plan (superseded by TECHNICAL_PLAN.md)
-- **[TASKS.md](TASKS.md)**: Current Phase 4 task breakdown with validation status
-- **[tasks-phases-1-3-ARCHIVE.md](tasks-phases-1-3-ARCHIVE.md)**: Historical Phase 1-3 tasks (archived)
-
-## Current Progress (Updated 2025-10-09 after review.pdf analysis)
-
-### ✅ Completed Tasks (Phase 1 + Phase 2 Major Components)
-
-**Phase 1: Virtual Loss & Quick Wins** - ✅ **COMPLETE**
-- T001: WU-UCT virtual loss implementation ✅
-- T001b: Epoch-based tree clearing ✅ (was already complete, instant <1μs clear)
-- T002: Busy-edge masking ✅
-- T003: Root pre-expansion ✅
-- T004: Thread affinity for Ryzen 5900X ✅
-- T005: Collision metrics instrumentation ✅
-
-**Phase 2: Architecture Changes** - ✅ **100% COMPLETE** (2025-10-09)
-- T006: Lock-free MPMC queue implementation ✅
-- T006b: Lock-free AsyncInferenceQueue integration ✅
-- **T006c: Replace polling with condition variables** ✅ **COMPLETE** (commit 2253a97)
-- T007: DLPack Tensor Bridge ✅ (T007a-g complete)
-  - T007a: DLPack spec research and API design ✅
-  - T007b: Pinned memory buffer allocation ✅
-  - T007c: DLPack tensor capsule structure ✅
-  - T007d: Batch tensor creation ✅
-  - T007e: Direct feature extraction (all games) ✅
-  - T007f: Python bindings ✅
-  - T007g: Validation and benchmarking ✅
-- T008: Python Inference Bridge ✅ (T008a-b,e,f complete, T008c-d skipped)
-  - T008a: DLPackInferenceBridge class interface design ✅
-  - T008b: torch.from_dlpack() conversion ✅
-  - T008c: Pre-allocate GPU buffers ⏭️ (skipped - not needed)
-  - T008d: Non-blocking GPU transfers ⏭️ (skipped - already async)
-  - T008e: Integration testing and validation ✅
-  - **T008f: Enable FP16 mixed precision** ✅ **COMPLETE** (commit 2253a97)
-- T009: Per-Thread Memory Arenas ✅ (T009a-f complete)
-  - T009a: ThreadLocalArena architecture design ✅
-  - T009b: Arena data structure implementation ✅
-  - T009c: Lock-free allocation ⏭️ (skipped - thread-local eliminates need)
-  - T009d: Free list management ✅
-  - T009e: MCTS tree integration (pragmatic: 4096-block allocation) ✅
-  - T009f: Validation and benchmarking ✅
-- T010: Replace pending expansions map with ring buffer ✅
-
-### ✅ Critical Optimizations COMPLETE (from review.pdf)
-
-**1. T006c: Condition Variables** ✅ **COMPLETE** (review.pdf pages 8-9)
-- **Problem**: Current polling wastes 67% of CPU time
-- **Solution**: Use `std::condition_variable` for efficient blocking
-- **Impact**: **1.3-1.5× throughput improvement**
-- **Status**: COMPLETE (2025-10-09, commit 2253a97)
-
-**2. T008f: FP16 Mixed Precision** ✅ **COMPLETE** (review.pdf pages 8, 13)
-- **Problem**: Not validated that FP16 is enabled
-- **Solution**: Validate `torch.cuda.amp.autocast()` and benchmark
-- **Impact**: **1.5-2× GPU inference speedup** (RTX 3060 Ti has tensor cores)
-- **Status**: COMPLETE (2025-10-09, commit 2253a97)
-
-### 🟡 Phase 3: Final Optimizations (20% Complete)
-- ✅ T011: Persistent coordinator lifecycle (T011a-c complete, commit 28f11ca)
-- T012: Relaxed memory ordering
-- T013: Selection prefetching
-- ✅ T014: Batched result processing (complete)
-- T015: Hot/cold child separation
-
-### ⏸️ Phase 4: Integration & Tuning (Not Started)
-- T016: Performance benchmark suite 🔴 **HIGH PRIORITY**
-- T017: A/B testing framework
-- T018: Tune virtual loss magnitude
-- T019: Optimize batch size and timeout
-- T020: Profile and fix remaining bottlenecks
-- T021-T025: Validation and documentation
-
-### Key Achievements
-- **Zero-Copy DLPack Pipeline**: Complete end-to-end (C++ → PyTorch)
-- **Lock-Free Infrastructure**: Eliminated mutexes from hot paths (but still polling)
-- **Thread-Local Arenas**: 99.93% fast-path allocation, 4096-node blocks
-- **Enhanced Feature Extraction**: Zero-copy for Gomoku, optimized for Chess/Go
-- **Critical Bug Fixes**: Coordinator lifecycle, result-stealing, thread-local caching
-- **Memory Efficiency**: 1MB queue, 270MB tree (10M nodes), 1MB DLPack buffers
-
-### Performance Status
-
-**CRITICAL STATUS UPDATE (2025-10-13, Post-GIL Analysis)**:
-- **Current Performance**: 1,895-2,835 sims/sec (optimal: 2 threads @ 2,835)
-- **Baseline**: 3,831 sims/sec (Spec 003, configuration documented)
-- **Target**: 3,000-3,500 sims/sec (REVISED, hardware-realistic with Option B)
-- **Achievement**: 94.5% of 3,000 target (2,835 / 3,000)
-- **Phase 1+2+3 Complete**: All critical optimizations implemented and validated
-  - ✅ WU-UCT, epoch clearing, busy-edge masking (T001-T005)
-  - ✅ Lock-free queue, DLPack, FP16, thread arenas (T006-T010)
-  - ✅ OpenMP fix (7.5ms → 1.08ms tensor creation, 6.9× speedup)
-  - ✅ Persistent coordinator, batched results (T011, T014)
-- **Phase 4 Complete**: Validation, benchmarking, thread optimization complete
-  - ✅ T-VALID-1: FP16 validated (1.72× speedup)
-  - ✅ T-VALID-2: Tensor creation fixed and validated (<1.1ms)
-  - ✅ T016: Comprehensive benchmarking complete
-  - ✅ T018: Thread optimization analysis (2 threads optimal, 89.6% efficiency)
-
-### Validation Status (2025-10-13)
-
-**T-VALID-1: FP16 Mixed Precision Validation** ✅ **PASS**
-- Speedup: 1.72× (52.83ms → 30.69ms @ batch-64)
-- Policy Probability MSE: 0.000007 (target: <0.01)
-- Value MSE: 0.000000 (target: <0.01)
-- **Conclusion**: FP16 delivers significant speedup without quality degradation
-
-**T-VALID-2: Tensor Creation Profiling** ❌ **FAIL**
-- Mean: 7.50 ± 0.20 ms (target: <1.0ms)
-- Root Cause: Feature extraction loop NOT parallelized with OpenMP
-- Location: `cpp_extensions/mcts/dlpack_bridge.cpp:431-434`
-- **Required Fix**: Add `#pragma omp parallel for` to feature extraction loop
-- Expected Improvement: 7.5ms → <1.0ms with 12-thread parallelization
-
-See [validation_report_2025-10-13.md](../../docs/performance/validation_report_2025-10-13.md) for detailed results.
-
-### GIL Analysis Results (2025-10-13)
-
-**Comprehensive GIL Investigation Findings**:
-
-After deep analysis with parallel agents, py-spy profiling, and online research, **GIL is NOT the primary bottleneck**. The system already implements 8 out of 10 GIL best practices:
-
-✅ **Already Implemented**:
-1. Full C++ simulation loops (GIL released during MCTS)
-2. Coarse-grained GIL release (batch operations, not per-node)
-3. OpenMP parallelization (tensor creation: 6.9× speedup)
-4. Zero-copy DLPack tensors (no Python conversion overhead)
-5. Condition variables (no busy-wait polling)
-6. Thread-local arenas (99.93% lock-free allocation)
-7. Persistent coordinator (GIL held once, not per-batch)
-8. Lock-free queue (MPMC ring buffer with atomics)
-
-**Remaining Minor Issues** (5-8% overhead):
-- Python `.tolist()` conversions (~1.3ms per batch)
-- Policy array processing in Python loops (~2-3% overhead)
-- Numpy array stacking (should use DLPack exclusively)
-
-**Real Bottleneck Identified: Thread Coordination (NOT GIL)**
-
-**Performance Analysis**:
-- **GPU Inference**: 30.7ms per batch-64 @ FP16 (theoretical max: 2,014 states/sec)
-- **Observed Performance**: 1,895-2,835 sims/sec (94-141% of theoretical!)
-- **System Status**: **Performing at/near theoretical maximum**
-
-**Thread Scaling Efficiency Collapse** (NOT GIL-related):
-- 1 thread: 1,230 sims/sec (100% efficiency)
-- 2 threads: 2,205 sims/sec (89.6% efficiency) ✅ **OPTIMAL**
-- 4 threads: 2,214 sims/sec (45% efficiency) ❌ **POOR**
-- 8 threads: 2,198 sims/sec (22.4% efficiency) ❌ **CATASTROPHIC**
-
-**Root Cause**: Mutex contention in C++ AsyncInferenceQueue and BatchInferenceCoordinator (verified via profiling, NOT GIL).
-
-**Documentation Created**:
-- [GIL_REDUCTION_COMPREHENSIVE_PLAN.md](../../profiling_results/GIL_REDUCTION_COMPREHENSIVE_PLAN.md) - 5-phase action plan with code examples
-- [GIL_ANALYSIS_EXECUTIVE_SUMMARY.md](../../profiling_results/GIL_ANALYSIS_EXECUTIVE_SUMMARY.md) - Executive findings
-- [docs/GIL_OPTIMIZATION_GUIDE.md](../../docs/GIL_OPTIMIZATION_GUIDE.md) - 10 proven techniques
-- [profiling_results/gil_profile.svg](../../profiling_results/gil_profile.svg) - py-spy flamegraph
-
-**Recommended Next Phase**: See Phase 5 below (Thread Coordination Optimization).
-
-### Critical Path Forward (UPDATED 2025-10-13)
-1. ✅ **~~T006c~~** - Condition variables (COMPLETE)
-2. ✅ **~~T008f~~** - FP16 mixed precision (COMPLETE, validated 1.72× speedup)
-3. ✅ **~~T011~~** - Persistent coordinator (COMPLETE)
-4. ✅ **~~OpenMP Fix~~** - Parallelize feature extraction (COMPLETE, 6.9× speedup)
-5. ✅ **~~T016~~** - Comprehensive benchmarking (COMPLETE, 2,835 sims/sec achieved)
-6. ✅ **~~T018~~** - Thread optimization (COMPLETE, 2 threads optimal)
-7. 🟢 **Phase 5** - Thread coordination optimization (OPTIONAL, see below)
-8. ✅ **~~T025~~** - Final performance validation (COMPLETE, 94.5% of 3k target)
+**Version**: 2.0 (Multi-Actor Self-Play Edition)
+**Status**: ACTIVE
+**Last Updated**: 2025-10-14
+**Target Hardware**: AMD Ryzen 9 5900X (12C/24T) + NVIDIA RTX 3060 Ti (8GB VRAM)
+**Games**: Gomoku 15×15, Chess 8×8, Go 9×9
+**Authority**: Supersedes SPECIFICATION.md v1.1; implements CONSTITUTION.md v2.0
 
 ---
 
-## Problem Statement
-
-The current MCTS implementation achieves only **3,831 simulations/second** (baseline) on AMD Ryzen 5900X + RTX 3060 Ti hardware, with recent regression to **2,147 sims/sec** (cause under investigation). Performance analysis reveals that GPU inference accounts for only 32.8% of runtime while MCTS overhead (selection, backup, coordination) consumes 67.2%.
-
-**Revised Target (2025-10-13)**: After hardware analysis, the RTX 3060 Ti @ FP16 can deliver 8,000-10,000 states/sec maximum. This specification defines optimizations to achieve **≥8,000 simulations/second** (realistic hardware-grounded target) while maintaining search quality. The original 25k-30k target would require model pruning or multi-GPU setup (out of scope).
-
-## Success Criteria
-
-### Performance Requirements
-- **Primary**: Achieve ≥8,000 simulations/second on target hardware (revised 2025-10-13)
-- **Minimum Viable**: ≥6,000 sims/sec (1.6× baseline, 2.8× current regression)
-- **Stretch Goal**: ≥10,000 sims/sec (2.6× baseline, perfect tuning required)
-- **GPU Utilization**: Maintain ≥80% GPU utilization during search (85% stretch)
-- **Thread Efficiency**: Achieve ≥75% multi-thread efficiency at 8 threads
-- **Batch Size**: Average batch size ≥48 positions (75% of max 64)
-- **Memory Usage**: Tree memory <1GB for 10M nodes
-
-### Quality Requirements
-- **Search Quality**: Win rate vs baseline ≥99.5% (no strength regression)
-- **Policy Agreement**: Top move agreement with baseline ≥95%
-- **Value Accuracy**: Value MSE vs baseline ≤0.01
-- **Collision Rate**: Path collision rate ≤5% (threads selecting same node)
-
-### Compatibility Requirements
-- **API Stability**: Maintain backward compatibility with existing interfaces
-- **Python Version**: Support Python 3.12
-- **PyTorch Version**: Support PyTorch 2.0+
-- **Platform**: Linux (Ubuntu 22.04) with CUDA 12.1
-
-## Root Cause Analysis (UPDATED 2025-10-13, Post-GIL Analysis)
-
-### Primary Bottleneck: GPU Inference Hardware Limit
-
-**GPU Inference Time**: 30.7ms per batch-64 @ FP16 (RTX 3060 Ti)
-- **Theoretical Maximum**: 64 states / 31.8ms = **2,014 states/sec**
-- **Observed Performance**: 1,895-2,835 sims/sec (94-141% of theoretical)
-- **Conclusion**: **System performing at/near theoretical maximum**
-
-**Model Size**: 10.1M parameters (too large for 8-10ms target in original specs)
-**Hardware Limitation**: RTX 3060 Ti @ FP16 cannot exceed 8-10k states/sec with this model
-
-### Secondary Bottleneck: Thread Coordination Overhead (NOT GIL)
-
-**Thread Scaling Efficiency Collapse**:
-- 2 threads: 89.6% efficiency (EXCELLENT)
-- 4 threads: 45% efficiency (POOR)
-- 8 threads: 22.4% efficiency (CATASTROPHIC)
-
-**Root Cause**: C++ mutex contention in:
-1. **AsyncInferenceQueue** - Lock-held during result processing
-2. **BatchInferenceCoordinator** - Signaling inefficiency (notify_one vs notify_all)
-3. **Cache line bouncing** - Ryzen 5900X dual-CCD cross-talk
-
-**Evidence**: Efficiency collapse is characteristic of mutex contention, NOT GIL (GIL would show different pattern).
-
-### Critical Bottlenecks RESOLVED ✅
-
-1. **~~Python Overhead (60-70% of runtime)~~** ✅ **RESOLVED**
-   - ✅ Zero-copy DLPack tensors implemented
-   - ✅ OpenMP parallelization (6.9× speedup in tensor creation)
-   - ✅ Persistent coordinator (GIL held once)
-   - ✅ Condition variables (no polling waste)
-   - Remaining: Minor .tolist() conversions (5-8% overhead)
-
-2. **~~Async Queue Inefficiency (67% of MCTS overhead)~~** ✅ **RESOLVED**
-   - ✅ Lock-free MPMC ring buffer implemented
-   - ✅ Condition variables for efficient blocking
-   - ✅ Batched result processing
-   - Remaining: Per-thread queues could eliminate remaining contention
-
-3. **~~Threading Bottlenecks~~** ✅ **MOSTLY RESOLVED**
-   - ✅ Root pre-expansion (N-1 idle problem eliminated)
-   - ✅ WU-UCT virtual loss (no Q-value distortion)
-   - ✅ Thread affinity configured (Ryzen CCDs)
-   - ✅ Busy-edge masking (collision avoidance)
-   - Remaining: Mutex contention limits scaling beyond 2 threads
-
-4. **~~Memory Management Issues~~** ✅ **RESOLVED**
-   - ✅ Epoch-based tree clearing (25ns vs 25ms, 1M× speedup)
-   - ✅ Thread-local arenas (99.93% lock-free allocation)
-   - ✅ SoA layout (27 bytes/node, optimal cache utilization)
-   - ✅ Cache-line alignment for SIMD operations
-
-## Solution Architecture
-
-### Core Design: Optimized Shared Tree with WU-UCT
-
-Maintain single shared tree architecture with enhanced virtual loss:
-- **WU-UCT Style**: Visit-only virtual loss (no Q-value distortion)
-- **Busy-Edge Masking**: Prevent selection of nodes being expanded
-- **Root Pre-Expansion**: Expand root before launching threads
-- **Lock-Free Coordination**: MPMC ring buffer for queue operations
-
-### Key Optimizations
-
-#### 1. Virtual Loss Enhancement (1.5× speedup)
-- Implement WU-UCT visit-only accounting
-- Add busy-edge masking during selection
-- Tune virtual loss magnitude (1.0 default)
-
-#### 2. Python Overhead Elimination (2.5× speedup)
-- Zero-copy DLPack tensor bridge
-- Persistent Python inference thread (holds GIL)
-- Direct numpy array returns (no list conversion)
-
-#### 3. Lock-Free Queue (1.4× speedup)
-- MPMC ring buffer implementation
-- Condition variable wait/notify pattern
-- Batched result processing
-
-#### 4. Thread Optimization (1.3× speedup)
-- Thread affinity for Ryzen CCDs
-- Per-thread memory arenas
-- Root pre-expansion strategy
-
-#### 5. Memory Optimization (1.2× speedup)
-- Epoch-based lazy tree clearing (avoid 270MB memset)
-- Relaxed atomic memory ordering
-- Cache-line aligned data structures
-- SIMD-friendly memory layout
-- Shared thread pool for self-play
-
-## Implementation Phases
-
-### Phase 1: Virtual Loss & Quick Wins (Week 1)
-- WU-UCT implementation
-- Busy-edge masking
-- Root pre-expansion
-- Thread affinity
-
-**Expected: 2.1k → 4k sims/sec (2× improvement, revised 2025-10-13)**
-
-### Phase 2: Architecture Changes (Week 2)
-- Lock-free queue implementation
-- Zero-copy tensor bridge (with OpenMP fix)
-- Per-thread memory arenas
-- FP16 mixed precision (validated: 1.72× GPU speedup)
-
-**Expected: 4k → 7k sims/sec (1.75× improvement, revised 2025-10-13)**
-
-### Phase 3: Final Optimizations (Week 3)
-- Persistent Python thread
-- Relaxed memory ordering
-- Performance tuning
-- Batch size/timeout optimization
-
-**Expected: 7k → 8-10k sims/sec (1.2-1.4× improvement, target range, revised 2025-10-13)**
-**Status**: ✅ **PARTIAL** - Persistent coordinator (T011) and batched results (T014) complete
-
-### Phase 4: Validation & Tuning (Week 4) ✅ **COMPLETE**
-- ✅ T-VALID-1: FP16 validation (1.72× speedup confirmed)
-- ✅ T-VALID-2: Tensor creation profiling → OpenMP fix (6.9× speedup)
-- ✅ T016: Comprehensive benchmarking (2,835 sims/sec achieved)
-- ✅ T017: Baseline investigation (3,831 sims/sec from Spec 003)
-- ✅ T018: Thread optimization (2 threads optimal, 89.6% efficiency)
-- ✅ T019: Parameter tuning (deferred - current config optimal)
-
-**Achieved: 2,147 → 2,835 sims/sec (32% improvement from regression)**
-**Status**: ✅ **COMPLETE** - 94.5% of 3,000 sims/sec target (Option B accepted)
-
-### Phase 5: Thread Coordination Optimization (OPTIONAL)
-
-**Goal**: Improve thread scaling beyond 2 threads (current 89.6% → 45% → 22.4% efficiency collapse)
-
-**Rationale**: Current performance (2,835 sims/sec) is 94.5% of revised target (3,000 sims/sec). This phase is OPTIONAL for exceeding baseline or reaching stretch goals.
-
-**Estimated Impact**:
-- Best case: 4-6 threads @ 70% efficiency = 3,444-5,166 sims/sec (1.2-1.8× current)
-- Realistic: 4 threads @ 60% efficiency = 2,952 sims/sec (4% improvement)
-- **GPU bottleneck remains**: Even with perfect thread scaling, GPU caps at ~3,500-4,000 sims/sec
-
-**Tasks** (from GIL Comprehensive Plan):
-
-**Phase 5a: Profile Thread Contention** (1 day)
-- T026: Run perf profiling to identify mutex hotspots
-- T027: Analyze AsyncInferenceQueue lock granularity
-- T028: Profile BatchInferenceCoordinator signaling overhead
-
-**Phase 5b: Fix AsyncInferenceQueue Contention** (1-2 days)
-- T029: Reduce lock granularity (swap pattern)
-- OR T029alt: Implement per-thread queues (complex, 2-3 days)
-- Expected: 45% → 60-70% efficiency @ 4 threads
-
-**Phase 5c: Eliminate Python Overhead** (4 hours)
-- T030: Remove .tolist() conversions in dlpack_inference_bridge.py
-- T031: Vectorize policy masking in mcts.py
-- Expected: 5-8% reduction in Python overhead
-
-**Phase 5d: GPU Optimization** (OPTIONAL, 2-3 days, high complexity)
-- T032: Implement CUDA Graphs for kernel launch overhead reduction
-- T033: Model pruning to reduce inference time
-- Expected: 30.7ms → 15-20ms (1.5-2× GPU speedup)
-- **NOTE**: Out of scope for current phase, requires model retraining
-
-**Total Estimated Effort**: 3-4 days (excluding GPU optimization)
-**Risk**: Medium (C++ concurrency changes require careful testing)
-**Recommendation**: DEFER unless target exceeded (stretch goal: 3,500+ sims/sec)
-
-## Validation Strategy
-
-### Performance Testing
-```bash
-# Throughput benchmark
-python scripts/test_mcts.py --game gomoku --simulations 10000 --threads 8
-
-# GPU utilization monitoring
-nvidia-smi dmon -s u -i 0
-
-# Thread efficiency analysis
-perf stat -e task-clock,context-switches,cpu-migrations python scripts/test_mcts.py
-```
-
-### Quality Testing
-```bash
-# A/B test against baseline
-python scripts/compare_search_quality.py --baseline v003 --candidate v004
-
-# Policy agreement test
-python scripts/test_policy_agreement.py --threshold 0.95
-
-# Value accuracy test
-python scripts/test_value_mse.py --threshold 0.01
-```
-
-### Collision Metrics
-```cpp
-// Instrumentation to add
-struct CollisionMetrics {
-    std::atomic<uint64_t> selection_retries{0};
-    std::atomic<uint64_t> duplicate_paths{0};
-    std::atomic<uint64_t> unique_batch_positions{0};
-    std::atomic<uint64_t> expansion_conflicts{0};
-};
-```
-
-## Risk Analysis
-
-### High Risks
-1. **WU-UCT Changes Break Search Quality**
-   - Mitigation: Incremental testing, A/B comparison
-   - Fallback: Keep classic virtual loss option
-
-2. **Lock-Free Queue Introduces Bugs**
-   - Mitigation: Use proven library, extensive testing
-   - Fallback: Optimized mutex-based queue
-
-3. **DLPack Incompatibility**
-   - Mitigation: Version testing, numpy fallback
-   - Fallback: Optimized copy path
-
-### Medium Risks
-4. **Thread Affinity Portability**
-   - Mitigation: Platform detection, optional feature
-   - Impact: Limited to Ryzen users
-
-5. **Memory Ordering Bugs**
-   - Mitigation: TSan testing, conservative defaults
-   - Fallback: Sequential consistency
-
-## Acceptance Criteria
-
-### Implementation Completeness
-- [✅] Phase 1: Virtual loss & quick wins (T001-T005 complete)
-- [🔄] Phase 2: Architecture changes (T006/T006b/T010 complete, T007/T008/T009 split and pending)
-- [ ] Phase 3: Final optimizations (not started)
-
-### Minimum Viable Performance
-- [ ] ≥20,000 simulations/second (67% of target)
-- [ ] ≥80% GPU utilization
-- [ ] ≤10% path collision rate
-- [✅] No search quality regression (validated through Phase 1)
-
-### Target Performance
-- [ ] ≥25,000 simulations/second (83% of target)
-- [ ] ≥85% GPU utilization
-- [✅] ≤5% path collision rate (instrumentation complete)
-- [ ] <1% performance variance
-
-### Stretch Goals
-- [ ] ≥30,000 simulations/second (100% of target)
-- [ ] ≥90% GPU utilization
-- [ ] ≤2% path collision rate
-- [ ] Support for 16+ threads
-
-### Technical Quality
-- [✅] All async integration tests passing (11/11)
-- [✅] Thread safety verified (TSan clean)
-- [✅] Lock-free queue correctness validated (19/19 unit tests)
-- [✅] Memory usage within targets (<1GB for tree, 1MB for queue)
-- [ ] DLPack zero-copy verified
-- [ ] Arena allocation 10× faster than malloc
-- [ ] End-to-end performance benchmarked
-
-## Dependencies
-
-### External Libraries
-- `pybind11` ≥2.10.0 (DLPack support)
-- `boost::lockfree` (optional, for queue)
-- `pytorch` ≥2.0 (DLPack compatible)
-
-### Internal Components
-- Tree structure (SoA layout maintained)
-- Game interface (unchanged)
-- Neural network API (extended for DLPack)
-
-## Timeline
-
-- **Week 1**: Virtual loss optimizations + quick wins
-- **Week 2**: Lock-free queue + zero-copy tensors
-- **Week 3**: Final optimizations + tuning
-- **Week 4**: Validation + documentation
-
-**Total Duration**: 4 weeks
-**Expected Outcome**: 26,000+ sims/sec (87% of target)
+## 1. Executive Summary
+
+### 1.1 Purpose
+
+This specification defines requirements to recover and maximize MCTS throughput on CPU-parallel architectures with Python-based neural network inference, targeting **≥8,000 simulations/second** sustained (stretch ≥10,000) on Ryzen 5900X + RTX 3060 Ti hardware, plus enable concurrent multi-actor self-play for data generation at **200-300 games/hour**.
+
+**Current Status** (per ./review.txt, authoritative):
+- **Baseline**: 3,831 sims/sec (Spec 003 configuration, exact params TBD)
+- **Current**: 2,147 sims/sec (56% regression from baseline, cause: OpenMP missing)
+- **Target**: ≥8,000 sims/sec (2.1× baseline, 3.7× current, hardware-grounded)
+
+### 1.2 Primary Bottlenecks (from ./review.txt)
+
+**Critical Finding**: GPU is NOT the bottleneck; CPU MCTS coordination is.
+
+1. **Feature Extraction Not Parallelized** (CRITICAL BLOCKER):
+   - Current: 7.5ms per batch-64 (single-threaded)
+   - Location: `dlpack_bridge.cpp:431-434` missing `#pragma omp parallel for`
+   - Impact: Caps throughput at ~1,675 states/sec
+   - Fix Required: Add OpenMP → Expected 7.5ms → <1.0ms
+
+2. **MCTS Coordination Overhead** (67.2% of runtime):
+   - Thread idle: 60% of execution (~1.489s out of 2.5s search)
+   - State cloning waste: 2-3× per simulation
+   - Python/GIL overhead: 67% of total time (includes above)
+
+3. **GPU Inference** (32.8% of runtime, SECONDARY):
+   - RTX 3060 Ti @ FP16: 30.7ms per batch-64 → theoretical max 2,014 states/sec
+   - Current utilization: 11.2% (severe underutilization)
+   - Target: 80-95% utilization with multi-actor batching
+
+### 1.3 Solution Architecture
+
+**Single MCTS Optimizations**:
+1. Fix OpenMP parallelization (7.5ms → <1ms)
+2. Eliminate redundant state cloning (2-3× → ≤1× per simulation)
+3. Replace spin-waits with condition variables (T006c complete)
+4. Thread affinity tuning (Ryzen dual-CCD topology)
+5. FP16 mixed precision (validated 1.72× speedup, T008f complete)
+
+**Multi-Actor Self-Play** (Phase 5):
+- Many single-thread MCTS games → one centralized inference queue
+- Target: 8-12 concurrent games feeding single GPU batcher
+- Expected: Avg batch size ≥51/64 (0.8× max), GPU util 80-95%
+
+**NN-Eval Cache** (Tier A, Phase 6 optional):
+- Cache `(hash, π, V)` tuples keyed by Zobrist hash
+- Tree statistics (N, W, Q) remain per-node (NOT shared across parents)
+- Expected gains: Chess 20-50%, Gomoku 10-30%, Go 15-35% GPU call reduction
+
+---
+
+## 2. Goals & Success Criteria
+
+### 2.1 Measurable KPIs (Acceptance Criteria)
+
+**G1: Absolute Throughput** (PRIMARY):
+| Configuration | Minimum | Target | Stretch | Measurement |
+|---------------|---------|--------|---------|-------------|
+| Single MCTS (13×13 Gomoku) | 6,000 sims/sec | **≥8,000** | ≥10,000 | `benchmark_throughput.py --threads 8` |
+| Multi-actor (8 games) | N/A | **≥8,000** | ≥10,000 | Same tool, multi-process mode |
+| Chess 8×8 | 6,500 sims/sec | ≥8,500 | ≥10,500 | Same |
+| Go 9×9 | 7,000 sims/sec | ≥9,000 | ≥11,000 | Same |
+
+**Evidence**: Review.txt analysis shows GPU @ FP16 caps at 8-10k states/sec on RTX 3060 Ti; this is the hardware-grounded maximum.
+
+**G2: GPU Utilization**:
+- Single MCTS: **≥80%** during search (batch=64, timeout≤2ms)
+- Multi-actor: **≥85%** sustained (8-12 games, optimal actor count)
+- Measurement: `nvidia-smi dmon -s u -i 0` during benchmark
+
+**G3: CPU Coordination Overhead**:
+- Target: **<30%** of total time (currently 67.2% per review.txt)
+- Breakdown: Thread idle ≤12%, feature prep ≤5%, Python/GIL ≤5%, sync ≤8%
+- Measurement: C++ instrumentation in `ContinuousSimulationRunner`
+
+**G4: Feature Preparation Speed**:
+- Current: 7.5ms per batch-64 (CRITICAL bottleneck)
+- Target: **≤1.0ms** per batch-64 with OpenMP parallelization
+- Measurement: `profile_tensor_creation.py` (T-VALID-2 protocol)
+
+**G5: State Cloning Efficiency**:
+- Current: 2-3× clones per simulation (review.txt finding)
+- Target: **≤1× clone** per simulation (ideally zero extra copies)
+- Implementation: Thread-local state pooling, move semantics
+
+**G6: Thread Scaling Efficiency**:
+- 4 threads: **≥70%** efficiency (minimum), ≥80% (target)
+- 8 threads: **≥70%** efficiency (target, relaxed from 75% due to mutex contention)
+- Measurement: `(actual_throughput) / (single_thread × num_threads)`
+
+**G7: Multi-Actor Self-Play** (Phase 5):
+- Data generation: **200-300 games/hour** @ 800 sims/move (Gomoku 15×15)
+- Actor count: **8-12 concurrent games** feeding single batcher
+- Avg batch size: **≥51/64** (0.8× consistency)
+- GPU util: **85-95%** during multi-actor runs
+
+**G8: Search Quality Preservation**:
+- Win rate: **≥99.5%** vs baseline (1000+ games, 95% confidence)
+- Policy agreement: **≥95%** top-move agreement (1000-position test set)
+- Value MSE: **≤0.01** vs baseline estimates
+- Collision rate: **≤5%** path collisions (threads selecting same node)
+
+### 2.2 Non-Goals (Explicitly Out of Scope)
+
+Per CONSTITUTION.md Section 1.4:
+- ❌ **NO libtorch** (C++ PyTorch inference)
+- ❌ **NO TensorRT/ONNX** model conversion
+- ❌ **NO root parallelization** (separate trees per thread)
+- ❌ **NO GPU-MCTS** (GPU-resident trees)
+- ❌ **NO full DAG TT** (shared statistics across parents, deferred to Phase 7)
+- ❌ **NO training pipeline** optimizations (unless blocking throughput)
+
+**Rationale**: GPU is NOT the bottleneck (32.8% of time per review.txt). Maintaining Python PyTorch provides flexibility for model experimentation without sacrificing achievable performance.
+
+---
+
+## 3. User Stories
+
+### US1: Self-Play Training Operator
+
+**As a** reinforcement learning researcher
+**I want to** generate 200-300 self-play games per hour at 800 sims/move
+**So that** I can train superhuman Gomoku models within 48 hours
+
+**Acceptance Criteria**:
+- 8,000 sims/sec × 800 sims/move = 100ms per move
+- 100-move game = 10 seconds per game
+- 200 games/hour = 1 game per 18 seconds (includes setup overhead)
+- GPU utilization ≥85%, batch size consistently ≥51/64
+
+**Validation**: Run `scripts/selfplay.py --games 20 --simulations 800` and measure throughput over 20-game batch.
+
+### US2: Interactive Play & Analysis
+
+**As a** competitive player
+**I want to** receive move recommendations within 3 seconds
+**So that** I can use the engine for real-time game analysis
+
+**Acceptance Criteria**:
+- 1600 simulations ≤ 3 seconds (533 sims/sec minimum, easily met at 8k)
+- Policy distribution and value estimate displayed
+- Top 5 moves with visit counts and Q-values
+- Consistent latency (CV < 10%)
+
+**Validation**: Interactive play mode with fixed 1600-sim budget, measure p95 latency.
+
+### US3: Performance Engineer
+
+**As a** performance engineer
+**I want to** measure throughput with deterministic, reproducible configurations
+**So that** I can validate optimization effectiveness with statistical rigor
+
+**Acceptance Criteria**:
+- Fixed seed, fixed game state, fixed simulation count
+- N≥10 independent runs with CV < 5%
+- Detailed breakdown: selection, expansion, inference, backup time
+- Automated regression alerts if throughput < 95% baseline
+
+**Validation**: Benchmark suite passes (`pytest -m performance`), historical CSV log updated.
+
+---
+
+## 4. Functional Requirements
+
+### FR1: CPU-Side MCTS Optimization
+
+**FR1.1: Parallel Feature Extraction** (CRITICAL FIX):
+- **Current**: Sequential extraction (7.5ms per batch-64)
+- **Required**: Add `#pragma omp parallel for` to `dlpack_bridge.cpp:431-434`
+- **Expected**: 7.5ms → <1.0ms with 12-thread parallelization
+- **Validation**: T-VALID-2 profiling shows ≤1.0ms mean, CV < 10%
+
+**FR1.2: State Cloning Elimination**:
+- Implement thread-local `IGameState` pools (reuse across simulations)
+- Add `copy_from(other)` method for efficient state reset (no heap allocations)
+- Transfer ownership via `std::move` to queue (not clone) for in-flight expansions
+- **Validation**: Memory profiler shows constant allocation, no growth over 1000+ searches
+
+**FR1.3: Thread Affinity (Ryzen 5900X)**:
+- Pin threads to physical cores: CCD0 (cores 0-5), CCD1 (cores 6-11)
+- Avoid SMT siblings (cores 12-23) unless >12 threads required
+- **Validation**: `lscpu --extended` confirms pinning, perf reports reduced cache misses
+
+**FR1.4: Condition Variable Coordination** (T006c COMPLETE):
+- Replace spin-waits with `std::condition_variable` blocking
+- Notify threads when batch results ready (NOT polling with 10μs sleeps)
+- **Validation**: Thread CPU usage drops to near-zero when idle (no busy-wait)
+
+**FR1.5: WU-UCT Virtual Loss** (T001 COMPLETE):
+- Visit-only virtual loss: `PUCT = Q + c*P*sqrt(N_parent)/(1+N+VL)`, where Q = W/N pure
+- Default magnitude: 1.0 (tunable 0.5-3.0)
+- **Validation**: Unit tests verify Q unchanged with in-flight simulations, collision rate ≤5%
+
+### FR2: Multi-Actor Self-Play Architecture
+
+**FR2.1: Concurrent Game Processes**:
+- Run **G=8-12** concurrent self-play games (separate processes or threads)
+- Each actor: 1-2 MCTS threads per game (NOT 8-12 threads per game)
+- Shared global inference queue (all actors push to same MPMC ring buffer)
+- **Rationale**: Review.txt explicitly recommends "many single-thread actors → one inference server" to maximize GPU batching
+
+**FR2.2: Centralized Batch Coordinator**:
+- Single `BatchInferenceCoordinator` instance (receives requests from all actors)
+- Batch collection: min_size=64, timeout=1-2ms (tunable)
+- Result demultiplexing: return results to originating actor via game_id
+- **Validation**: Average batch size ≥51/64 (0.8× consistency), GPU util 85-95%
+
+**FR2.3: Backpressure & Fairness**:
+- Per-actor visit budget (e.g., 800 simulations/move)
+- Token-bucket rate limiting (limit in-flight requests per actor)
+- Adaptive actor scaling: increase G until GPU util ~90% or batch size plateaus
+- **Validation**: No actor starvation (min 10% of total throughput), GPU util does not degrade with actor count
+
+### FR3: NN-Evaluation Cache (Tier A, Phase 6 Optional)
+
+**FR3.1: Policy/Value Cache Design**:
+- Cache stores `(hash, policy_topk, value)` keyed by Zobrist hash (64-bit)
+- Tree statistics (N, W, Q) remain per-node (NOT shared across parents)
+- On expansion: check cache → if hit, skip GPU; else enqueue
+- On inference: store result in cache for future reuse
+- **Key Format** (Markov-minimal): board + side + rule-critical flags (NOT full history)
+
+**FR3.2: Memory & Concurrency**:
+- Cache size: 1M-10M entries (tunable, target 2-8GB with quantization)
+- Quantization: FP16 or int8 for policy, top-K=16-48 moves (not full board)
+- Eviction: Per-net SLRU (Segmented LRU) with `net_version` tagging
+- Concurrency: Sharded hash table (64 shards) with reader-writer locks or lock-free F14
+- **Validation**: Hit rate measured, 20-50% for Chess, 10-30% Gomoku, 15-35% Go (per review.txt estimates)
+
+### FR4: FP16 Mixed Precision (T008f COMPLETE)
+
+**FR4.1: GPU Inference Acceleration**:
+- Use `torch.cuda.amp.autocast()` for FP16 tensor core utilization
+- **Validated** (T-VALID-1): 1.72× speedup (52.83ms → 30.69ms @ batch-64)
+- Numerical stability: Policy MSE 0.000007, Value MSE 0.000000 (both < 0.01 threshold)
+
+---
+
+## 5. Non-Functional Requirements
+
+### NFR1: Performance Targets (Hardware-Grounded)
+
+**Single MCTS (Phase 4)**:
+| Metric | Minimum Viable | Target (Realistic) | Stretch | Hardware Limit |
+|--------|---------------|-------------------|---------|---------------|
+| Simulations/sec | ≥6,000 | **≥8,000** | ≥10,000 | ~10,000 (GPU cap) |
+| vs Baseline (3,831) | 1.6× | **2.1×** | 2.6× | 2.6× |
+| vs Current (2,147) | 2.8× | **3.7×** | 4.7× | 4.7× |
+| GPU Utilization | ≥75% | **≥80%** | ≥85% | ~90% (realistic) |
+| Thread Efficiency (8T) | ≥60% | **≥70%** | ≥75% | ~80% (theoretical) |
+
+**Multi-Actor Self-Play (Phase 5)**:
+| Metric | Minimum | Target | Stretch |
+|--------|---------|--------|---------|
+| Games/hour (Gomoku) | 150 | **200-300** | 400 |
+| Actor count | 6 | **8-12** | 14 |
+| GPU utilization | 80% | **85-95%** | 95%+ |
+| Avg batch size | 40 | **≥51** (0.8×64) | 58+ |
+
+**Evidence**: Review.txt GPU @ FP16 analysis → RTX 3060 Ti caps at 8-10k states/sec maximum.
+
+### NFR2: Latency Budgets (per 1000 simulations @ 8k target)
+
+| Component | Current | Target | Critical Path |
+|-----------|---------|--------|---------------|
+| MCTS Coordination | 240ms (67.2%) | **≤40ms** (25%) | State pooling, sync |
+| GPU Inference | 117ms (32.8%) | **≤80ms** (67%) | FP16, batch tuning |
+| Feature Extraction | 75ms (21%) | **≤10ms** (8%) | **OpenMP fix (CRITICAL)** |
+| Thread Idle | 150ms (42%) | **≤15ms** (12%) | Condition variables, affinity |
+| **Total** | **357ms** | **≤125ms** | All optimizations |
+
+### NFR3: Memory Footprint
+
+- Tree: <1GB for 10M nodes (achieved: 270MB with 27-byte SoA)
+- Queue: 1MB fixed (4096-entry ring buffer)
+- DLPack buffers: <10MB pinned memory
+- NN-eval cache: 2-8GB (optional Phase 6, tunable)
+- **Total**: <1.3GB (single MCTS) or <10GB (with cache + multi-actor)
+
+### NFR4: Correctness & Quality
+
+- **Thread Safety**: TSan clean (zero data races @ 24 threads)
+- **Search Quality**: Win rate ≥99.5% vs baseline, policy agreement ≥95%
+- **Collision Rate**: ≤5% path collisions
+- **Memory Stability**: 24-hour soak test, RSS growth <1MB/hour
+
+### NFR5: Reproducibility
+
+- **Deterministic seeds**: Fixed seed → identical throughput (±2% CV over 3 runs)
+- **Benchmark gates**: `pytest -m performance` passes before merge
+- **Regression alerts**: Throughput < 95% baseline triggers CI failure
+
+---
+
+## 6. Implementation Plan Summary
+
+### Phase 1: Quick Wins ✅ COMPLETE
+- T001-T005: WU-UCT, epoch clearing, busy-edge, affinity, metrics
+- **Delivered**: Collision rate <0.5%, thread efficiency foundations
+
+### Phase 2: Architecture ✅ COMPLETE
+- T006-T010: Lock-free queue, DLPack, FP16, thread arenas, persistent coordinator
+- **Delivered**: Zero-copy pipeline, 1.72× GPU speedup (FP16), condition variables
+
+### Phase 3: Optimizations ✅ PARTIAL (85%)
+- T011 ✅ Persistent coordinator, T014 ✅ Batched results
+- T012-T013-T015 deferred (relaxed atomics, prefetching, hot/cold separation)
+
+### Phase 4: Validation & Fixes 🔴 REQUIRED
+- **CRITICAL FIX**: Add OpenMP to `dlpack_bridge.cpp:431-434` (7.5ms → <1ms)
+- **CRITICAL FIX**: Eliminate redundant state cloning (2-3× → ≤1×)
+- T016: Comprehensive benchmarking (measure gains from OpenMP fix)
+- T017: Baseline investigation (reproduce 3,831 sims/sec config)
+- T018: Thread tuning (optimal count: 2-8 based on profiling)
+- T019: Batch/timeout tuning (optimal: batch-64 @ 1-2ms timeout)
+
+### Phase 5: Multi-Actor Self-Play (NEW)
+- Implement concurrent game processes (8-12 actors)
+- Shared inference queue integration
+- Adaptive actor scaling based on GPU util
+- **Expected**: 200-300 games/hour, 85-95% GPU util
+
+### Phase 6: NN-Eval Cache (OPTIONAL)
+- Zobrist hashing for Gomoku/Chess/Go
+- Tier A cache (policy/value only, NO shared stats)
+- Sharded hash table with SLRU eviction
+- **Expected**: 10-50% GPU call reduction depending on game
+
+---
+
+## 7. Acceptance Criteria (Phase 4 Completion)
+
+### Must-Have (Blocking Release):
+- [ ] **FR1.1**: OpenMP fix applied, T-VALID-2 passes (≤1.0ms tensor creation)
+- [ ] **FR1.2**: State cloning ≤1× per simulation (memory profiler validates)
+- [ ] **G1**: Throughput ≥8,000 sims/sec (Gomoku 13×13, 8 threads, batch-64)
+- [ ] **G2**: GPU utilization ≥80% during search
+- [ ] **G3**: CPU coordination <30% of total time
+- [ ] **G8**: Search quality preserved (win rate ≥99.5%, policy agreement ≥95%)
+
+### Should-Have (Quality Goals):
+- [ ] **G6**: Thread efficiency ≥70% @ 8 threads
+- [ ] **NFR2**: Latency budgets met (≤125ms per 1000 sims)
+- [ ] **NFR4**: TSan clean, 24-hour soak test passes
+
+### Nice-to-Have (Stretch Goals):
+- [ ] **G1 Stretch**: Throughput ≥10,000 sims/sec
+- [ ] **G7**: Multi-actor self-play 200-300 games/hour
+- [ ] **FR3**: NN-eval cache 20-50% hit rate (Chess)
+
+---
+
+## 8. Risks & Mitigations
+
+### R1: OpenMP Fix Insufficient (LOW PROBABILITY)
+- **Risk**: 7.5ms → 3ms instead of <1ms (false sharing, bandwidth saturation)
+- **Mitigation**: Profile with `perf mem`, optimize memory access patterns
+- **Contingency**: Accept <1.5ms, tune thread count to compensate
+
+### R2: State Cloning Refactor Breaks Correctness (MEDIUM PROBABILITY)
+- **Risk**: Thread-local pooling introduces subtle bugs (use-after-free, race conditions)
+- **Mitigation**: Extensive unit tests, TSan validation, incremental rollout
+- **Contingency**: Rollback to `clone()`, optimize other paths
+
+### R3: Baseline 3,831 Unreproducible (HIGH PROBABILITY)
+- **Risk**: Cannot validate improvement claims, T017 investigation fails
+- **Mitigation**: 2-day time-boxed investigation, systematic config sweep
+- **Contingency**: Use 2,147 as new baseline, adjust targets to 10× improvement (21,470 sims/sec → revise to 8k realistic)
+
+### R4: Multi-Actor Adds Latency Variance (MEDIUM PROBABILITY)
+- **Risk**: Per-actor throughput highly variable, some games starve
+- **Mitigation**: Per-actor timeouts, token-bucket backpressure, priority queuing
+- **Contingency**: Use 6-8 actors (conservative), accept 75% GPU util
+
+### R5: Thread Contention Saturates (HIGH PROBABILITY, OBSERVED)
+- **Risk**: Current evidence shows 60% thread idle, efficiency collapse beyond 4 threads
+- **Mitigation**: Affinity tuning, relaxed atomics, per-thread result queues
+- **Contingency**: Scale to 16 threads with SMT, accept 50-60% efficiency
+
+---
+
+## 9. Measurement & Telemetry
+
+### KPI Dashboard (Tracked per Benchmark Run):
+1. **Absolute throughput** (sims/sec)
+2. **GPU utilization** (% during search)
+3. **Thread efficiency** (% vs linear scaling)
+4. **Average batch size** (positions per GPU call)
+5. **Coordination overhead** (% of total time)
+6. **Feature extraction time** (ms per batch-64)
+7. **Collision rate** (% path collisions)
+8. **Memory RSS** (GB during search)
+
+### Profiling Protocol:
+- **Fixed Configuration**: seed=42, game=gomoku, board=15×15, sims=10000, threads=8, batch=64, timeout=1.0ms
+- **Iterations**: N≥10 runs per benchmark
+- **Statistics**: Report mean ± stddev, 95% confidence interval, CV < 5% required
+- **Storage**: `profiling_results/session_YYYYMMDD_HHMMSS/` with summary.md + CSV data
+
+---
+
+## 10. Glossary
+
+| Term | Definition |
+|------|------------|
+| **Simulation** | Complete MCTS cycle: selection → expansion → NN evaluation → backpropagation |
+| **Throughput** | Simulations per wall-clock second (including all overhead) |
+| **Baseline** | 3,831 sims/sec (Spec 003 configuration, exact params TBD via T017) |
+| **Current** | 2,147 sims/sec (56% regression, cause: OpenMP missing + state cloning waste) |
+| **Target** | ≥8,000 sims/sec (2.1× baseline, hardware-grounded on RTX 3060 Ti @ FP16) |
+| **WU-UCT** | Visit-only virtual loss (increments denominator, preserves Q = W/N) |
+| **Busy-Edge** | PUCT = -∞ for nodes being expanded (prevents collisions) |
+| **DLPack** | Zero-copy tensor protocol (C++ ↔ PyTorch via pinned memory) |
+| **MPMC** | Multi-Producer Multi-Consumer lock-free ring buffer |
+| **SoA** | Structure-of-Arrays (separate arrays per field for cache efficiency) |
+| **Actor** | Single self-play game (1-2 MCTS threads, local tree, shared inference queue) |
+| **NN-Eval Cache** | Transposition table for policy/value reuse (Tier A: eval-only, NO shared stats) |
+| **Tier A TT** | Cache stores inferences, tree stores statistics (safe design) |
+| **Tier B TT** | Full DAG TT with merged statistics across parents (deferred, requires MCGS) |
+
+---
+
+## 11. Numbered Requirements (Traceability)
+
+### Performance Requirements:
+1. **REQ-PERF-001**: Throughput ≥8,000 sims/sec (Gomoku 13×13, 8 threads, batch-64)
+2. **REQ-PERF-002**: GPU utilization ≥80% during search
+3. **REQ-PERF-003**: CPU coordination overhead <30% of total time
+4. **REQ-PERF-004**: Feature extraction ≤1.0ms per batch-64
+5. **REQ-PERF-005**: Thread efficiency ≥70% @ 8 threads
+6. **REQ-PERF-006**: State cloning ≤1× per simulation
+7. **REQ-PERF-007**: Multi-actor self-play 200-300 games/hour
+
+### Architecture Requirements:
+8. **REQ-ARCH-001**: Python PyTorch inference ONLY (NO libtorch/TensorRT)
+9. **REQ-ARCH-002**: Shared tree architecture (NOT root parallelization)
+10. **REQ-ARCH-003**: WU-UCT virtual loss (visit-only, pure Q = W/N)
+11. **REQ-ARCH-004**: Lock-free MPMC queue (4096 entries, condition variables)
+12. **REQ-ARCH-005**: DLPack zero-copy tensors (pinned CPU memory)
+13. **REQ-ARCH-006**: Thread-local state pooling (reuse across simulations)
+14. **REQ-ARCH-007**: Multi-actor shared inference queue (8-12 games → one batcher)
+
+### Quality Requirements:
+15. **REQ-QUAL-001**: Search quality ≥99.5% win rate vs baseline
+16. **REQ-QUAL-002**: Policy agreement ≥95% (1000-position test set)
+17. **REQ-QUAL-003**: Value MSE ≤0.01 vs baseline
+18. **REQ-QUAL-004**: Collision rate ≤5% path collisions
+19. **REQ-QUAL-005**: TSan clean (zero data races @ 24 threads)
+20. **REQ-QUAL-006**: Memory stability (24-hour soak, RSS growth <1MB/hour)
+
+### Implementation Requirements:
+21. **REQ-IMPL-001**: OpenMP parallelization in `dlpack_bridge.cpp:431-434`
+22. **REQ-IMPL-002**: Thread affinity for Ryzen 5900X (CCD0/CCD1 pinning)
+23. **REQ-IMPL-003**: Condition variables replace spin-waits (T006c)
+24. **REQ-IMPL-004**: FP16 mixed precision (T008f, validated 1.72× speedup)
+25. **REQ-IMPL-005**: NN-eval cache Tier A (optional Phase 6, Zobrist hash keyed)
+
+---
+
+## 12. Approval & Authority
+
+**This specification is ACTIVE and BINDING as of 2025-10-14.**
+
+**Authority Chain**:
+1. CONSTITUTION.md v2.0 (non-negotiable rules)
+2. **This spec.md** (functional requirements)
+3. plan.md (technical design, TBD via `/speckit.plan`)
+4. tasks.md (implementation breakdown, TBD via `/speckit.tasks`)
+
+**Stakeholders**:
+- **Product Owner**: cosmosapjw-quantum (user)
+- **Implementation Lead**: Claude Code (AI agent)
+- **Evidence Base**: ./review.txt (authoritative source-of-truth)
+
+**Change Control**:
+All spec changes require:
+1. Profiling evidence or failed experiments justifying change
+2. Impact analysis (expected throughput delta, affected requirements)
+3. Re-execution of `/speckit.plan` and `/speckit.tasks`
+
+**Review Cycle**: After Phase 4/5/6 completion or if throughput < 50% of target
+
+---
+
+## 6. Advanced Optimizations (Optional Phases - Post-8k Target)
+
+### 6.1 Precompute Legal Moves (Phase 2 Enhancement)
+
+**FR6.1: Legal Move Precomputation**:
+
+**Problem** (review.txt lines 189-201): `expand_node_with_result()` calls `state.getLegalMoves()` during expansion, accessing state object unnecessarily.
+
+**Requirements**:
+- Store `std::vector<Move> legal_moves` in `InferenceRequest` structure
+- Store `int current_player` in `InferenceRequest` structure
+- Populate in `ContinuousSimulationRunner` before queue submit (before state ownership transfer)
+- Use stored moves in `expand_node_with_result()` (skip `getLegalMoves()` call)
+
+**Expected Impact**:
+- Expansion time reduction: 10-20% (micro-benchmark validation)
+- Total throughput gain: +5-10% (measured via T016 after implementation)
+
+**Validation**:
+- Parity test: Expansion results identical with/without precomputation
+- Performance test: `expand_node_with_result()` time reduced ≥10%
+- Instrumentation: `getLegalMoves()` NOT called during expansion (log verification)
+
+**Rollback**: Feature flag `PRECOMPUTE_LEGAL_MOVES` (default: false)
+
+**Dependencies**: Requires T009 (state pooling) complete for clean ownership semantics
+
+**Status**: DEFERRED to Phase 2 (not blocking 8k target per TRACEABILITY_MATRIX.md GAP 2)
+
+---
+
+### 6.2 DLPack Fast Path Validation (Phase 2 Diagnostic)
+
+**FR6.2: DLPack Zero-Copy Verification**:
+
+**Problem** (review.txt lines 260-280): Uncertain if `DLPackInferenceBridge` is active or falling back to NumPy conversion in batch callback.
+
+**Requirements**:
+- Instrument `PyBatchInferenceCallback` to log conversion path
+- Verify `isinstance(bridge, DLPackInferenceBridge) == True` at runtime
+- Measure batch callback time (target <0.5ms per batch-64)
+- Telemetry field: `conversion_path` ∈ {"dlpack_fast", "numpy_fallback"}
+
+**Acceptance**:
+- ✅ DLPack fast path confirmed in 100% of batches (no fallback)
+- ✅ Batch callback overhead <1% of total time
+- ✅ Telemetry field `conversion_path == "dlpack_fast"`
+
+**Expected Impact**:
+- If fallback detected: Fix provides 5-15% throughput gain
+- If fast path confirmed: No action needed (diagnostic only)
+
+**Rollback**: N/A (diagnostic only, no functional changes)
+
+**Dependencies**: OpenMP fix (T004-T006) addresses bulk of Python/GIL overhead; this is validation only
+
+**Status**: DEFERRED to Phase 2 (low priority per TRACEABILITY_MATRIX.md GAP 1)
+
+---
+
+### 6.3 Lightweight Neural Network (Phase 7 Architecture)
+
+**FR6.3: Neural Network Architecture Optimization**:
+
+**Problem** (review.txt lines 621-1396): GPU inference is only 32.8% of total time at baseline. Doubling NN speed directly raises throughput, enabling 10k+ sims/sec.
+
+**Architecture Options** (ranked by safety):
+
+**Option A: RepVGG/ECA ResNet** (Safest, +25-50% model speed):
+- Train with multi-branch residuals (3×3 + 1×1 + identity)
+- Fuse to single 3×3 conv at inference (BN folding)
+- Replace SE with ECA (Efficient Channel Attention, near-zero overhead)
+- Expected: 1.25-1.5× model speedup, strength ≈ baseline or improved
+
+**Option B: Ghost Bottleneck + ShuffleV2** (Maximum speed, +40-80%):
+- Entry/exit: RepECA blocks (clean features)
+- Middle: Ghost bottlenecks (FLOP reduction) or ShuffleV2 (bandwidth reduction)
+- Add auxiliary tactical heads (threat detection) for strength preservation
+- Expected: 1.4-1.8× model speedup, small strength dent mitigated by aux tasks
+
+**Option C: Two-Tier Evaluator Cascade** (×1.5-2.5 throughput):
+- Micro-net (C=24-32, B=2-3) runs first
+- Gate: If entropy < τ or threat detected → accept; else escalate to main net
+- 30-60% of positions skip main net (trivial moves)
+- Expected: ×1.5-2.5 end-to-end throughput, superhuman preserved by conservative gate
+
+**Option D: Early-Exit Heads** (×1.2-1.6 throughput, stackable):
+- Auxiliary policy/value heads at block 3, block 6
+- Exit if |value| > threshold or entropy < threshold
+- Position-dependent speedup
+- Expected: ×1.2-1.6 average throughput
+
+**Combined Impact** (Option B + C):
+- Model speedup: 1.5-1.8×
+- Cascade multiplier: ×1.5-2.5
+- **Total throughput: 18-22k sims/sec** (vs. 8k MCTS-only target)
+
+**Target Performance** (3060 Ti, FP16, optimal batching):
+| MCTS Throughput | NN Architecture | Total Throughput |
+|-----------------|-----------------|------------------|
+| 8k sims/sec | Baseline (SE-ResNet) | 8k sims/sec |
+| 8k sims/sec | RepVGG/ECA | 10-12k sims/sec |
+| 8k sims/sec | Ghost+Shuffle | 12-14k sims/sec |
+| 8k sims/sec | Ghost+Shuffle+Cascade | **18-22k sims/sec** |
+
+**Validation**:
+- ELO ≥ baseline (1000-game match, 95% confidence)
+- Policy agreement ≥95% (1000-position test set)
+- If ELO within -10 but sims/sec ≥1.7×: ACCEPTABLE (training data throughput prioritized)
+
+**Game-Specific Configs**:
+- Gomoku Freestyle: Ghost mid-trunk, early-exit [4,8], entropy≤0.75
+- Renju/Omok: Ghost+Shuffle hybrid, early-exit [6], entropy≤0.65, aux threat heads
+- Chess 8×8: Ghost, early-exit [6], entropy≤0.90 (conservative)
+- Go 9×9: Ghost, early-exit [4,8], entropy≤0.85
+
+**Reference**: See `NEURAL_NETWORK_OPTIMIZATION.md` for complete architecture specs, training protocol, and ablation study design
+
+**Dependencies**: Requires 8k sims/sec MCTS target achieved (validates GPU is bottleneck before NN optimization)
+
+**Status**: FUTURE (Phase 7, post-8k target)
+
+---
+
+**END OF SPECIFICATION v2.0**
+
+**Next Steps**:
+1. Execute `/speckit.plan` to generate TECHNICAL_PLAN.md
+2. Execute `/speckit.tasks` to generate TASKS.md breakdown
+3. Implement critical fixes (OpenMP, state cloning)
+4. Validate via T016 benchmarking suite
