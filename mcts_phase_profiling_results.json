@@ -1,9 +1,9 @@
 {
   "performance": {
-    "throughput": 1483.1779391859718,
-    "thread_efficiency": 15.449770199853873,
-    "gpu_utilization": 61.09756097560975,
-    "elapsed_time": 0.6068051420006668
+    "throughput": 1557.7740435047613,
+    "thread_efficiency": 16.226812953174598,
+    "gpu_utilization": 48.390243902439025,
+    "elapsed_time": 0.5777474619972054
   },
   "phases": {
     "selection": {
@@ -34,49 +34,49 @@
   "bottleneck": "Balanced (no single dominant phase)",
   "full_instrumentation": {
     "expansion_conflict": {
-      "calls": 2,
+      "calls": 5408,
       "total_ns": 0,
       "avg_ns": 0.0
     },
     "queue_try_get_result": {
-      "calls": 1350633,
-      "total_ns": 33626592,
-      "avg_ns": 24.89691278089607
+      "calls": 499176,
+      "total_ns": 13167731,
+      "avg_ns": 26.37893448402968
     },
     "queue_process_results": {
-      "calls": 31349,
-      "total_ns": 315544993,
-      "avg_ns": 10065.55210692526
+      "calls": 18765,
+      "total_ns": 142218398,
+      "avg_ns": 7578.918092192912
     },
     "queue_collect": {
       "calls": 35,
-      "total_ns": 14858815,
-      "avg_ns": 424537.5714285714
+      "total_ns": 13201196,
+      "avg_ns": 377177.02857142856
     },
     "queue_submit": {
       "calls": 801,
-      "total_ns": 493718761,
-      "avg_ns": 616377.9787765293
+      "total_ns": 233764,
+      "avg_ns": 291.84019975031214
     },
     "virtual_loss_remove": {
-      "calls": 3,
+      "calls": 5408,
       "total_ns": 0,
       "avg_ns": 0.0
     },
     "virtual_loss_apply": {
-      "calls": 1492,
+      "calls": 6208,
       "total_ns": 0,
       "avg_ns": 0.0
     },
     "selection": {
-      "calls": 802,
-      "total_ns": 1875342,
-      "avg_ns": 2338.3316708229427
+      "calls": 6208,
+      "total_ns": 4903821,
+      "avg_ns": 789.9196198453608
     },
     "tree_allocate_nodes": {
-      "calls": 801,
-      "total_ns": 9336709,
-      "avg_ns": 11656.315855181023
+      "calls": 1,
+      "total_ns": 2885,
+      "avg_ns": 2885.0
     },
     "unique_batch_positions": {
       "calls": 801,
@@ -85,18 +85,18 @@
     },
     "tree_allocate_node": {
       "calls": 1,
-      "total_ns": 12714,
-      "avg_ns": 12714.0
+      "total_ns": 16421,
+      "avg_ns": 16421.0
     },
     "busy_edge_masked": {
-      "calls": 181,
+      "calls": 6102,
       "total_ns": 0,
       "avg_ns": 0.0
     },
     "tree_clear": {
       "calls": 1,
-      "total_ns": 20,
-      "avg_ns": 20.0
+      "total_ns": 40,
+      "avg_ns": 40.0
     }
   }
 }
