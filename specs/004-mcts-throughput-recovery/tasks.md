@@ -1,40 +1,66 @@
 # Task Breakdown: MCTS Throughput Recovery & Multi-Actor Self-Play
 
-**Version**: 1.0
-**Date**: 2025-10-14
-**Status**: READY
+**Version**: 1.1 (CORRECTED)
+**Date**: 2025-10-14 (Updated after validation)
+**Status**: REVISED - Priorities Corrected Based on Profiling
 **Authority**: Implements plan.md v1.0 under spec.md v2.0
 
 ---
 
-## Task Dependency Graph
+## ⚠️ CRITICAL UPDATE (2025-10-14)
+
+**Validation Results**: Systematic profiling revealed that the original task priorities were **INCORRECT**.
+
+**Original (WRONG) Priority**:
+1. ❌ T004-T006: OpenMP parallelization (Feature extraction NOT the bottleneck!)
+2. ❌ Focus on GPU utilization (GPU is only 32.8% of time)
+
+**Corrected (RIGHT) Priority** (per review.txt + validation):
+1. ✅ **T007-T009: State Pooling** (HIGHEST PRIORITY - 2-3× cloning waste)
+2. ✅ **T010-T011: Condition Variables** (Fix 60% thread idle time)
+3. ✅ **T012-T013: Thread Affinity** (Ryzen CCD optimization)
+4. ✅ **Python Interface Streamlining** (DLPack fast path, move semantics)
+
+**Key Findings**:
+- **Feature extraction (T004-T006)**: OpenMP working, NOT limiting factor (validated)
+- **State cloning**: 2-3× per simulation (review.txt lines 37-54) - PRIMARY WASTE
+- **Thread contention**: 60% idle time (review.txt line 102) - MAJOR ISSUE
+- **CPU coordination**: 67.2% of runtime vs GPU 32.8% (review.txt lines 14-19)
+
+**Implementation Status**:
+- State pooling attempted 2025-10-14: Caused 10× regression (250 sims/sec) due to move semantics bug
+- Reverted to baseline - ready to implement CAREFULLY per COMPREHENSIVE_CORRECTED_PLAN_2025-10-14.md
+
+---
+
+## Task Dependency Graph (CORRECTED PRIORITY ORDER)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│ PHASE 0: Foundation (Telemetry & Benchmarking)                      │
+│ PHASE 0: Foundation (Telemetry & Benchmarking) - DEFERRED           │
 ├─────────────────────────────────────────────────────────────────────┤
-│ T001 → T002 → T003                                                  │
+│ T001 → T002 → T003 (Use existing test infrastructure instead)       │
 └─────────────────────────────────────────────────────────────────────┘
                     ↓
 ┌─────────────────────────────────────────────────────────────────────┐
-│ PHASE 1: CPU Pipeline Optimizations (Critical Path)                 │
+│ PHASE 1: CPU Pipeline Optimizations (CORRECTED PRIORITY)            │
 ├─────────────────────────────────────────────────────────────────────┤
-│ T004 → T005 → T006 (OpenMP)                                         │
-│ T007 → T008 → T009 (State Pooling)                                  │
-│ T010 → T011 (Condition Variables)                                   │
-│ T012 → T013 (Node Allocator)                                        │
+│ T007 → T008 → T009 (State Pooling) ← HIGHEST PRIORITY               │
+│ T010 → T011 (Condition Variables) ← HIGH PRIORITY                   │
+│ T012 → T013 (Thread Affinity) ← MEDIUM PRIORITY                     │
+│ T004 → T005 → T006 (OpenMP) ← NOT A BOTTLENECK (verified)           │
 └─────────────────────────────────────────────────────────────────────┘
                     ↓
 ┌─────────────────────────────────────────────────────────────────────┐
 │ PHASE 2: Validation & Baseline Investigation                        │
 ├─────────────────────────────────────────────────────────────────────┤
 │ T014 → T015 (Comprehensive benchmarks)                              │
-│ T016 (Baseline investigation)                                       │
+│ T016 (Baseline investigation - find 3,831 config)                   │
 │ T017 (Ablation studies)                                             │
 └─────────────────────────────────────────────────────────────────────┘
                     ↓
 ┌─────────────────────────────────────────────────────────────────────┐
-│ PHASE 3: NN-Eval Cache (Optional)                                   │
+│ PHASE 3: NN-Eval Cache (Optional, Post-8k)                          │
 ├─────────────────────────────────────────────────────────────────────┤
 │ T018 → T019 → T020 → T021                                           │
 └─────────────────────────────────────────────────────────────────────┘
@@ -51,6 +77,12 @@
 │ T027 → T028 → T029 → T030                                           │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+**IMMEDIATE NEXT STEPS** (per COMPREHENSIVE_CORRECTED_PLAN_2025-10-14.md):
+1. Implement T007-T009 (State Pooling) CAREFULLY - avoid move semantics bugs
+2. Implement T010-T011 (Condition Variables) - eliminate 60% idle time
+3. Validate with T014-T015 benchmarks
+4. Proceed to T012-T013 (Thread Affinity) if still below 8k target
 
 ---
 

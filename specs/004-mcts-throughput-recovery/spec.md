@@ -17,37 +17,70 @@ This specification defines requirements to recover and maximize MCTS throughput 
 
 **Current Status** (per ./review.txt, authoritative):
 - **Baseline**: 3,831 sims/sec (Spec 003 configuration, exact params TBD)
-- **Current**: 2,147 sims/sec (56% regression from baseline, cause: OpenMP missing)
+- **Current**: 2,147 sims/sec (56% regression from baseline, cause: state cloning + coordination overhead)
 - **Target**: ≥8,000 sims/sec (2.1× baseline, 3.7× current, hardware-grounded)
 
-### 1.2 Primary Bottlenecks (from ./review.txt)
+### 1.2 Primary Bottlenecks (from ./review.txt + Validation 2025-10-14)
 
 **Critical Finding**: GPU is NOT the bottleneck; CPU MCTS coordination is.
 
-1. **Feature Extraction Not Parallelized** (CRITICAL BLOCKER):
-   - Current: 7.5ms per batch-64 (single-threaded)
-   - Location: `dlpack_bridge.cpp:431-434` missing `#pragma omp parallel for`
-   - Impact: Caps throughput at ~1,675 states/sec
-   - Fix Required: Add OpenMP → Expected 7.5ms → <1.0ms
+**Time Distribution** (review.txt lines 14-19):
+- Neural network inference (GPU): **32.8%**
+- MCTS coordination (CPU): **67.2%** ← PRIMARY BOTTLENECK
 
-2. **MCTS Coordination Overhead** (67.2% of runtime):
-   - Thread idle: 60% of execution (~1.489s out of 2.5s search)
-   - State cloning waste: 2-3× per simulation
-   - Python/GIL overhead: 67% of total time (includes above)
+**Conclusion**: Even if GPU was 100% efficient, only 1.3× improvement possible. CPU coordination is the real limiter.
 
-3. **GPU Inference** (32.8% of runtime, SECONDARY):
+1. **State Cloning Waste** (HIGHEST PRIORITY - review.txt lines 37-54):
+   - Current: 2-3× clones per simulation
+   - Locations:
+     * `continuous_simulation_runner.cpp:78` - Clone root state
+     * `continuous_simulation_runner.cpp:115` - Clone for queue
+     * `async_inference_queue.cpp:37` - Clone on EVERY retry (most wasteful!)
+   - Impact: Wasteful CPU cycles, memory allocation pressure, Python GC overhead
+   - Fix: Thread-local state pools + move semantics + `copyFrom()`
+   - Expected Gain: 1.3-1.5× throughput
+
+2. **Thread Contention & Locking** (review.txt lines 71-110):
+   - Thread idle: 60% of execution (~1.489s out of 2.5s search, line 102)
+   - Global allocation mutex serializes expansions (lines 71-78)
+   - Spin-waiting on results wastes CPU (lines 125-136)
+   - Poor scaling: 4T→8T only 12.5% efficiency gain (lines 65-69)
+   - Fix: Condition variables + thread-local arenas + relaxed atomics
+   - Expected Gain: 1.5-2.0× throughput
+
+3. **Thread/CPU Affinity** (review.txt lines 244-250):
+   - Current: `hash(thread::id) % 24` suboptimal
+   - Issue: May use SMT siblings before saturating physical cores
+   - Fix: Pin to physical cores (0-11) first, explicit CCD0/CCD1 pinning
+   - Expected Gain: 1.15× throughput
+
+4. **Python ↔ C++ Interface Overhead** (review.txt lines 258-307):
+   - Batch callback overhead, list→array conversions
+   - DLPack fast path validation needed
+   - Fix: Ensure zero-copy active, return NumPy arrays, use move semantics
+   - Expected Gain: 1.1-1.2× throughput
+
+5. **Feature Extraction** (NOT PRIMARY BOTTLENECK - Validated 2025-10-14):
+   - OpenMP present in code: `dlpack_bridge.cpp:431-434`
+   - Testing shows: 8.64ms @ 1 thread → 1.57ms @ 12 threads (5.5× speedup)
+   - **BUT**: MCTS throughput SAME (1,543 vs 1,529 sims/sec) regardless of OMP threads
+   - Conclusion: Feature extraction NOT limiting factor (batching amortizes cost)
+   - Status: OpenMP working correctly, NOT a priority fix
+
+6. **GPU Inference** (32.8% of runtime, SECONDARY):
    - RTX 3060 Ti @ FP16: 30.7ms per batch-64 → theoretical max 2,014 states/sec
-   - Current utilization: 11.2% (severe underutilization)
+   - Current utilization: 11.2-68% (variable, depends on batching)
    - Target: 80-95% utilization with multi-actor batching
+   - FP16 mixed precision: Already implemented (T008f ✅, 1.72× speedup validated)
 
 ### 1.3 Solution Architecture
 
-**Single MCTS Optimizations**:
-1. Fix OpenMP parallelization (7.5ms → <1ms)
-2. Eliminate redundant state cloning (2-3× → ≤1× per simulation)
-3. Replace spin-waits with condition variables (T006c complete)
-4. Thread affinity tuning (Ryzen dual-CCD topology)
-5. FP16 mixed precision (validated 1.72× speedup, T008f complete)
+**Single MCTS Optimizations** (Corrected Priority Order):
+1. Eliminate redundant state cloning (2-3× → ≤1×) - HIGHEST PRIORITY
+2. Fix thread contention (condition variables + arenas + relaxed atomics)
+3. Tune thread affinity (Ryzen dual-CCD topology, physical cores first)
+4. Streamline Python ↔ C++ interface (DLPack fast path, NumPy arrays, move semantics)
+5. FP16 mixed precision (ALREADY COMPLETE - validated 1.72× speedup, T008f ✅)
 
 **Multi-Actor Self-Play** (Phase 5):
 - Many single-thread MCTS games → one centralized inference queue

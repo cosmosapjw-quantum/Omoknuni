@@ -18,18 +18,23 @@ This is a high-performance AlphaZero-style reinforcement learning engine targeti
 - **CPU**: Shared-tree MCTS with 2-4 threads using Structure-of-Arrays memory layout (optimal efficiency)
 - **GPU**: Asynchronous micro-batched neural network inference (batch size 64, 0.5-1.0ms timeout)
 - **Target Hardware**: AMD Ryzen 9 5900X (12C/24T, dual-CCD) + NVIDIA RTX 3060 Ti (8GB VRAM, Ampere)
-- **Current Performance**: 2,147 sims/sec (REGRESSION from 3,831 baseline, cause under investigation)
-- **Performance Goals**: 80-92% GPU utilization, <1GB tree memory, 200-300 games/hour self-play
-- **Bottleneck**: MCTS overhead (67.2% of time) vs GPU inference (32.8%), requires architectural redesign
-- **Spec 004 Status**: Phase 1 ✅ (complete), Phase 2 ✅ (complete, VALIDATED 2025-10-13), Phase 3 🟡 (80% complete), Phase 4 🔴 (validation complete, critical fix needed)
-- **Validation Results (2025-10-13)**:
-  - ✅ **T-VALID-1**: FP16 working correctly (1.72× speedup, numerical stability excellent)
-  - ❌ **T-VALID-2**: Tensor creation FAIL - 7.5ms overhead (OpenMP parallelization missing)
-  - 🔴 **CRITICAL BLOCKER**: Feature extraction loop at [dlpack_bridge.cpp:431-434](cpp_extensions/mcts/dlpack_bridge.cpp#L431-L434) NOT parallelized
-- **Performance Impact**: 7.5ms tensor overhead caps throughput at ~1,675 states/sec, explains regression from 3,831 to 2,147 sims/sec
-- **Critical Fix Required**: Add `#pragma omp parallel for` to feature extraction loop → Expected 7.5ms → <1.0ms
-- **Expected Performance After Fix**: 7.5ms → <1.0ms tensor creation, throughput improvement TBD via T016/T017 benchmarking
-- **Full Report**: [docs/performance/validation_report_2025-10-13.md](docs/performance/validation_report_2025-10-13.md)
+- **Current Performance**: 2,147 sims/sec (REGRESSION from 3,831 baseline, cause: state cloning waste + coordination overhead)
+- **Performance Goals**: 80% GPU utilization, <1GB tree memory, 200-300 games/hour self-play
+- **Bottleneck** (CORRECTED 2025-10-14): CPU coordination (67.2% of time) vs GPU inference (32.8%) - NOT GPU!
+- **Spec 004 Status**: Profiling complete ✅, Ready for Priority #1 fix (state pooling) 🔴
+- **Validation Results (2025-10-14 - COMPREHENSIVE PROFILING COMPLETE)**:
+  - ✅ **FP16**: Working correctly (1.72× speedup, T008f complete)
+  - ✅ **OpenMP**: Working correctly (8.64ms→1.57ms @ 12 threads) BUT NOT THE BOTTLENECK
+  - ✅ **MCTS Throughput**: SAME regardless of OMP threads (1,543 vs 1,529 sims/sec)
+  - ❌ **WRONG ANALYSIS**: Feature extraction NOT the primary bottleneck (batching amortizes cost)
+  - ✅ **CORRECT ANALYSIS**: State cloning (2-3× per sim) + thread contention (60% idle) are real issues
+- **Real Bottlenecks** (per review.txt + validation):
+  1. **State cloning waste**: 2-3× clones per simulation (review.txt lines 37-54) - HIGHEST PRIORITY
+  2. **Thread contention**: 60% idle time, global mutex, spin-waits (review.txt lines 71-136)
+  3. **Thread affinity**: Suboptimal CCD pinning (review.txt lines 244-250)
+  4. **Python interface**: Batch callback overhead (review.txt lines 258-307)
+- **Expected Performance After Fixes**: 7,300-8,500 sims/sec (91-106% of 8k target)
+- **Full Analysis**: [COMPREHENSIVE_CORRECTED_PLAN_2025-10-14.md](COMPREHENSIVE_CORRECTED_PLAN_2025-10-14.md)
 
 ## Architecture Overview
 
