@@ -138,6 +138,15 @@ public:
         }
     }
 
+    // T024c: Stub implementations for make/unmake (not used in this test)
+    uint64_t make_move(uint16_t move) override {
+        throw std::runtime_error("MockGameState make_move not implemented");
+    }
+
+    void unmake_move(uint16_t move, uint64_t undo_token) override {
+        throw std::runtime_error("MockGameState unmake_move not implemented");
+    }
+
     std::string actionToString(int action) const override {
         return std::to_string(action);
     }

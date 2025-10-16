@@ -121,6 +121,14 @@ public:
     std::unique_ptr<core::IGameState> clone() const override;
     std::vector<std::unique_ptr<core::IGameState>> batchClone(int count) const override;
     void copyFrom(const core::IGameState& source) override;
+
+    // T024d: Chess make/unmake stub (to be implemented)
+    uint64_t make_move(uint16_t move) override {
+        throw std::runtime_error("Chess make_move not yet implemented (T024d pending)");
+    }
+    void unmake_move(uint16_t move, uint64_t undo_token) override {
+        throw std::runtime_error("Chess unmake_move not yet implemented (T024d pending)");
+    }
     std::string actionToString(int action) const override;
     std::optional<int> stringToAction(const std::string& moveStr) const override;
     std::string toString() const override;

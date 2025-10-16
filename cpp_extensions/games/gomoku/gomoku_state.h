@@ -76,6 +76,9 @@ public:
     void extract_features_to_buffer(float* buffer) const override;
     int get_num_feature_planes() const override;
     uint64_t getHash() const override;
+    uint64_t zobrist_hash() const override;  // T024c: Zero-copy MCTS zobrist support
+    uint64_t make_move(uint16_t move) override;  // T024c: Zero-copy MCTS make
+    void unmake_move(uint16_t move, uint64_t undo_token) override;  // T024c: Zero-copy MCTS unmake
     std::unique_ptr<core::IGameState> clone() const override;
     std::vector<std::unique_ptr<core::IGameState>> batchClone(int count) const override;
     void copyFrom(const core::IGameState& source) override;

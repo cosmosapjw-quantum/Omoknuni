@@ -641,6 +641,12 @@ uint64_t GomokuState::getHash() const {
     return hash_signature_;
 }
 
+uint64_t GomokuState::zobrist_hash() const {
+    // T024c: Return cached Zobrist hash for transposition tables
+    // GomokuState already uses Zobrist hashing internally via zobrist_
+    return getHash();
+}
+
 std::unique_ptr<core::IGameState> GomokuState::clone() const {
     try {
         // Track memory allocation for game state
@@ -1273,11 +1279,131 @@ void GomokuState::invalidate_caches() {
     valid_moves_dirty_.store(true, std::memory_order_release);
     winner_check_dirty_.store(true, std::memory_order_release);
     hash_dirty_.store(true, std::memory_order_release);
-    
+
     // PERFORMANCE FIX: Return old tensors before invalidating caches
     clearTensorCache();
-    
+
     // PERFORMANCE FIX: Invalidate tensor caches when game state changes
+    tensor_cache_dirty_.store(true, std::memory_order_release);
+    enhanced_tensor_cache_dirty_.store(true, std::memory_order_release);
+}
+
+//
+// T024c: Gomoku make/unmake Implementation for Zero-Copy MCTS
+//
+
+uint64_t GomokuState::make_move(uint16_t move) {
+    // Validate move (debug mode only for performance)
+    #ifndef NDEBUG
+    if (!isLegalMove(move)) {
+        throw core::IllegalMoveException("Attempted illegal move: " + actionToString(move) +
+                                         " for player " + std::to_string(current_player_), move);
+    }
+    #endif
+
+    // Pack undo token (64 bits) - save state before modification
+    // Layout: [63:56]=game_result [55:48]=move_count [47:40]=black_first_stone_flag
+    //         [39:32]=last_action [31:24]=cached_winner [23:16]=current_player
+    //         [15:8]=hash_dirty [7:0]=winner_check_dirty
+    uint64_t undo_token = 0;
+
+    // Save game result (8 bits)
+    core::GameResult result = getGameResult();
+    undo_token |= (static_cast<uint64_t>(result) & 0xFF) << 56;
+
+    // Save move count (8 bits)
+    undo_token |= (static_cast<uint64_t>(move_history_.size()) & 0xFF) << 48;
+
+    // Save black_first_stone flag (8 bits: 0=not set, 1=was set, 2=this move sets it)
+    uint8_t bfs_flag = 0;
+    if (black_first_stone_ != -1) {
+        bfs_flag = 1;  // Was already set
+    } else if (current_player_ == BLACK) {
+        bfs_flag = 2;  // This move will set it
+    }
+    undo_token |= (static_cast<uint64_t>(bfs_flag) & 0xFF) << 40;
+
+    // Save last_action_played (8 bits - enough for 15×15=225 moves)
+    undo_token |= (static_cast<uint64_t>(last_action_played_ + 128) & 0xFF) << 32;
+
+    // Save cached_winner (8 bits)
+    undo_token |= (static_cast<uint64_t>(cached_winner_.load(std::memory_order_relaxed)) & 0xFF) << 24;
+
+    // Save current_player (8 bits)
+    undo_token |= (static_cast<uint64_t>(current_player_) & 0xFF) << 16;
+
+    // Save cache dirty flags (8 bits each)
+    undo_token |= (hash_dirty_.load(std::memory_order_relaxed) ? 1ULL : 0ULL) << 8;
+    undo_token |= (winner_check_dirty_.load(std::memory_order_relaxed) ? 1ULL : 0ULL) << 0;
+
+    // Apply move (matching make_move_internal logic)
+    set_bit(current_player_ - 1, move);
+    last_action_played_ = move;
+    move_history_.push_back(move);
+
+    if (current_player_ == BLACK && black_first_stone_ == -1) {
+        black_first_stone_ = move;
+    }
+
+    // Flip player
+    current_player_ = (current_player_ == BLACK) ? WHITE : BLACK;
+
+    // Invalidate caches (mark dirty)
+    invalidate_caches();
+
+    return undo_token;
+}
+
+void GomokuState::unmake_move(uint16_t move, uint64_t undo_token) {
+    // Extract saved state from undo token
+    core::GameResult prev_result = static_cast<core::GameResult>((undo_token >> 56) & 0xFF);
+    size_t prev_move_count = (undo_token >> 48) & 0xFF;
+    uint8_t bfs_flag = (undo_token >> 40) & 0xFF;
+    int prev_last_action = static_cast<int>((undo_token >> 32) & 0xFF) - 128;
+    int prev_cached_winner = static_cast<int>((undo_token >> 24) & 0xFF);
+    int prev_player = static_cast<int>((undo_token >> 16) & 0xFF);
+    bool prev_hash_dirty = ((undo_token >> 8) & 0x01) != 0;
+    bool prev_winner_dirty = ((undo_token >> 0) & 0x01) != 0;
+
+    // Restore player (flip back)
+    current_player_ = prev_player;
+
+    // Remove stone from board
+    clear_bit(current_player_ - 1, move);
+
+    // Restore move history
+    if (!move_history_.empty() && move_history_.back() == move) {
+        move_history_.pop_back();
+    }
+
+    // Restore black_first_stone
+    if (bfs_flag == 0) {
+        black_first_stone_ = -1;  // Was not set
+    } else if (bfs_flag == 2) {
+        black_first_stone_ = -1;  // This move set it, now unset
+    } else if (bfs_flag == 1) {
+        // Was already set - need to restore from history
+        black_first_stone_ = -1;
+        if (!move_history_.empty()) {
+            for (size_t i = 0; i < move_history_.size(); ++i) {
+                if ((i % 2) == 0) {  // Black's move
+                    black_first_stone_ = move_history_[i];
+                    break;
+                }
+            }
+        }
+    }
+
+    // Restore last_action_played
+    last_action_played_ = prev_last_action;
+
+    // Restore cached values (avoid expensive recomputation)
+    cached_winner_.store(prev_cached_winner, std::memory_order_relaxed);
+    hash_dirty_.store(prev_hash_dirty, std::memory_order_relaxed);
+    winner_check_dirty_.store(prev_winner_dirty, std::memory_order_relaxed);
+
+    // Mark other caches as dirty (conservative approach)
+    valid_moves_dirty_.store(true, std::memory_order_release);
     tensor_cache_dirty_.store(true, std::memory_order_release);
     enhanced_tensor_cache_dirty_.store(true, std::memory_order_release);
 }

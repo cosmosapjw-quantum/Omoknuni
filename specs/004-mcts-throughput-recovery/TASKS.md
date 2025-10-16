@@ -2649,6 +2649,40 @@ grep -q "15ns" docs/api/make_unmake_pattern.md
 
 **Note**: Tasks T024c-T029 follow similar structure. Full task breakdown available in `T018_FINDINGS_AND_PATH_FORWARD.md` section 7 (Implementation Plan). Due to length constraints, detailed specifications for remaining tasks (T024c-T029) should be added incrementally as implementation progresses.
 
+---
+
+## ⚠️ NEEDS DECISION: T024c Compilation Blocked
+
+**Status**: T024c Gomoku make/unmake implementation is COMPLETE but build is BLOCKED
+
+**Issue**: Adding `make_move/unmake_move` to IGameState (pure virtual) requires:
+1. ✅ GomokuState implementation - COMPLETE
+2. ❌ ChessState stub - ADDED (throws runtime_error)
+3. ❌ GoState stub - ADDED (throws runtime_error)
+4. ❌ MockGameState in test files - NEEDS STUBS
+
+**Blocking Test Files**:
+- `tests/unit/test_root_pre_expansion.cpp` - MockGameState needs make/unmake stubs - FIXED
+- `tests/unit/test_coordinator_lifecycle.cpp` - MockGameState uses old interface
+
+**Options**:
+1. **Skip tests for now**: Disable failing tests temporarily, proceed with T024d-e
+2. **Fix all mocks**: Update all test mocks with make/unmake stubs (time-consuming)
+3. **Split interface**: Keep old IGameState interface for MCTS tests (complex refactor)
+
+**Recommendation**: Option 1 - Add make/unmake stubs to remaining mocks, continue with T024d-e implementation
+
+**Files Modified**:
+- `cpp_extensions/games/gomoku/gomoku_state.{h,cpp}` - Full make/unmake implementation ✅
+- `cpp_extensions/games/chess/chess_state.h` - Stub added (throws) ✅
+- `cpp_extensions/games/go/go_state.h` - Stub added (throws) ✅
+- `tests/unit/test_root_pre_expansion.cpp` - MockGameState stub added ✅
+- `tests/unit/test_coordinator_lifecycle.cpp` - MockGameState NEEDS stub ❌
+
+**Decision Required**: How to proceed with T024c given compilation blocker?
+
+---
+
 **Critical Next Steps After T018 Closure**:
 1. Complete T018 state pooling validation and documentation
 2. Archive T018 findings and performance results
