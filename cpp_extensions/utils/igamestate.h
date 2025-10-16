@@ -240,16 +240,66 @@ public:
     }
     
     /**
-     * @brief Copy the state from another game state instance
-     * 
+     * @brief Copy the state from another game state instance (T018a - State Pooling)
+     *
      * Copies all relevant fields from the source state to this state.
      * This allows reusing existing state objects from a pool rather than
-     * allocating new ones. The source and destination must be the same game type.
-     * 
+     * allocating new ones, eliminating heap allocations during MCTS simulations.
+     *
+     * **Performance Requirements** (profiling-validated):
+     * - Target: 20μs per copy (vs 418μs for clone())
+     * - NO heap allocations during copy operation
+     * - Use memcpy() for fixed-size arrays (optimal cache efficiency)
+     * - Shallow copy for primitive fields
+     * - Bit-exact semantic equivalence with clone()
+     *
+     * **Thread Safety**:
+     * - Read-only access to 'source' (thread-safe)
+     * - Write access to 'this' (caller must ensure exclusivity)
+     * - No shared mutable state accessed
+     *
+     * **Implementation Guidelines**:
+     * ```cpp
+     * void ConcreteState::copyFrom(const IGameState& other) {
+     *     auto& src = static_cast<const ConcreteState&>(other);
+     *
+     *     // Fast memcpy for fixed-size arrays
+     *     memcpy(board_, src.board_, sizeof(board_));
+     *     memcpy(history_, src.history_, sizeof(history_));
+     *
+     *     // Primitive field copies
+     *     current_player_ = src.current_player_;
+     *     move_count_ = src.move_count_;
+     *     // ... other primitive fields
+     * }
+     * ```
+     *
      * @param source The source state to copy from
      * @throws std::runtime_error if the game types don't match
+     *
+     * @see docs/api/state_pooling.md for complete API contract and examples
      */
     virtual void copyFrom(const IGameState& source) = 0;
+
+    /**
+     * @brief Get estimated size of this state in bytes (T018a - Pool Sizing)
+     *
+     * Returns the total memory footprint of this game state instance,
+     * including all dynamically allocated memory. Used for thread-local
+     * state pool sizing and memory tracking.
+     *
+     * **Calculation**:
+     * ```cpp
+     * return sizeof(*this) +
+     *        move_history_.capacity() * sizeof(int) +
+     *        other_dynamic_allocations;
+     * ```
+     *
+     * @return Estimated memory usage in bytes
+     *
+     * @see ThreadLocalStatePool for pool sizing based on this value
+     */
+    virtual size_t estimated_size_bytes() const = 0;
 
     /**
      * @brief Convert action to string representation
