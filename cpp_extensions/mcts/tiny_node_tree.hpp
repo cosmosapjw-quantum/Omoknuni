@@ -166,6 +166,93 @@ public:
      */
     bool validate() const;
 
+    // ====== Child Management (T024f-2) ======
+
+    /**
+     * @brief Add a child node to a parent
+     *
+     * Creates a new child node linked to the parent via sibling pointers.
+     * Children are stored as a singly-linked list:
+     *   parent.first_child_idx → child1.next_sibling_idx → child2.next_sibling_idx → ...
+     *
+     * @param parent_idx Parent node index
+     * @param move Move that leads to this child (uint16_t action index)
+     * @param prior_prob Prior probability from policy network (0.0-1.0)
+     * @param zobrist_hash Zobrist hash for this child position
+     * @return Index of created child, or -1 if allocation fails
+     */
+    int32_t add_child(int32_t parent_idx, uint16_t move, float prior_prob, uint64_t zobrist_hash);
+
+    /**
+     * @brief Expand a node by adding all legal children
+     *
+     * Creates child nodes for all legal moves with their prior probabilities.
+     * This is the typical MCTS expansion operation after neural network inference.
+     *
+     * @param parent_idx Parent node to expand
+     * @param moves Array of legal moves (uint16_t action indices)
+     * @param priors Array of prior probabilities (must sum to ~1.0)
+     * @param zobrist_hashes Array of zobrist hashes for each child position
+     * @param num_children Number of children to add
+     * @return true if all children added successfully, false if allocation fails
+     */
+    bool expand_node(int32_t parent_idx, const uint16_t* moves, const float* priors,
+                     const uint64_t* zobrist_hashes, size_t num_children);
+
+    /**
+     * @brief Get number of children for a node
+     *
+     * Counts children by iterating the sibling-linked list.
+     * O(n) where n = number of children (typically small, <100).
+     *
+     * @param parent_idx Parent node index
+     * @return Number of children
+     */
+    size_t get_child_count(int32_t parent_idx) const;
+
+    /**
+     * @brief Iterate children and call a function for each
+     *
+     * Template function that calls visitor(child_idx) for each child.
+     * Useful for PUCT selection, value backup, etc.
+     *
+     * Example:
+     *   tree.for_each_child(parent_idx, [&](int32_t child_idx) {
+     *       TinyNode* child = tree.get_node(child_idx);
+     *       // ... process child ...
+     *   });
+     *
+     * @param parent_idx Parent node index
+     * @param visitor Function to call for each child (receives child_idx)
+     */
+    template<typename Visitor>
+    void for_each_child(int32_t parent_idx, Visitor&& visitor) const {
+        if (!is_valid_index(parent_idx)) {
+            return;
+        }
+
+        const TinyNode* parent = get_node(parent_idx);
+        int32_t child_idx = static_cast<int32_t>(parent->first_child_idx);
+
+        while (child_idx != 0) {
+            visitor(child_idx);
+
+            const TinyNode* child = get_node(child_idx);
+            child_idx = static_cast<int32_t>(child->next_sibling_idx);
+        }
+    }
+
+    /**
+     * @brief Get all child indices as a vector
+     *
+     * Convenience method that collects all children into a vector.
+     * Less efficient than for_each_child for iteration.
+     *
+     * @param parent_idx Parent node index
+     * @return Vector of child indices
+     */
+    std::vector<int32_t> get_children(int32_t parent_idx) const;
+
 private:
     // Maximum capacity
     std::size_t max_nodes_;

@@ -201,4 +201,94 @@ bool TinyNodeTree::validate() const {
     return true;
 }
 
+// ====== Child Management (T024f-2) ======
+
+int32_t TinyNodeTree::add_child(int32_t parent_idx, uint16_t move, float prior_prob, uint64_t zobrist_hash) {
+    if (!is_valid_index(parent_idx)) {
+        return -1;  // Invalid parent
+    }
+
+    // Allocate new child node (calls init_node which zeros all fields)
+    int32_t child_idx = allocate_node();
+    if (child_idx < 0) {
+        return -1;  // Allocation failed
+    }
+
+    // Get nodes (child is already zero-initialized by allocate_node -> init_node)
+    TinyNode* child = &nodes_[child_idx];
+    TinyNode* parent = &nodes_[parent_idx];
+
+    // Set child-specific fields (other fields already zero from init_node)
+    child->move = move;
+    child->parent_idx = static_cast<uint32_t>(parent_idx);
+    child->zobrist_hash = zobrist_hash;
+    child->prior_scaled = static_cast<uint16_t>(prior_prob * TinyNode::PRIOR_SCALE);
+
+    // Link child into parent's sibling list (add to front for O(1))
+    // Note: child->next_sibling_idx is already 0 from init_node
+    child->next_sibling_idx = parent->first_child_idx;
+    parent->first_child_idx = static_cast<uint32_t>(child_idx);
+
+    // Mark parent as expanded (has children)
+    parent->set_expanded();
+
+    return child_idx;
+}
+
+bool TinyNodeTree::expand_node(int32_t parent_idx, const uint16_t* moves, const float* priors,
+                                const uint64_t* zobrist_hashes, size_t num_children) {
+    if (!is_valid_index(parent_idx)) {
+        return false;
+    }
+
+    if (num_children == 0) {
+        return true;  // Nothing to do
+    }
+
+    // Check if we have space
+    if (!has_space_for(num_children)) {
+        return false;
+    }
+
+    // Add all children
+    for (size_t i = 0; i < num_children; ++i) {
+        int32_t child_idx = add_child(parent_idx, moves[i], priors[i], zobrist_hashes[i]);
+        if (child_idx < 0) {
+            // Allocation failed partway through - this is a partial failure
+            // Children already added are still in the tree
+            return false;
+        }
+    }
+
+    return true;
+}
+
+size_t TinyNodeTree::get_child_count(int32_t parent_idx) const {
+    if (!is_valid_index(parent_idx)) {
+        return 0;
+    }
+
+    const TinyNode* parent = get_node(parent_idx);
+    size_t count = 0;
+
+    int32_t child_idx = static_cast<int32_t>(parent->first_child_idx);
+    while (child_idx != 0) {
+        ++count;
+        const TinyNode* child = get_node(child_idx);
+        child_idx = static_cast<int32_t>(child->next_sibling_idx);
+    }
+
+    return count;
+}
+
+std::vector<int32_t> TinyNodeTree::get_children(int32_t parent_idx) const {
+    std::vector<int32_t> children;
+
+    for_each_child(parent_idx, [&children](int32_t child_idx) {
+        children.push_back(child_idx);
+    });
+
+    return children;
+}
+
 } // namespace mcts

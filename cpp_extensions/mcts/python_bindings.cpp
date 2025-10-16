@@ -1294,7 +1294,80 @@ PYBIND11_MODULE(mcts_py, m) {
         .def("validate", &TinyNodeTree::validate,
              "Validate tree structure and constraints\n\n"
              "Returns:\n"
-             "    bool: True if tree is valid");
+             "    bool: True if tree is valid")
+        // Child management (T024f-2)
+        .def("add_child", &TinyNodeTree::add_child,
+             py::arg("parent_idx"),
+             py::arg("move"),
+             py::arg("prior_prob"),
+             py::arg("zobrist_hash"),
+             NoGil(),
+             "Add a child node to a parent\n\n"
+             "Args:\n"
+             "    parent_idx: Parent node index\n"
+             "    move: Move that leads to this child (uint16_t)\n"
+             "    prior_prob: Prior probability (0.0-1.0)\n"
+             "    zobrist_hash: Zobrist hash for child position\n\n"
+             "Returns:\n"
+             "    int: Child index, or -1 if allocation fails")
+        .def("expand_node",
+             [](TinyNodeTree& tree, int32_t parent_idx, py::array_t<uint16_t> moves,
+                py::array_t<float> priors, py::array_t<uint64_t> zobrist_hashes) -> bool {
+                 // Get numpy array buffers (WITH GIL - required for numpy access)
+                 auto moves_buf = moves.request();
+                 auto priors_buf = priors.request();
+                 auto zobrist_buf = zobrist_hashes.request();
+
+                 if (moves_buf.ndim != 1 || priors_buf.ndim != 1 || zobrist_buf.ndim != 1) {
+                     throw std::runtime_error("All arrays must be 1-dimensional");
+                 }
+
+                 size_t num_children = static_cast<size_t>(moves_buf.shape[0]);
+                 if (static_cast<size_t>(priors_buf.shape[0]) != num_children ||
+                     static_cast<size_t>(zobrist_buf.shape[0]) != num_children) {
+                     throw std::runtime_error("All arrays must have the same length");
+                 }
+
+                 // Now release GIL for the actual tree expansion
+                 bool result;
+                 {
+                     py::gil_scoped_release release;
+                     result = tree.expand_node(
+                         parent_idx,
+                         static_cast<uint16_t*>(moves_buf.ptr),
+                         static_cast<float*>(priors_buf.ptr),
+                         static_cast<uint64_t*>(zobrist_buf.ptr),
+                         num_children
+                     );
+                 }
+                 return result;
+             },
+             py::arg("parent_idx"),
+             py::arg("moves"),
+             py::arg("priors"),
+             py::arg("zobrist_hashes"),
+             "Expand a node by adding all legal children\n\n"
+             "Args:\n"
+             "    parent_idx: Parent node index\n"
+             "    moves: Numpy array of moves (uint16_t)\n"
+             "    priors: Numpy array of prior probabilities (float)\n"
+             "    zobrist_hashes: Numpy array of zobrist hashes (uint64_t)\n\n"
+             "Returns:\n"
+             "    bool: True if all children added successfully")
+        .def("get_child_count", &TinyNodeTree::get_child_count,
+             py::arg("parent_idx"),
+             "Get number of children for a node\n\n"
+             "Args:\n"
+             "    parent_idx: Parent node index\n\n"
+             "Returns:\n"
+             "    int: Number of children")
+        .def("get_children", &TinyNodeTree::get_children,
+             py::arg("parent_idx"),
+             "Get all child indices as a list\n\n"
+             "Args:\n"
+             "    parent_idx: Parent node index\n\n"
+             "Returns:\n"
+             "    list[int]: List of child indices");
 }
 
 } // namespace python

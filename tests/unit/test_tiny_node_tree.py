@@ -412,5 +412,222 @@ class TestTinyNodeTreePerformance:
             f"Allocation time increased significantly: {time_first_1000:.6f}s -> {time_second_1000:.6f}s"
 
 
+class TestTinyNodeTreeChildManagement:
+    """Test child management with sibling linking (T024f-2)"""
+
+    def test_add_single_child(self):
+        """Test adding a single child to a node"""
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        # Add child to root
+        child_idx = tree.add_child(
+            parent_idx=0,
+            move=42,
+            prior_prob=0.5,
+            zobrist_hash=0xABCDEF
+        )
+
+        assert child_idx > 0  # Child allocated
+        assert tree.get_child_count(0) == 1  # Root has 1 child
+
+        # Verify child properties
+        child = tree.get_node(child_idx)
+        assert child is not None
+        assert child.move == 42
+        assert child.parent_idx == 0
+        assert child.zobrist_hash == 0xABCDEF
+        assert abs(child.get_prior() - 0.5) < 0.001  # Scaled prior
+
+        # Verify root is marked as expanded
+        root = tree.get_node(0)
+        assert root.is_expanded()
+
+    def test_add_multiple_children(self):
+        """Test adding multiple children to a node"""
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        # Add 5 children
+        child_indices = []
+        for i in range(5):
+            child_idx = tree.add_child(
+                parent_idx=0,
+                move=i,
+                prior_prob=0.2,
+                zobrist_hash=0x1000 + i
+            )
+            assert child_idx > 0
+            child_indices.append(child_idx)
+
+        # Verify child count
+        assert tree.get_child_count(0) == 5
+
+        # Verify all children are unique
+        assert len(set(child_indices)) == 5
+
+    def test_get_children_list(self):
+        """Test getting children as a list"""
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        # Add children
+        expected_indices = []
+        for i in range(3):
+            child_idx = tree.add_child(0, i, 0.33, 0x1000 + i)
+            expected_indices.append(child_idx)
+
+        # Get children list
+        children = tree.get_children(0)
+        assert len(children) == 3
+
+        # Children are added to front of list (reverse order)
+        assert set(children) == set(expected_indices)
+
+    def test_expand_node_with_numpy_arrays(self):
+        """Test expand_node with numpy arrays"""
+        import numpy as np
+
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        # Prepare expansion data
+        num_children = 10
+        moves = np.arange(num_children, dtype=np.uint16)
+        priors = np.full(num_children, 1.0 / num_children, dtype=np.float32)
+        zobrist_hashes = np.arange(0x1000, 0x1000 + num_children, dtype=np.uint64)
+
+        # Expand root
+        success = tree.expand_node(0, moves, priors, zobrist_hashes)
+        assert success
+
+        # Verify expansion
+        assert tree.get_child_count(0) == num_children
+        assert tree.get_node(0).is_expanded()
+
+        # Verify each child
+        children = tree.get_children(0)
+        assert len(children) == num_children
+
+        for child_idx in children:
+            child = tree.get_node(child_idx)
+            assert child.parent_idx == 0
+            assert child.move < num_children
+            assert abs(child.get_prior() - 0.1) < 0.01  # ~0.1 prior
+
+    def test_expand_node_empty(self):
+        """Test expand_node with zero children"""
+        import numpy as np
+
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        # Empty arrays
+        moves = np.array([], dtype=np.uint16)
+        priors = np.array([], dtype=np.float32)
+        zobrist_hashes = np.array([], dtype=np.uint64)
+
+        # Should succeed (no-op)
+        success = tree.expand_node(0, moves, priors, zobrist_hashes)
+        assert success
+        assert tree.get_child_count(0) == 0
+
+    def test_expand_node_capacity_exceeded(self):
+        """Test expand_node when capacity exceeded"""
+        import numpy as np
+
+        tree = mcts_py.TinyNodeTree(10)  # Small capacity
+        tree.init_root(0x12345)
+
+        # Try to expand with 20 children (exceeds capacity)
+        moves = np.arange(20, dtype=np.uint16)
+        priors = np.full(20, 0.05, dtype=np.float32)
+        zobrist_hashes = np.arange(0x1000, 0x1000 + 20, dtype=np.uint64)
+
+        # Should fail (partial expansion might occur)
+        success = tree.expand_node(0, moves, priors, zobrist_hashes)
+        assert not success
+
+    def test_child_iteration_order(self):
+        """Test that children maintain consistent iteration order"""
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        # Add children in order
+        for i in range(5):
+            tree.add_child(0, i, 0.2, 0x1000 + i)
+
+        # Get children multiple times
+        children1 = tree.get_children(0)
+        children2 = tree.get_children(0)
+
+        # Order should be consistent
+        assert children1 == children2
+
+    def test_nested_expansion(self):
+        """Test expanding grandchildren"""
+        import numpy as np
+
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        # Expand root
+        root_moves = np.array([0, 1, 2], dtype=np.uint16)
+        root_priors = np.array([0.3, 0.4, 0.3], dtype=np.float32)
+        root_hashes = np.array([0x1000, 0x1001, 0x1002], dtype=np.uint64)
+        tree.expand_node(0, root_moves, root_priors, root_hashes)
+
+        root_children = tree.get_children(0)
+        assert len(root_children) == 3
+
+        # Expand first child
+        child0 = root_children[0]
+        child_moves = np.array([10, 11], dtype=np.uint16)
+        child_priors = np.array([0.6, 0.4], dtype=np.float32)
+        child_hashes = np.array([0x2000, 0x2001], dtype=np.uint64)
+        tree.expand_node(child0, child_moves, child_priors, child_hashes)
+
+        # Verify grandchildren
+        assert tree.get_child_count(child0) == 2
+        grandchildren = tree.get_children(child0)
+        assert len(grandchildren) == 2
+
+        # Verify parent relationships
+        for gc_idx in grandchildren:
+            gc = tree.get_node(gc_idx)
+            assert gc.parent_idx == child0
+
+    def test_child_count_empty(self):
+        """Test get_child_count on node with no children"""
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        # Root has no children initially
+        assert tree.get_child_count(0) == 0
+
+    def test_validate_with_children(self):
+        """Test tree validation with child structure"""
+        import numpy as np
+
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        # Build tree: root -> 3 children -> each child has 2 grandchildren
+        for i in range(3):
+            child_idx = tree.add_child(0, i, 0.33, 0x1000 + i)
+
+            # Add grandchildren
+            for j in range(2):
+                tree.add_child(child_idx, j, 0.5, 0x2000 + i * 10 + j)
+
+        # Should validate successfully
+        assert tree.validate()
+
+        # Verify structure
+        assert tree.get_child_count(0) == 3
+        for child_idx in tree.get_children(0):
+            assert tree.get_child_count(child_idx) == 2
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
