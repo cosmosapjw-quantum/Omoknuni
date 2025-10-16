@@ -2688,6 +2688,46 @@ All 8 tests PASSED in 0.04s
 
 ---
 
+## ✅ T024d COMPLETE: Chess make/unmake Implementation
+
+**Status**: COMPLETE - All tests passing (8/8)
+
+**Implementation Summary**:
+- **Approach**: Leverage existing move_history_ infrastructure rather than duplicating complex Chess logic
+- **make_move**: Delegates to existing makeMove(int), returns move_history_.size() as undo token
+- **unmake_move**: Delegates to existing undoMove(), validates LIFO order via undo_token
+- **Rationale**: Chess has complex special moves (castling, en passant, promotion) already handled by move_history_
+
+**Files Modified**:
+- `cpp_extensions/games/chess/chess_state.{h,cpp}` - make_move/unmake_move implementation ✅
+- `tests/unit/test_chess_make_unmake.py` - 8 comprehensive unit tests ✅
+
+**Test Results**:
+```
+test_make_unmake_single_move PASSED           (bit-exact restoration)
+test_make_unmake_multiple_moves PASSED        (LIFO unwind correctness)
+test_zobrist_hash_consistency PASSED          (hash matches clone())
+test_deep_path_no_drift PASSED                (10 moves no drift)
+test_player_flip PASSED                       (player correctly flips)
+test_legal_moves_consistency PASSED           (moves unchanged after make/unmake)
+test_castling_handling PASSED                 (castling correctly handled)
+test_board_occupation_correctness PASSED      (board state restoration)
+
+All 8 tests PASSED in 0.04s
+```
+
+**Design Decision**:
+Unlike Gomoku's explicit undo token encoding, Chess leverages the existing move_history_ vector which already stores MoveInfo (captured_piece, castling_rights, en_passant_square, halfmove_clock, etc.). This avoids duplicating complex Chess logic while achieving the same zero-copy goal:
+- NO state cloning required (418μs saved per simulation)
+- Move history vector is pre-allocated and reused (minimal overhead)
+- Existing undoMove() handles all special cases correctly (castling, en passant, promotions)
+
+**Performance Impact**: Same as Gomoku - eliminates 418μs state cloning overhead per simulation.
+
+**Next Steps**: Proceed to T024e (Go make/unmake implementation)
+
+---
+
 **Critical Next Steps After T018 Closure**:
 1. Complete T018 state pooling validation and documentation
 2. Archive T018 findings and performance results

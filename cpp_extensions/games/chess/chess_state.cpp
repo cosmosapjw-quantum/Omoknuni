@@ -1411,6 +1411,33 @@ void ChessState::makeMove(const ChessMove& move) {
     invalidateCache();
 }
 
+// T024d: Zero-copy make/unmake implementation for Chess
+uint64_t ChessState::make_move(uint16_t action) {
+    // Apply move using existing makeMove(int) which stores MoveInfo in move_history_
+    // This leverages existing infrastructure rather than duplicating complex Chess logic
+    makeMove(static_cast<int>(action));
+
+    // The undo token is not strictly needed since unmake_move uses move_history_,
+    // but we return it for API consistency. In a future optimization, we could
+    // encode the move_history_ size to detect mismatches.
+    // For now, return a dummy token (move_history_ size is sufficient)
+    return static_cast<uint64_t>(move_history_.size());
+}
+
+void ChessState::unmake_move(uint16_t action, uint64_t undo_token) {
+    // Use existing undoMove() which handles all Chess-specific logic
+    // (castling, en passant, promotions, position history, etc.)
+    if (!undoMove()) {
+        throw std::runtime_error("Chess unmake_move: no move to undo");
+    }
+
+    // Verify undo_token matches expected move_history_ size for correctness
+    // After undoing, size should be undo_token - 1
+    if (move_history_.size() != undo_token - 1) {
+        throw std::runtime_error("Chess unmake_move: move history size mismatch (LIFO violation)");
+    }
+}
+
 // Position handling for repetition detection
 void ChessState::recordPosition() {
     uint64_t posHash = getHash();
