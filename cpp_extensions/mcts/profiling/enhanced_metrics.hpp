@@ -212,8 +212,69 @@ enum class ProfileMetric : uint16_t {
     CacheEfficiency,
     MemoryEfficiency,
 
+    // === EXTENDED METRICS FOR BOTTLENECK ANALYSIS (240-299) ===
+    // Based on review.txt bottleneck analysis and profiling gap analysis
+
+    // State Management (240-249) - CRITICAL from review.txt lines 37-54
+    StateCloneStart = 240,
+    StateCloneTotal,
+    StateCloneCount,
+    StateCloneBytes,
+    StatePoolHit,
+    StatePoolMiss,
+    StatePoolAllocation,
+    StateCopyFrom,
+    StateDestructorTime,
+
+    // Feature Extraction (250-259) - CRITICAL from review.txt lines 22-34
+    FeatureExtractionTotal = 250,
+    FeatureExtractionPerState,
+    FeatureExtractionOpenMP,
+    FeatureExtractionSerial,
+    OMP_ThreadCount,
+    OMP_WorkDistribution,
+    OMP_BarrierWait,
+    TensorCreationOverhead,
+
+    // Thread Idle Time (260-269) - CRITICAL from review.txt lines 71-136
+    ThreadIdleTotal = 260,
+    ThreadWaitingForResults,
+    ThreadSleepCycles,
+    ThreadSpinWaitCycles,
+    ThreadYieldCount,
+    ThreadBlockedOnMutex,
+    ThreadBlockedOnCondVar,
+    ThreadBlockedOnAtomic,
+
+    // Synchronization Contention (270-279) - HIGH from review.txt lines 225-236
+    MutexLockWaitTime = 270,
+    MutexContentionEvents,
+    CAS_SuccessCount,
+    CAS_FailureCount,
+    CAS_RetryCount,
+    CAS_MaxRetriesPerOp,
+    AtomicLoadStalls,
+    AtomicStoreStalls,
+
+    // Allocation Contention (280-284) - HIGH from review.txt
+    AllocationMutexWait = 280,
+    AllocationFastPath,
+    AllocationSlowPath,
+    AllocationContentionRatio,
+
+    // Python Bridge (285-294) - HIGH from review.txt lines 258-307
+    PythonCallbackEntry = 285,
+    PythonCallbackExit,
+    PythonCallbackTotal,
+    GIL_AcquisitionTime,
+    GIL_HoldTime,
+    GIL_ReleaseTime,
+    PythonObjectCreation,
+    PythonObjectDestruction,
+    DLPackCapsuleCreation,
+
     // Sentinel
-    MetricCount = 240
+    MetricCount = 295
 };
 
 /**
@@ -298,6 +359,112 @@ constexpr MetricMetadata get_metric_metadata(ProfileMetric metric) {
             return {"sims_per_sec", "Simulations per second", MetricType::Gauge, MetricCategory::Pipeline, "sims/s", true};
         case ProfileMetric::ParallelEfficiency:
             return {"parallel_efficiency", "Parallel execution efficiency", MetricType::Gauge, MetricCategory::Thread, "%", true};
+
+        // === Extended Metrics for Bottleneck Analysis ===
+
+        // State Management (review.txt lines 37-54)
+        case ProfileMetric::StateCloneStart:
+            return {"state_clone_start", "State clone start timestamp", MetricType::Timer, MetricCategory::Memory, "ns", false};
+        case ProfileMetric::StateCloneTotal:
+            return {"state_clone_total", "Total state cloning time", MetricType::Timer, MetricCategory::Memory, "ns", false};
+        case ProfileMetric::StateCloneCount:
+            return {"state_clone_count", "Number of state clones", MetricType::Counter, MetricCategory::Memory, "count", false};
+        case ProfileMetric::StateCloneBytes:
+            return {"state_clone_bytes", "Bytes cloned per state", MetricType::Gauge, MetricCategory::Memory, "bytes", false};
+        case ProfileMetric::StatePoolHit:
+            return {"state_pool_hit", "State pool cache hits", MetricType::Counter, MetricCategory::Memory, "count", false};
+        case ProfileMetric::StatePoolMiss:
+            return {"state_pool_miss", "State pool cache misses", MetricType::Counter, MetricCategory::Memory, "count", false};
+        case ProfileMetric::StatePoolAllocation:
+            return {"state_pool_alloc", "State pool allocations", MetricType::Counter, MetricCategory::Memory, "count", false};
+        case ProfileMetric::StateCopyFrom:
+            return {"state_copy_from", "State copy_from() calls", MetricType::Counter, MetricCategory::Memory, "count", false};
+        case ProfileMetric::StateDestructorTime:
+            return {"state_destructor", "State destructor time", MetricType::Timer, MetricCategory::Memory, "ns", false};
+
+        // Feature Extraction (review.txt lines 22-34)
+        case ProfileMetric::FeatureExtractionTotal:
+            return {"feature_extract_total", "Total feature extraction time", MetricType::Timer, MetricCategory::GPU, "ns", false};
+        case ProfileMetric::FeatureExtractionPerState:
+            return {"feature_extract_per_state", "Per-state extraction time", MetricType::Timer, MetricCategory::GPU, "ns", false};
+        case ProfileMetric::FeatureExtractionOpenMP:
+            return {"feature_extract_omp", "OpenMP parallelized extraction", MetricType::Counter, MetricCategory::GPU, "bool", false};
+        case ProfileMetric::FeatureExtractionSerial:
+            return {"feature_extract_serial", "Serial extraction time", MetricType::Timer, MetricCategory::GPU, "ns", false};
+        case ProfileMetric::OMP_ThreadCount:
+            return {"omp_thread_count", "OpenMP thread count", MetricType::Gauge, MetricCategory::Thread, "count", false};
+        case ProfileMetric::OMP_WorkDistribution:
+            return {"omp_work_dist", "OpenMP work distribution variance", MetricType::Gauge, MetricCategory::Thread, "%", false};
+        case ProfileMetric::OMP_BarrierWait:
+            return {"omp_barrier_wait", "OpenMP barrier wait time", MetricType::Timer, MetricCategory::Thread, "ns", false};
+        case ProfileMetric::TensorCreationOverhead:
+            return {"tensor_creation_overhead", "DLPack tensor creation time", MetricType::Timer, MetricCategory::GPU, "ns", false};
+
+        // Thread Idle Time (review.txt lines 71-136)
+        case ProfileMetric::ThreadIdleTotal:
+            return {"thread_idle_total", "Total thread idle time", MetricType::Timer, MetricCategory::Thread, "ns", false};
+        case ProfileMetric::ThreadWaitingForResults:
+            return {"thread_wait_results", "Thread waiting for inference results", MetricType::Timer, MetricCategory::Thread, "ns", false};
+        case ProfileMetric::ThreadSleepCycles:
+            return {"thread_sleep_cycles", "Thread sleep cycles", MetricType::Timer, MetricCategory::Thread, "ns", false};
+        case ProfileMetric::ThreadSpinWaitCycles:
+            return {"thread_spin_wait", "Thread spin-wait cycles", MetricType::Timer, MetricCategory::Thread, "ns", false};
+        case ProfileMetric::ThreadYieldCount:
+            return {"thread_yield_count", "Thread yield count", MetricType::Counter, MetricCategory::Thread, "count", false};
+        case ProfileMetric::ThreadBlockedOnMutex:
+            return {"thread_blocked_mutex", "Thread blocked on mutex", MetricType::Timer, MetricCategory::Synchronization, "ns", false};
+        case ProfileMetric::ThreadBlockedOnCondVar:
+            return {"thread_blocked_condvar", "Thread blocked on condition variable", MetricType::Timer, MetricCategory::Synchronization, "ns", false};
+        case ProfileMetric::ThreadBlockedOnAtomic:
+            return {"thread_blocked_atomic", "Thread blocked on atomic operation", MetricType::Timer, MetricCategory::Synchronization, "ns", false};
+
+        // Synchronization Contention (review.txt lines 225-236)
+        case ProfileMetric::MutexLockWaitTime:
+            return {"mutex_lock_wait", "Mutex lock wait time", MetricType::Timer, MetricCategory::Synchronization, "ns", false};
+        case ProfileMetric::MutexContentionEvents:
+            return {"mutex_contention", "Mutex contention events", MetricType::Counter, MetricCategory::Synchronization, "count", false};
+        case ProfileMetric::CAS_SuccessCount:
+            return {"cas_success", "CAS operations succeeded", MetricType::Counter, MetricCategory::Synchronization, "count", false};
+        case ProfileMetric::CAS_FailureCount:
+            return {"cas_failure", "CAS operations failed", MetricType::Counter, MetricCategory::Synchronization, "count", false};
+        case ProfileMetric::CAS_RetryCount:
+            return {"cas_retry", "CAS retry count", MetricType::Counter, MetricCategory::Synchronization, "count", false};
+        case ProfileMetric::CAS_MaxRetriesPerOp:
+            return {"cas_max_retries", "CAS max retries per operation", MetricType::Gauge, MetricCategory::Synchronization, "count", false};
+        case ProfileMetric::AtomicLoadStalls:
+            return {"atomic_load_stalls", "Atomic load stalls", MetricType::Counter, MetricCategory::Synchronization, "count", false};
+        case ProfileMetric::AtomicStoreStalls:
+            return {"atomic_store_stalls", "Atomic store stalls", MetricType::Counter, MetricCategory::Synchronization, "count", false};
+
+        // Allocation Contention (review.txt)
+        case ProfileMetric::AllocationMutexWait:
+            return {"alloc_mutex_wait", "Allocation mutex wait time", MetricType::Timer, MetricCategory::Memory, "ns", false};
+        case ProfileMetric::AllocationFastPath:
+            return {"alloc_fast_path", "Fast path allocations (thread-local)", MetricType::Counter, MetricCategory::Memory, "count", false};
+        case ProfileMetric::AllocationSlowPath:
+            return {"alloc_slow_path", "Slow path allocations (global mutex)", MetricType::Counter, MetricCategory::Memory, "count", false};
+        case ProfileMetric::AllocationContentionRatio:
+            return {"alloc_contention_ratio", "Allocation contention ratio", MetricType::Gauge, MetricCategory::Memory, "%", true};
+
+        // Python Bridge (review.txt lines 258-307)
+        case ProfileMetric::PythonCallbackEntry:
+            return {"python_callback_entry", "Python callback entry count", MetricType::Counter, MetricCategory::GPU, "count", false};
+        case ProfileMetric::PythonCallbackExit:
+            return {"python_callback_exit", "Python callback exit count", MetricType::Counter, MetricCategory::GPU, "count", false};
+        case ProfileMetric::PythonCallbackTotal:
+            return {"python_callback_total", "Total Python callback time", MetricType::Timer, MetricCategory::GPU, "ns", false};
+        case ProfileMetric::GIL_AcquisitionTime:
+            return {"gil_acquire_time", "GIL acquisition time", MetricType::Timer, MetricCategory::GPU, "ns", false};
+        case ProfileMetric::GIL_HoldTime:
+            return {"gil_hold_time", "GIL hold time", MetricType::Timer, MetricCategory::GPU, "ns", false};
+        case ProfileMetric::GIL_ReleaseTime:
+            return {"gil_release_time", "GIL release time", MetricType::Timer, MetricCategory::GPU, "ns", false};
+        case ProfileMetric::PythonObjectCreation:
+            return {"py_object_creation", "Python object creation count", MetricType::Counter, MetricCategory::GPU, "count", false};
+        case ProfileMetric::PythonObjectDestruction:
+            return {"py_object_destruction", "Python object destruction count", MetricType::Counter, MetricCategory::GPU, "count", false};
+        case ProfileMetric::DLPackCapsuleCreation:
+            return {"dlpack_capsule_creation", "DLPack capsule creation time", MetricType::Timer, MetricCategory::GPU, "ns", false};
 
         default:
             return {"unknown", "Unknown metric", MetricType::Counter, MetricCategory::Selection, "?", false};

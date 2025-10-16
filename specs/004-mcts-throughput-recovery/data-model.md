@@ -77,11 +77,13 @@ public:
 
 Zero-copy tensor bridge between C++ and Python using DLPack protocol.
 
-**⚠️ CRITICAL PERFORMANCE NOTE (2025-10-13):**
-- Feature extraction loop currently NOT parallelized with OpenMP
-- Measured overhead: 7.5ms per batch-64 (T-VALID-2)
-- Required fix: Add `#pragma omp parallel for` to `dlpack_bridge.cpp:431-434`
-- Expected improvement: 7.5ms → <1.0ms with 12-thread parallelization
+**⚠️ PERFORMANCE NOTE (2025-10-16 - Profiling-Validated):**
+- Feature extraction loop: OpenMP NOT active (0/560 trials in profiling campaign)
+- OpenMP benchmark: 8.64ms → 1.57ms @ 12 threads ✅ WORKING when active
+- Current impact: Secondary bottleneck (state cloning is 86.6% of time, GPU inference 2.1%)
+- Priority: Low (state pooling alone achieves 8k target via T018)
+- Investigation: T019 (optional enhancement for 14k+ stretch goal)
+- Note: Feature extraction overhead amortized across batches, not per-simulation
 
 ```cpp
 class DLPackTensorBridge {

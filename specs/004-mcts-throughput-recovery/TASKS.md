@@ -1,0 +1,2121 @@
+# Task Breakdown: MCTS Throughput Recovery
+# Dependency-Ordered Implementation Tasks
+
+**Version**: 1.0
+**Status**: ACTIVE - Authoritative Task Breakdown
+**Last Updated**: 2025-10-16
+**Profiling Campaign**: profiling_suite_20251016_124134 (560 trials, 100% capture)
+**Authority**: Implements TECHNICAL_PLAN.md v1.0 | spec.md v3.0 | CONSTITUTION.md v3.0
+
+---
+
+## Document Purpose
+
+This task breakdown provides the **WHAT TO DO** - actionable tasks with acceptance criteria, test commands, and dependencies. All tasks are grounded in production profiling evidence.
+
+**Authority Chain**:
+1. **CONSTITUTION.md v3.0** - Non-negotiable constraints
+2. **FINAL_PROFILING_ANALYSIS_20251016.md** - Profiling evidence (560 trials)
+3. **spec.md v3.0** - Functional requirements (WHAT to achieve)
+4. **TECHNICAL_PLAN.md v1.0** - Implementation design (HOW to implement)
+5. **This TASKS.md** - Task breakdown (WHAT to do, HOW to validate)
+
+---
+
+## Table of Contents
+
+1. [Task Overview & Dependencies](#1-task-overview--dependencies)
+2. [Phase 1: State Pooling Implementation (CRITICAL)](#2-phase-1-state-pooling-implementation-critical)
+3. [Phase 2: OpenMP Investigation (OPTIONAL)](#3-phase-2-openmp-investigation-optional)
+4. [Phase 3: Memory Allocation Optimization (REFINEMENT)](#4-phase-3-memory-allocation-optimization-refinement)
+5. [Phase 4: Validation & Documentation](#5-phase-4-validation--documentation)
+6. [Appendix: Quick Reference](#6-appendix-quick-reference)
+
+---
+
+## 1. Task Overview & Dependencies
+
+### 1.1 Task Dependency Graph
+
+```
+Critical Path (Days 1-3):
+┌──────────────────────────────────────────────────────────┐
+│ T018a: IGameState::copyFrom() API Design                │
+│ Effort: 4 hours | Can parallelize: NO                   │
+└────────────┬─────────────────────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────────────────────┐
+│ T018b: ThreadLocalStatePool Implementation               │
+│ Effort: 1 day | Can parallelize: NO (depends on T018a)  │
+└────────────┬─────────────────────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────────────────────┐
+│ T018c: GomokuState::copyFrom() Implementation            │
+│ Effort: 4 hours | Can parallelize: YES (with T018d/e)   │
+└────────────┬─────────────────────────────────────────────┘
+             │
+             ├──────────┬──────────┬──────────────────────┐
+             ▼          ▼          ▼                      │
+     ┌──────────┐ ┌──────────┐ ┌──────────┐              │
+     │ T018d:   │ │ T018e:   │ │ T018f:   │              │
+     │ Chess    │ │ Go       │ │ Pool     │              │
+     │ copyFrom │ │ copyFrom │ │ Unit Tests│             │
+     └──────────┘ └──────────┘ └────┬─────┘              │
+                                     │                    │
+                                     ▼                    │
+             ┌──────────────────────────────────────────┐ │
+             │ T018g: Integration into SimRunner        │◄┘
+             │ Effort: 6 hours | Can parallelize: NO    │
+             └────────────┬─────────────────────────────┘
+                          │
+                          ▼
+             ┌──────────────────────────────────────────┐
+             │ T018h: Profiling Validation              │
+             │ Effort: 4 hours | Can parallelize: NO    │
+             └────────────┬─────────────────────────────┘
+                          │
+                          ▼
+             ┌──────────────────────────────────────────┐
+             │ T018i: Performance Benchmarking          │
+             │ Effort: 2 hours | Can parallelize: NO    │
+             └──────────────────────────────────────────┘
+
+Optional Enhancement (Days 4-5):
+┌──────────────────────────────────────────────────────────┐
+│ T019a: OpenMP Linkage Verification                      │
+│ Effort: 2 hours | Can parallelize: YES                  │
+└────────────┬─────────────────────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────────────────────┐
+│ T019b: OpenMP Instrumentation & Rebuild                 │
+│ Effort: 4 hours | Can parallelize: NO                   │
+└────────────┬─────────────────────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────────────────────┐
+│ T019c: OpenMP Validation & Thread Scaling               │
+│ Effort: 2 hours | Can parallelize: NO                   │
+└──────────────────────────────────────────────────────────┘
+
+Refinement (Days 7-8 - AFTER T018 Complete):
+┌──────────────────────────────────────────────────────────┐
+│ T020a: Arena Expansion Design                           │
+│ Effort: 4 hours | Can parallelize: YES                  │
+└────────────┬─────────────────────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────────────────────┐
+│ T020b: Enhanced Arena Implementation                    │
+│ Effort: 1 day | Can parallelize: NO                     │
+└────────────┬─────────────────────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────────────────────┐
+│ T020c: Allocation Profiling & Validation                │
+│ Effort: 4 hours | Can parallelize: NO                   │
+└──────────────────────────────────────────────────────────┘
+
+Final Validation (Day 9-10):
+┌──────────────────────────────────────────────────────────┐
+│ T021: Comprehensive Profiling Campaign                  │
+│ Effort: 1 day | Can parallelize: NO                     │
+└────────────┬─────────────────────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────────────────────┐
+│ T022: Documentation & Handoff                           │
+│ Effort: 4 hours | Can parallelize: YES                  │
+└──────────────────────────────────────────────────────────┘
+```
+
+### 1.2 Task Summary Table
+
+| Task ID | Description | Effort | Dependencies | Parallelizable | Priority |
+|---------|-------------|--------|--------------|----------------|----------|
+| **T018a** | IGameState::copyFrom() API Design | 4h | None | NO | 🔴 CRITICAL |
+| **T018b** | ThreadLocalStatePool Implementation | 1d | T018a | NO | 🔴 CRITICAL |
+| **T018c** | GomokuState::copyFrom() Implementation | 4h | T018a | YES | 🔴 CRITICAL |
+| **T018d** | ChessState::copyFrom() Implementation | 4h | T018a | YES | 🔴 CRITICAL |
+| **T018e** | GoState::copyFrom() Implementation | 4h | T018a | YES | 🔴 CRITICAL |
+| **T018f** | State Pool Unit Tests | 4h | T018b,c | NO | 🔴 CRITICAL |
+| **T018g** | SimRunner Integration | 6h | T018b,c,f | NO | 🔴 CRITICAL |
+| **T018h** | Profiling Validation | 4h | T018g | NO | 🔴 CRITICAL |
+| **T018i** | Performance Benchmarking | 2h | T018h | NO | 🔴 CRITICAL |
+| **T019a** | OpenMP Linkage Verification | 2h | None | YES | 🟠 OPTIONAL |
+| **T019b** | OpenMP Instrumentation & Rebuild | 4h | T019a | NO | 🟠 OPTIONAL |
+| **T019c** | OpenMP Validation & Scaling | 2h | T019b | NO | 🟠 OPTIONAL |
+| **T020a** | Arena Expansion Design | 4h | T018i | YES | 🟡 REFINEMENT |
+| **T020b** | Enhanced Arena Implementation | 1d | T020a | NO | 🟡 REFINEMENT |
+| **T020c** | Allocation Validation | 4h | T020b | NO | 🟡 REFINEMENT |
+| **T021** | Comprehensive Profiling Campaign | 1d | T018i,T020c | NO | ✅ VALIDATION |
+| **T022** | Documentation & Handoff | 4h | T021 | YES | ✅ VALIDATION |
+
+### 1.3 Estimated Timeline
+
+**Critical Path** (Days 1-3): T018a → T018b → T018c/d/e → T018f → T018g → T018h → T018i
+- **Total effort**: 2.5 days (assuming 8h/day)
+- **Calendar time**: 3 days (with parallelization of T018c/d/e)
+
+**Optional Enhancement** (Days 4-5): T019a → T019b → T019c
+- **Total effort**: 8 hours
+- **Calendar time**: 1 day
+
+**Refinement** (Days 7-8): T020a → T020b → T020c
+- **Total effort**: 1.5 days
+- **Calendar time**: 2 days
+
+**Final Validation** (Days 9-10): T021 → T022
+- **Total effort**: 1.25 days
+- **Calendar time**: 1.5 days
+
+**Total Timeline**: 7.5 days (calendar: 10 days with buffer)
+
+---
+
+## 2. Phase 1: State Pooling Implementation (CRITICAL)
+
+### T018a: IGameState::copyFrom() API Design
+
+**Summary**: Design and document the `copyFrom()` API for the IGameState interface to enable zero-allocation state copying.
+
+**Rationale**:
+- State cloning consumes 86.6% of execution time (835.85ms / 982.86ms)
+- Current `clone()` triggers 223 allocations per call (~2μs each = 446μs)
+- `copyFrom()` with pre-allocated states eliminates all allocations → 20μs per copy
+- Expected impact: 3.7× overall throughput → 9,838 sims/sec ✅ Exceeds 8k target
+
+**Affected Files**:
+- `cpp_extensions/utils/igamestate.h` (interface definition)
+- `docs/api/state_pooling.md` (new documentation)
+
+**Dependencies**: None (first task in critical path)
+
+**Can Parallelize**: NO (foundational API design)
+
+**Estimated Effort**: 4 hours
+
+**Step-by-Step Implementation**:
+
+1. **Add `copyFrom()` method to IGameState interface**:
+   ```cpp
+   // cpp_extensions/utils/igamestate.h
+   class IGameState {
+   public:
+       // Existing (slow - 418μs per call)
+       virtual std::unique_ptr<IGameState> clone() const = 0;
+
+       // NEW (fast - target 20μs per call)
+       // Copy state from 'other' into 'this' (in-place update)
+       // Requirements:
+       // - NO heap allocations
+       // - Use memcpy for fixed-size arrays
+       // - Shallow copy for primitive fields
+       // - Thread-safe: read-only access to 'other'
+       // - Bit-exact equivalence with clone() semantically
+       virtual void copyFrom(const IGameState& other) = 0;
+
+       // Utility for pool size estimation
+       virtual size_t estimated_size_bytes() const = 0;
+   };
+   ```
+
+2. **Document API contract in `docs/api/state_pooling.md`**:
+   - Performance requirements (target: 20μs, NO allocations)
+   - Thread safety guarantees (read-only access to source)
+   - Memory layout requirements (fixed-size arrays preferred)
+   - Example implementation for Gomoku
+
+3. **Update existing `clone()` implementations to delegate to `copyFrom()`**:
+   ```cpp
+   std::unique_ptr<IGameState> clone() const override {
+       auto copy = std::make_unique<ConcreteState>();
+       copy->copyFrom(*this);  // Delegate to fast path
+       return copy;
+   }
+   ```
+
+**Acceptance Criteria**:
+
+✅ **AC1**: `copyFrom()` method added to IGameState interface with complete documentation
+✅ **AC2**: API contract documented in `docs/api/state_pooling.md`
+✅ **AC3**: Performance requirements specified (20μs target, 0 allocations)
+✅ **AC4**: Thread safety guarantees documented
+✅ **AC5**: Example implementation provided for reference
+
+**Test Commands**:
+```bash
+# Verify interface compiles
+cd cpp_extensions
+g++ -std=c++17 -c utils/igamestate.h -o /tmp/igamestate.o
+
+# Verify documentation exists
+test -f docs/api/state_pooling.md || exit 1
+
+# Verify API contract documented
+grep -q "copyFrom" docs/api/state_pooling.md || exit 1
+grep -q "20μs target" docs/api/state_pooling.md || exit 1
+grep -q "NO allocations" docs/api/state_pooling.md || exit 1
+```
+
+**Definition of Done**:
+- [ ] `copyFrom()` method signature added to IGameState
+- [ ] `estimated_size_bytes()` method signature added to IGameState
+- [ ] API documentation written in `docs/api/state_pooling.md`
+- [ ] Performance requirements documented (20μs, 0 allocations)
+- [ ] Thread safety guarantees documented
+- [ ] Code compiles without errors
+
+---
+
+### T018b: ThreadLocalStatePool Implementation
+
+**Summary**: Implement thread-local state pool for zero-allocation state management with lock-free acquisition/release.
+
+**Rationale**:
+- Eliminate 223 allocations per simulation
+- Provide O(1) lock-free state acquisition/release
+- Enable 20.9× speedup in state cloning phase (418μs → 20μs)
+- Thread-local design eliminates contention
+
+**Affected Files**:
+- `cpp_extensions/mcts/state_pool.hpp` (new header)
+- `cpp_extensions/mcts/state_pool.cpp` (new implementation)
+- `cpp_extensions/mcts/CMakeLists.txt` (build configuration)
+
+**Dependencies**: T018a (requires `copyFrom()` API)
+
+**Can Parallelize**: NO (foundational infrastructure)
+
+**Estimated Effort**: 1 day
+
+**Step-by-Step Implementation**:
+
+1. **Create `state_pool.hpp` header**:
+   ```cpp
+   // cpp_extensions/mcts/state_pool.hpp
+   #pragma once
+   #include <vector>
+   #include <atomic>
+   #include <memory>
+   #include "utils/igamestate.h"
+
+   namespace mcts {
+
+   enum class GameType { GOMOKU, CHESS, GO };
+
+   class ThreadLocalStatePool {
+   public:
+       explicit ThreadLocalStatePool(GameType game_type, size_t pool_size = 16);
+       ~ThreadLocalStatePool();
+
+       // Lock-free state acquisition (O(1))
+       IGameState* acquire();
+
+       // Lock-free state release (O(1), no-op)
+       void release(IGameState* state);
+
+       // Statistics
+       struct Stats {
+           size_t total_acquires;
+           size_t total_releases;
+           size_t peak_usage;
+           size_t pool_size;
+       };
+       Stats get_stats() const;
+       void reset_stats();
+
+   private:
+       std::vector<std::unique_ptr<IGameState>> pool_;
+       std::atomic<size_t> next_free_;
+       size_t pool_size_;
+       std::atomic<size_t> total_acquires_{0};
+       std::atomic<size_t> total_releases_{0};
+       std::atomic<size_t> peak_usage_{0};
+   };
+
+   // Thread-local accessor (lazy initialization)
+   ThreadLocalStatePool* get_thread_state_pool(GameType game_type);
+
+   } // namespace mcts
+   ```
+
+2. **Implement `state_pool.cpp`**:
+   ```cpp
+   // cpp_extensions/mcts/state_pool.cpp
+   #include "state_pool.hpp"
+   #include "games/gomoku_state.h"
+   #include "games/chess_state.h"
+   #include "games/go_state.h"
+
+   namespace mcts {
+
+   ThreadLocalStatePool::ThreadLocalStatePool(GameType game_type, size_t pool_size)
+       : pool_size_(pool_size), next_free_(0) {
+       pool_.reserve(pool_size);
+       for (size_t i = 0; i < pool_size; ++i) {
+           switch (game_type) {
+               case GameType::GOMOKU:
+                   pool_.emplace_back(std::make_unique<GomokuState>());
+                   break;
+               case GameType::CHESS:
+                   pool_.emplace_back(std::make_unique<ChessState>());
+                   break;
+               case GameType::GO:
+                   pool_.emplace_back(std::make_unique<GoState>());
+                   break;
+           }
+       }
+   }
+
+   IGameState* ThreadLocalStatePool::acquire() {
+       total_acquires_.fetch_add(1, std::memory_order_relaxed);
+       size_t idx = next_free_.fetch_add(1, std::memory_order_relaxed);
+       size_t pool_idx = idx % pool_size_;
+
+       // Update peak usage
+       size_t current_usage = (idx / pool_size_) + 1;
+       size_t peak = peak_usage_.load(std::memory_order_relaxed);
+       while (current_usage > peak) {
+           if (peak_usage_.compare_exchange_weak(peak, current_usage,
+                                                 std::memory_order_relaxed)) {
+               break;
+           }
+       }
+
+       return pool_[pool_idx].get();
+   }
+
+   void ThreadLocalStatePool::release(IGameState* state) {
+       total_releases_.fetch_add(1, std::memory_order_relaxed);
+       // No-op: Ring buffer automatically reuses states
+   }
+
+   // Thread-local storage
+   thread_local std::unique_ptr<ThreadLocalStatePool> tl_gomoku_pool;
+   thread_local std::unique_ptr<ThreadLocalStatePool> tl_chess_pool;
+   thread_local std::unique_ptr<ThreadLocalStatePool> tl_go_pool;
+
+   ThreadLocalStatePool* get_thread_state_pool(GameType game_type) {
+       switch (game_type) {
+           case GameType::GOMOKU:
+               if (!tl_gomoku_pool) {
+                   tl_gomoku_pool = std::make_unique<ThreadLocalStatePool>(
+                       GameType::GOMOKU, 16
+                   );
+               }
+               return tl_gomoku_pool.get();
+           // ... similar for CHESS and GO
+       }
+       return nullptr;
+   }
+
+   } // namespace mcts
+   ```
+
+3. **Update CMakeLists.txt**:
+   ```cmake
+   # cpp_extensions/mcts/CMakeLists.txt
+   add_library(mcts_core
+       tree.cpp
+       selection.cpp
+       backup.cpp
+       simulation_runner.cpp
+       continuous_simulation_runner.cpp
+       async_inference_queue.cpp
+       state_pool.cpp  # NEW
+       # ... other sources
+   )
+   ```
+
+**Acceptance Criteria**:
+
+✅ **AC1**: ThreadLocalStatePool class implemented with lock-free acquire/release
+✅ **AC2**: Pool pre-allocates all states at construction (no runtime allocation)
+✅ **AC3**: Ring buffer allocation (next_free_ wraps around at pool_size_)
+✅ **AC4**: Statistics tracking (acquires, releases, peak usage)
+✅ **AC5**: Thread-local accessor functions for Gomoku/Chess/Go
+✅ **AC6**: Code compiles and links successfully
+
+**Test Commands**:
+```bash
+# Build test
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+
+# Verify symbols exported
+nm -C libmcts_core.a | grep -q "ThreadLocalStatePool::acquire"
+nm -C libmcts_core.a | grep -q "ThreadLocalStatePool::release"
+
+# Verify thread-local storage
+nm -C libmcts_core.a | grep -q "tl_gomoku_pool"
+```
+
+**Definition of Done**:
+- [ ] `state_pool.hpp` created with complete interface
+- [ ] `state_pool.cpp` implemented with lock-free logic
+- [ ] CMakeLists.txt updated to include state_pool.cpp
+- [ ] Code compiles without warnings (-Wall -Wextra)
+- [ ] Thread-local accessors implemented for all game types
+- [ ] Ring buffer logic tested with manual verification
+
+---
+
+### T018c: GomokuState::copyFrom() Implementation
+
+**Summary**: Implement fast `copyFrom()` method for GomokuState using memcpy for fixed-size arrays.
+
+**Rationale**:
+- GomokuState is the primary test case for state pooling
+- Fixed-size arrays (15×15 board, move history) ideal for memcpy
+- Target: 20μs per copy (vs 418μs with clone())
+- Validates API design before extending to Chess/Go
+
+**Affected Files**:
+- `cpp_extensions/games/gomoku_state.h` (interface update)
+- `cpp_extensions/games/gomoku_state.cpp` (implementation)
+
+**Dependencies**: T018a (requires `copyFrom()` API)
+
+**Can Parallelize**: YES (can develop concurrently with T018d, T018e)
+
+**Estimated Effort**: 4 hours
+
+**Step-by-Step Implementation**:
+
+1. **Update GomokuState header**:
+   ```cpp
+   // cpp_extensions/games/gomoku_state.h
+   class GomokuState : public IGameState {
+   private:
+       // Fixed-size arrays (NO dynamic allocation)
+       uint8_t board_[225];          // 15×15 = 225 cells
+       uint16_t move_history_[100];  // Max 100 moves
+       uint8_t move_count_;
+       uint8_t current_player_;
+       uint8_t game_result_;
+       uint8_t last_move_row_;
+       uint8_t last_move_col_;
+
+   public:
+       // Update clone() to delegate to copyFrom()
+       std::unique_ptr<IGameState> clone() const override {
+           auto copy = std::make_unique<GomokuState>();
+           copy->copyFrom(*this);
+           return copy;
+       }
+
+       // NEW: Fast in-place copy
+       void copyFrom(const IGameState& other) override;
+
+       size_t estimated_size_bytes() const override {
+           return sizeof(GomokuState);  // ~445 bytes
+       }
+
+       // ... existing methods ...
+   };
+   ```
+
+2. **Implement `copyFrom()` in gomoku_state.cpp**:
+   ```cpp
+   // cpp_extensions/games/gomoku_state.cpp
+   void GomokuState::copyFrom(const IGameState& other) {
+       // Dynamic cast to concrete type
+       auto& src = static_cast<const GomokuState&>(other);
+
+       // Fast memcpy for fixed-size arrays (~0.2μs total)
+       memcpy(board_, src.board_, 225);              // 15×15 board
+       memcpy(move_history_, src.move_history_, 200); // 100 × uint16_t
+
+       // Primitive field copies (~0.05μs)
+       move_count_ = src.move_count_;
+       current_player_ = src.current_player_;
+       game_result_ = src.game_result_;
+       last_move_row_ = src.last_move_row_;
+       last_move_col_ = src.last_move_col_;
+
+       // Total: ~20μs (includes cache misses, overhead)
+       // NO allocations ✅
+   }
+   ```
+
+3. **Add debug assertions** (optional, disabled in release builds):
+   ```cpp
+   void GomokuState::copyFrom(const IGameState& other) {
+       #ifndef NDEBUG
+       // Verify other is actually GomokuState
+       auto* src_ptr = dynamic_cast<const GomokuState*>(&other);
+       assert(src_ptr != nullptr && "copyFrom: type mismatch");
+       auto& src = *src_ptr;
+       #else
+       auto& src = static_cast<const GomokuState&>(other);
+       #endif
+
+       // ... rest of implementation ...
+   }
+   ```
+
+**Acceptance Criteria**:
+
+✅ **AC1**: `copyFrom()` implemented using memcpy for board and move_history
+✅ **AC2**: Primitive fields copied by value
+✅ **AC3**: NO heap allocations in copyFrom()
+✅ **AC4**: `clone()` delegates to `copyFrom()` for consistency
+✅ **AC5**: Code compiles without warnings
+✅ **AC6**: Bit-exact equivalence with old clone() behavior
+
+**Test Commands**:
+```bash
+# Build test
+cd build
+make -j$(nproc)
+
+# Verify no allocations (check assembly for malloc/new)
+objdump -d cpp_extensions/games/libgomoku.a | grep -q "malloc" && exit 1
+objdump -d cpp_extensions/games/libgomoku.a | grep -q "operator new" && exit 1
+
+# Verify memcpy usage
+objdump -d cpp_extensions/games/libgomoku.a | grep -q "memcpy" || exit 1
+```
+
+**Definition of Done**:
+- [ ] `copyFrom()` implemented in GomokuState
+- [ ] Uses memcpy for fixed-size arrays
+- [ ] No heap allocations (verified via objdump)
+- [ ] `clone()` delegates to `copyFrom()`
+- [ ] Code compiles without warnings
+- [ ] Assembly inspection confirms no malloc/new calls
+
+---
+
+### T018d: ChessState::copyFrom() Implementation
+
+**Summary**: Implement fast `copyFrom()` method for ChessState.
+
+**Rationale**: Extend state pooling to Chess for multi-game validation.
+
+**Affected Files**:
+- `cpp_extensions/games/chess_state.h`
+- `cpp_extensions/games/chess_state.cpp`
+
+**Dependencies**: T018a
+
+**Can Parallelize**: YES (parallel with T018c, T018e)
+
+**Estimated Effort**: 4 hours
+
+**Step-by-Step Implementation**:
+
+1. **Update ChessState header**:
+   ```cpp
+   // cpp_extensions/games/chess_state.h
+   class ChessState : public IGameState {
+   private:
+       // Fixed-size arrays (NO dynamic allocation)
+       uint8_t board_[64];           // 8×8 = 64 squares
+       uint8_t piece_types_[64];     // Piece types per square
+       uint16_t move_history_[200];  // Max 200 moves
+       uint8_t move_count_;
+       uint8_t current_player_;
+       uint8_t castling_rights_;     // 4 bits: KQkq
+       uint8_t en_passant_square_;   // 0-63 or 255 (none)
+       uint8_t halfmove_clock_;
+       uint16_t fullmove_number_;
+
+   public:
+       std::unique_ptr<IGameState> clone() const override {
+           auto copy = std::make_unique<ChessState>();
+           copy->copyFrom(*this);
+           return copy;
+       }
+
+       void copyFrom(const IGameState& other) override;
+
+       size_t estimated_size_bytes() const override {
+           return sizeof(ChessState);  // ~500 bytes
+       }
+   };
+   ```
+
+2. **Implement `copyFrom()` in chess_state.cpp**:
+   ```cpp
+   // cpp_extensions/games/chess_state.cpp
+   void ChessState::copyFrom(const IGameState& other) {
+       auto& src = static_cast<const ChessState&>(other);
+
+       // Fast memcpy for fixed-size arrays
+       memcpy(board_, src.board_, 64);
+       memcpy(piece_types_, src.piece_types_, 64);
+       memcpy(move_history_, src.move_history_, 400);  // 200 × uint16_t
+
+       // Primitive field copies
+       move_count_ = src.move_count_;
+       current_player_ = src.current_player_;
+       castling_rights_ = src.castling_rights_;
+       en_passant_square_ = src.en_passant_square_;
+       halfmove_clock_ = src.halfmove_clock_;
+       fullmove_number_ = src.fullmove_number_;
+
+       // Total: ~20μs (NO allocations)
+   }
+   ```
+
+**Acceptance Criteria**:
+
+✅ **AC1**: `copyFrom()` implemented using memcpy for board and move_history
+✅ **AC2**: Primitive fields copied by value (castling_rights, en_passant, etc.)
+✅ **AC3**: NO heap allocations in copyFrom()
+✅ **AC4**: `clone()` delegates to `copyFrom()` for consistency
+✅ **AC5**: Code compiles without warnings
+✅ **AC6**: Bit-exact equivalence with old clone() behavior
+
+**Test Commands**:
+```bash
+# Build test
+cd build
+make -j$(nproc)
+
+# Verify no allocations
+objdump -d cpp_extensions/games/libchess.a | grep -q "malloc" && exit 1
+
+# Verify memcpy usage
+objdump -d cpp_extensions/games/libchess.a | grep -q "memcpy" || exit 1
+```
+
+**Definition of Done**:
+- [ ] `copyFrom()` implemented in ChessState
+- [ ] Uses memcpy for fixed-size arrays
+- [ ] No heap allocations (verified via objdump)
+- [ ] `clone()` delegates to `copyFrom()`
+- [ ] Code compiles without warnings
+- [ ] Assembly inspection confirms no malloc/new calls
+
+---
+
+### T018e: GoState::copyFrom() Implementation
+
+**Summary**: Implement fast `copyFrom()` method for GoState.
+
+**Rationale**: Extend state pooling to Go for multi-game validation.
+
+**Affected Files**:
+- `cpp_extensions/games/go_state.h`
+- `cpp_extensions/games/go_state.cpp`
+
+**Dependencies**: T018a
+
+**Can Parallelize**: YES (parallel with T018c, T018d)
+
+**Estimated Effort**: 4 hours
+
+**Step-by-Step Implementation**:
+
+1. **Update GoState header**:
+   ```cpp
+   // cpp_extensions/games/go_state.h
+   class GoState : public IGameState {
+   private:
+       // Fixed-size arrays (NO dynamic allocation)
+       uint8_t board_[361];          // 19×19 = 361 intersections
+       uint16_t move_history_[400];  // Max 400 moves
+       uint8_t move_count_;
+       uint8_t current_player_;
+       uint8_t ko_position_;         // Last ko position (0-360 or 255)
+       uint8_t passes_;              // Consecutive passes
+       float komi_;                  // Komi value (usually 6.5 or 7.5)
+
+   public:
+       std::unique_ptr<IGameState> clone() const override {
+           auto copy = std::make_unique<GoState>();
+           copy->copyFrom(*this);
+           return copy;
+       }
+
+       void copyFrom(const IGameState& other) override;
+
+       size_t estimated_size_bytes() const override {
+           return sizeof(GoState);  // ~1400 bytes
+       }
+   };
+   ```
+
+2. **Implement `copyFrom()` in go_state.cpp**:
+   ```cpp
+   // cpp_extensions/games/go_state.cpp
+   void GoState::copyFrom(const IGameState& other) {
+       auto& src = static_cast<const GoState&>(other);
+
+       // Fast memcpy for fixed-size arrays
+       memcpy(board_, src.board_, 361);              // 19×19 board
+       memcpy(move_history_, src.move_history_, 800); // 400 × uint16_t
+
+       // Primitive field copies
+       move_count_ = src.move_count_;
+       current_player_ = src.current_player_;
+       ko_position_ = src.ko_position_;
+       passes_ = src.passes_;
+       komi_ = src.komi_;
+
+       // Total: ~20μs (NO allocations)
+   }
+   ```
+
+**Acceptance Criteria**:
+
+✅ **AC1**: `copyFrom()` implemented using memcpy for board and move_history
+✅ **AC2**: Primitive fields copied by value (ko_position, passes, komi)
+✅ **AC3**: NO heap allocations in copyFrom()
+✅ **AC4**: `clone()` delegates to `copyFrom()` for consistency
+✅ **AC5**: Code compiles without warnings
+✅ **AC6**: Bit-exact equivalence with old clone() behavior
+
+**Test Commands**:
+```bash
+# Build test
+cd build
+make -j$(nproc)
+
+# Verify no allocations
+objdump -d cpp_extensions/games/libgo.a | grep -q "malloc" && exit 1
+
+# Verify memcpy usage
+objdump -d cpp_extensions/games/libgo.a | grep -q "memcpy" || exit 1
+```
+
+**Definition of Done**:
+- [ ] `copyFrom()` implemented in GoState
+- [ ] Uses memcpy for fixed-size arrays
+- [ ] No heap allocations (verified via objdump)
+- [ ] `clone()` delegates to `copyFrom()`
+- [ ] Code compiles without warnings
+- [ ] Assembly inspection confirms no malloc/new calls
+
+---
+
+### T018f: State Pool Unit Tests
+
+**Summary**: Comprehensive unit tests for ThreadLocalStatePool and copyFrom() equivalence.
+
+**Rationale**:
+- Verify lock-free pool behavior under concurrent access
+- Ensure `copyFrom()` is bit-exact equivalent to `clone()`
+- Validate performance characteristics (acquisition speed, no allocations)
+- Prevent regressions
+
+**Affected Files**:
+- `tests/unit/test_state_pool.py` (new)
+- `tests/unit/test_copyFrom_equivalence.py` (new)
+
+**Dependencies**: T018b, T018c (requires pool + Gomoku implementation)
+
+**Can Parallelize**: NO (requires pool implementation complete)
+
+**Estimated Effort**: 4 hours
+
+**Step-by-Step Implementation**:
+
+1. **Create `test_state_pool.py`**:
+   ```python
+   # tests/unit/test_state_pool.py
+   import pytest
+   import mcts_py
+   from games import GomokuState
+
+   def test_pool_acquisition_release():
+       """Test basic pool acquire/release cycle."""
+       pool = mcts_py.ThreadLocalStatePool(mcts_py.GameType.GOMOKU, pool_size=16)
+
+       # Acquire all states
+       states = [pool.acquire() for _ in range(16)]
+
+       # Verify all distinct
+       assert len(set(id(s) for s in states)) == 16
+
+       # Release all
+       for state in states:
+           pool.release(state)
+
+       # Re-acquire should get same states (ring buffer wraps)
+       states2 = [pool.acquire() for _ in range(16)]
+       assert set(id(s) for s in states) == set(id(s) for s in states2)
+
+   def test_pool_ring_buffer_wrap():
+       """Test that pool wraps around after pool_size acquisitions."""
+       pool = mcts_py.ThreadLocalStatePool(mcts_py.GameType.GOMOKU, pool_size=4)
+
+       # Acquire 8 states (2× pool size)
+       states = [pool.acquire() for _ in range(8)]
+
+       # States 0-3 should equal states 4-7 (wrap around)
+       assert id(states[0]) == id(states[4])
+       assert id(states[1]) == id(states[5])
+       assert id(states[2]) == id(states[6])
+       assert id(states[3]) == id(states[7])
+
+   def test_pool_statistics():
+       """Test pool statistics tracking."""
+       pool = mcts_py.ThreadLocalStatePool(mcts_py.GameType.GOMOKU, pool_size=16)
+
+       # Acquire 10 states
+       states = [pool.acquire() for _ in range(10)]
+
+       # Check stats
+       stats = pool.get_stats()
+       assert stats.total_acquires == 10
+       assert stats.pool_size == 16
+       assert stats.peak_usage == 1  # No wrap yet
+
+       # Release
+       for s in states:
+           pool.release(s)
+       stats = pool.get_stats()
+       assert stats.total_releases == 10
+
+   def test_pool_thread_local():
+       """Test that each thread gets its own pool."""
+       import threading
+
+       pools_seen = set()
+       lock = threading.Lock()
+
+       def worker():
+           pool = mcts_py.get_thread_state_pool(mcts_py.GameType.GOMOKU)
+           with lock:
+               pools_seen.add(id(pool))
+
+       threads = [threading.Thread(target=worker) for _ in range(4)]
+       for t in threads:
+           t.start()
+       for t in threads:
+           t.join()
+
+       # Each thread should see a different pool instance
+       assert len(pools_seen) == 4
+   ```
+
+2. **Create `test_copyFrom_equivalence.py`**:
+   ```python
+   # tests/unit/test_copyFrom_equivalence.py
+   import pytest
+   import mcts_py
+   from games import GomokuState
+   import numpy as np
+
+   def test_copyFrom_equivalence():
+       """Test that copyFrom() produces bit-exact equivalent to clone()."""
+       # Create root state with some moves
+       root = GomokuState()
+       root.apply_move(112)  # Center
+       root.apply_move(113)
+       root.apply_move(97)
+
+       # Clone via old method
+       cloned = root.clone()
+
+       # Clone via copyFrom
+       pool = mcts_py.ThreadLocalStatePool(mcts_py.GameType.GOMOKU)
+       copied = pool.acquire()
+       copied.copyFrom(root)
+
+       # Verify bit-exact equivalence
+       assert cloned.get_board_hash() == copied.get_board_hash()
+       assert cloned.current_player() == copied.current_player()
+       assert cloned.move_count() == copied.move_count()
+
+       # Verify board state
+       cloned_board = cloned.get_board()
+       copied_board = copied.get_board()
+       assert np.array_equal(cloned_board, copied_board)
+
+       # Verify legal moves
+       cloned_legal = cloned.get_legal_moves()
+       copied_legal = copied.get_legal_moves()
+       assert np.array_equal(cloned_legal, copied_legal)
+
+   def test_copyFrom_performance():
+       """Test that copyFrom() is faster than clone()."""
+       import time
+
+       root = GomokuState()
+       for i in range(10):
+           root.apply_move(112 + i)
+
+       pool = mcts_py.ThreadLocalStatePool(mcts_py.GameType.GOMOKU, pool_size=16)
+
+       # Measure clone() performance
+       start = time.perf_counter()
+       for _ in range(1000):
+           cloned = root.clone()
+       old_time = time.perf_counter() - start
+
+       # Measure copyFrom() performance
+       start = time.perf_counter()
+       for _ in range(1000):
+           state = pool.acquire()
+           state.copyFrom(root)
+           pool.release(state)
+       new_time = time.perf_counter() - start
+
+       # Verify speedup ≥10× (conservative target)
+       speedup = old_time / new_time
+       assert speedup >= 10.0, f"Expected ≥10× speedup, got {speedup:.2f}×"
+
+       print(f"copyFrom() speedup: {speedup:.2f}×")
+
+   def test_copyFrom_no_allocations():
+       """Test that copyFrom() does not allocate memory."""
+       import tracemalloc
+
+       root = GomokuState()
+       pool = mcts_py.ThreadLocalStatePool(mcts_py.GameType.GOMOKU)
+
+       # Start memory tracking
+       tracemalloc.start()
+
+       # Acquire state (this WILL allocate initially)
+       state = pool.acquire()
+
+       # Clear allocations from acquisition
+       tracemalloc.clear_traces()
+
+       # Now measure copyFrom() - should be 0 allocations
+       snapshot_before = tracemalloc.take_snapshot()
+       state.copyFrom(root)
+       snapshot_after = tracemalloc.take_snapshot()
+
+       tracemalloc.stop()
+
+       # Verify no new allocations
+       stats = snapshot_after.compare_to(snapshot_before, 'lineno')
+       total_allocated = sum(stat.size_diff for stat in stats if stat.size_diff > 0)
+
+       # Allow some tolerance for Python overhead
+       assert total_allocated < 100, f"copyFrom() allocated {total_allocated} bytes"
+   ```
+
+**Acceptance Criteria**:
+
+✅ **AC1**: Pool acquisition/release cycle works correctly
+✅ **AC2**: Ring buffer wraps around after pool_size acquisitions
+✅ **AC3**: Statistics tracking works (acquires, releases, peak usage)
+✅ **AC4**: Thread-local storage verified (each thread gets own pool)
+✅ **AC5**: `copyFrom()` produces bit-exact equivalent to `clone()`
+✅ **AC6**: `copyFrom()` is ≥10× faster than `clone()`
+✅ **AC7**: `copyFrom()` allocates <100 bytes (near-zero allocations)
+✅ **AC8**: All tests pass with 100% success rate
+
+**Test Commands**:
+```bash
+# Run unit tests
+python -m pytest tests/unit/test_state_pool.py -v
+python -m pytest tests/unit/test_copyFrom_equivalence.py -v
+
+# Run with coverage
+python -m pytest tests/unit/test_state_pool.py --cov=mcts_py --cov-report=term-missing
+
+# Expected output:
+# test_pool_acquisition_release PASSED
+# test_pool_ring_buffer_wrap PASSED
+# test_pool_statistics PASSED
+# test_pool_thread_local PASSED
+# test_copyFrom_equivalence PASSED
+# test_copyFrom_performance PASSED (speedup: XX.XX×)
+# test_copyFrom_no_allocations PASSED
+```
+
+**Definition of Done**:
+- [ ] All unit tests written and passing
+- [ ] Pool behavior verified (acquisition, release, ring buffer)
+- [ ] Thread-local storage verified
+- [ ] `copyFrom()` equivalence verified (bit-exact)
+- [ ] `copyFrom()` performance verified (≥10× speedup)
+- [ ] `copyFrom()` allocation verified (<100 bytes)
+- [ ] Test coverage ≥95% for state_pool module
+
+---
+
+### T018g: SimRunner Integration
+
+**Summary**: Integrate ThreadLocalStatePool into ContinuousSimulationRunner to replace `clone()` calls with pool-based `copyFrom()`.
+
+**Rationale**:
+- Replace slow `clone()` calls (418μs, 223 allocations) with fast pool acquisition (20μs, 0 allocations)
+- Critical integration point for achieving 3.7× throughput gain
+- Must maintain thread safety and correct lifecycle management
+
+**Affected Files**:
+- `cpp_extensions/mcts/continuous_simulation_runner.cpp`
+- `cpp_extensions/mcts/continuous_simulation_runner.hpp`
+- `cpp_extensions/mcts/async_inference_queue.cpp` (state lifetime management)
+
+**Dependencies**: T018b, T018c, T018f (requires pool + Gomoku + tests)
+
+**Can Parallelize**: NO (critical integration point)
+
+**Estimated Effort**: 6 hours
+
+**Step-by-Step Implementation**:
+
+1. **Update ContinuousSimulationRunner::run_continuous()**:
+   ```cpp
+   // cpp_extensions/mcts/continuous_simulation_runner.cpp
+   #include "state_pool.hpp"
+
+   int ContinuousSimulationRunner::run_continuous(
+       IGameState& root_state,
+       NodeIndex root_index,
+       AsyncInferenceQueue& queue,
+       int num_simulations
+   ) {
+       // Detect game type from root state
+       GameType game_type = detect_game_type(root_state);
+
+       // Get thread-local state pool (lazy init)
+       ThreadLocalStatePool* pool = get_thread_state_pool(game_type);
+
+       int completed = 0;
+
+       for (int i = 0; i < num_simulations; ++i) {
+           // OLD CODE (418μs per clone, 223 allocations):
+           // std::unique_ptr<IGameState> current_state = root_state.clone();
+
+           // NEW CODE (20μs via copyFrom, 0 allocations):
+           IGameState* current_state = pool->acquire();  // O(1), lock-free
+           current_state->copyFrom(root_state);  // Fast memcpy
+
+           // Selection phase: Traverse tree to leaf
+           std::vector<NodeIndex> path;
+           NodeIndex leaf_node = select_leaf(root_index, *current_state, path);
+
+           // Check if terminal
+           if (current_state->is_terminal()) {
+               float value = current_state->get_reward(
+                   current_state->current_player()
+               );
+               backup_.backup_value_along_path(path, value, &virtual_loss_);
+               pool->release(current_state);  // Return to pool
+               completed++;
+               continue;
+           }
+
+           // Submit inference request (transfer ownership to queue)
+           uint64_t request_id = queue.submit_request(
+               current_state,  // Pointer passed, pool manages lifetime
+               leaf_node,
+               std::move(path)
+           );
+
+           // State will be returned to pool in process_completed_results()
+       }
+
+       // Process any completed results
+       completed += process_completed_results(queue);
+
+       return completed;
+   }
+   ```
+
+2. **Update process_completed_results() to return states to pool**:
+   ```cpp
+   int ContinuousSimulationRunner::process_completed_results(
+       AsyncInferenceQueue& queue
+   ) {
+       auto results = queue.consume_ready_results();
+       int processed = 0;
+
+       for (auto& result : results) {
+           // ... expansion and backup logic ...
+
+           // Return state to pool after processing
+           if (result.state_ptr) {
+               GameType game_type = detect_game_type(*result.state_ptr);
+               ThreadLocalStatePool* pool = get_thread_state_pool(game_type);
+               pool->release(result.state_ptr);
+               result.state_ptr = nullptr;  // Clear pointer
+           }
+
+           processed++;
+       }
+
+       return processed;
+   }
+   ```
+
+3. **Add game type detection helper**:
+   ```cpp
+   // cpp_extensions/mcts/continuous_simulation_runner.cpp
+   namespace {
+
+   GameType detect_game_type(const IGameState& state) {
+       // Use RTTI to detect concrete type
+       if (dynamic_cast<const GomokuState*>(&state)) {
+           return GameType::GOMOKU;
+       } else if (dynamic_cast<const ChessState*>(&state)) {
+           return GameType::CHESS;
+       } else if (dynamic_cast<const GoState*>(&state)) {
+           return GameType::GO;
+       }
+       throw std::runtime_error("Unknown game type");
+   }
+
+   } // anonymous namespace
+   ```
+
+**Acceptance Criteria**:
+
+✅ **AC1**: `clone()` calls replaced with pool `acquire()` + `copyFrom()`
+✅ **AC2**: States returned to pool after processing (no leaks)
+✅ **AC3**: Thread-local pool accessed correctly in multi-threaded context
+✅ **AC4**: Game type detection works for Gomoku/Chess/Go
+✅ **AC5**: Code compiles and links successfully
+✅ **AC6**: No TSan errors under concurrent access (24 threads)
+
+**Test Commands**:
+```bash
+# Build test
+cd build
+make -j$(nproc)
+
+# Run simulation with state pooling enabled
+python -c "
+import mcts_py
+from games import GomokuState
+
+root = GomokuState()
+tree = mcts_py.MCTSTree(10000)
+root_idx = tree.add_root_node(0.5, 0)
+
+# Create runner with pool
+runner = mcts_py.ContinuousSimulationRunner(tree, selector, backup, vl_mgr)
+queue = mcts_py.AsyncInferenceQueue()
+
+# Run simulations
+completed = runner.run_continuous(root, root_idx, queue, 100)
+print(f'Completed: {completed}')
+"
+
+# Thread safety test with TSan
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Debug -DSANITIZE_THREAD=ON
+make -j$(nproc)
+python -m pytest tests/integration/test_continuous_runner.py -v -s
+```
+
+**Definition of Done**:
+- [ ] `clone()` replaced with pool acquisition in run_continuous()
+- [ ] States returned to pool in process_completed_results()
+- [ ] Game type detection implemented
+- [ ] Code compiles without warnings
+- [ ] TSan clean (0 data races with 24 threads)
+- [ ] Integration test passes with 100 simulations
+
+---
+
+### T018h: Profiling Validation
+
+**Summary**: Run profiling benchmark to validate that state pooling reduces allocations and clone time.
+
+**Rationale**:
+- Verify `alloc_slow_path` counter drops from 223 to <10 per simulation
+- Verify `state_clone_total` drops from 86.6% to <5% of time
+- Ensure 100% profiling capture rate
+- Establish new performance baseline
+
+**Affected Files**:
+- `scripts/validate_state_pooling.py` (new validation script)
+
+**Dependencies**: T018g (requires integration complete)
+
+**Can Parallelize**: NO (sequential validation step)
+
+**Estimated Effort**: 4 hours
+
+**Step-by-Step Implementation**:
+
+1. **Create `validate_state_pooling.py`**:
+   ```python
+   #!/usr/bin/env python3
+   """
+   Validate state pooling optimization with profiling.
+
+   Acceptance criteria:
+   - alloc_slow_path counter <20,000 for 2,000 sims (<10 per sim)
+   - state_clone_total <50 ms (<5% of time)
+   - throughput ≥7,500 sims/sec (3.0× minimum improvement)
+   """
+
+   import subprocess
+   import json
+   import sys
+
+   def run_profiling_benchmark():
+       """Run profiling benchmark with state pooling enabled."""
+       result = subprocess.run([
+           'python', 'scripts/benchmark_throughput.py',
+           '--game', 'gomoku',
+           '--threads', '8',
+           '--simulations', '2000',
+           '--seed', '42',
+           '--iterations', '10',
+           '--enable-profiling'
+       ], capture_output=True, text=True)
+
+       return json.loads(result.stdout)
+
+   def validate_results(data):
+       """Validate profiling results against acceptance criteria."""
+       errors = []
+
+       # Extract metrics
+       alloc_count = data['cpp_profiling']['counters']['alloc_slow_path']
+       state_clone_ms = data['cpp_profiling']['timings']['state_clone_total']
+       total_time_ms = data['cpp_profiling']['session_duration_ms']
+       throughput = data['throughput_sims_per_sec']
+
+       # Criterion 1: Allocations <10 per simulation
+       alloc_per_sim = alloc_count / 2000
+       if alloc_per_sim >= 10:
+           errors.append(
+               f"❌ Allocations per sim: {alloc_per_sim:.1f} (target: <10)"
+           )
+       else:
+           print(f"✅ Allocations per sim: {alloc_per_sim:.1f} (target: <10)")
+
+       # Criterion 2: State cloning <5% of time
+       clone_pct = (state_clone_ms / total_time_ms) * 100
+       if clone_pct >= 5.0:
+           errors.append(
+               f"❌ State cloning: {clone_pct:.1f}% of time (target: <5%)"
+           )
+       else:
+           print(f"✅ State cloning: {clone_pct:.1f}% of time (target: <5%)")
+
+       # Criterion 3: Throughput ≥7,500 sims/sec
+       if throughput < 7500:
+           errors.append(
+               f"❌ Throughput: {throughput:.0f} sims/sec (target: ≥7,500)"
+           )
+       else:
+           print(f"✅ Throughput: {throughput:.0f} sims/sec (target: ≥7,500)")
+
+       # Criterion 4: Speedup ≥3.0× vs baseline
+       baseline = 2659  # From profiling campaign
+       speedup = throughput / baseline
+       if speedup < 3.0:
+           errors.append(
+               f"❌ Speedup: {speedup:.2f}× (target: ≥3.0×)"
+           )
+       else:
+           print(f"✅ Speedup: {speedup:.2f}× vs baseline {baseline} sims/sec")
+
+       return errors
+
+   def main():
+       print("=" * 60)
+       print("State Pooling Validation")
+       print("=" * 60)
+
+       print("\n1. Running profiling benchmark...")
+       data = run_profiling_benchmark()
+
+       print("\n2. Validating results...")
+       errors = validate_results(data)
+
+       if errors:
+           print("\n" + "=" * 60)
+           print("❌ VALIDATION FAILED")
+           print("=" * 60)
+           for error in errors:
+               print(error)
+           sys.exit(1)
+       else:
+           print("\n" + "=" * 60)
+           print("✅ VALIDATION PASSED")
+           print("=" * 60)
+           print("State pooling optimization successful!")
+           sys.exit(0)
+
+   if __name__ == '__main__':
+       main()
+   ```
+
+2. **Run validation script**:
+   ```bash
+   python scripts/validate_state_pooling.py
+   ```
+
+**Acceptance Criteria**:
+
+✅ **AC1**: `alloc_slow_path` counter <20,000 for 2,000 sims (<10 per sim)
+✅ **AC2**: `state_clone_total` <50 ms (<5% of total time)
+✅ **AC3**: Throughput ≥7,500 sims/sec (3.0× minimum improvement)
+✅ **AC4**: Speedup ≥3.0× vs baseline (2,659 sims/sec)
+✅ **AC5**: Statistical validation (N≥10 runs, t-test p<0.05, CV<5%)
+✅ **AC6**: 100% profiling capture rate (counters match expected)
+✅ **AC7**: No TSan errors or memory leaks
+
+**Test Commands**:
+```bash
+# Full validation
+python scripts/validate_state_pooling.py
+
+# Expected output:
+# ✅ Allocations per sim: 8.3 (target: <10)
+# ✅ State cloning: 3.2% of time (target: <5%)
+# ✅ Throughput: 9,214 sims/sec (target: ≥7,500)
+# ✅ Speedup: 3.47× vs baseline 2659 sims/sec
+# ✅ VALIDATION PASSED
+```
+
+**Definition of Done**:
+- [ ] Validation script created and executable
+- [ ] Profiling benchmark runs successfully
+- [ ] All acceptance criteria met
+- [ ] Profiling capture rate 100%
+- [ ] No TSan errors or memory leaks
+- [ ] Results documented in profiling report
+
+---
+
+### T018i: Performance Benchmarking
+
+**Summary**: Comprehensive performance benchmarking across all configurations to establish new baseline.
+
+**Rationale**:
+- Establish new performance baseline with state pooling
+- Validate thread scaling improvements
+- Generate statistical comparison vs original baseline
+- Create benchmark report for documentation
+
+**Affected Files**:
+- `profiling_reports/state_pooling_baseline_YYYYMMDD/` (new directory)
+
+**Dependencies**: T018h (requires profiling validation)
+
+**Can Parallelize**: NO (sequential benchmarking)
+
+**Estimated Effort**: 2 hours
+
+**Step-by-Step Implementation**:
+
+1. **Run comprehensive benchmark campaign**:
+   ```bash
+   # Run profiling campaign (subset of original 560 trials)
+   ./scripts/run_profiling_suite.sh \
+       --simulations 2000,4000 \
+       --threads 1,2,4,8 \
+       --batch-sizes 32,64 \
+       --repetitions 5 \
+       --campaign-id state_pooling_baseline
+   ```
+
+2. **Analyze results vs original baseline**:
+   ```bash
+   python scripts/analyze_profiling_results.py \
+       --campaign profiling_reports/state_pooling_baseline_* \
+       --baseline profiling_suite_20251016_124134 \
+       --output profiling_reports/state_pooling_comparison.json
+   ```
+
+3. **Generate benchmark report**:
+   ```bash
+   python scripts/generate_benchmark_report.py \
+       --comparison profiling_reports/state_pooling_comparison.json \
+       --output profiling_reports/STATE_POOLING_REPORT.md
+   ```
+
+**Acceptance Criteria**:
+
+✅ **AC1**: Benchmark campaign completes successfully (100% trials)
+✅ **AC2**: Mean throughput ≥7,500 sims/sec across all configs
+✅ **AC3**: Speedup ≥3.0× vs original baseline (statistical significance p<0.05)
+✅ **AC4**: Thread scaling shows improvement (efficiency ≥60% @ 8 threads)
+✅ **AC5**: Coefficient of variation CV<5% (stable performance)
+✅ **AC6**: Benchmark report generated with statistical analysis
+
+**Test Commands**:
+```bash
+# Run benchmark campaign
+./scripts/run_profiling_suite.sh --quick-test
+
+# Analyze results
+python scripts/analyze_profiling_results.py \
+    --campaign profiling_reports/state_pooling_baseline_* \
+    --baseline profiling_suite_20251016_124134
+
+# Verify acceptance criteria
+python scripts/verify_benchmark_criteria.py \
+    --campaign profiling_reports/state_pooling_baseline_*
+
+# Expected output:
+# ✅ Mean throughput: 9,214 sims/sec (target: ≥7,500)
+# ✅ Speedup: 3.47× (p=0.0001, significant)
+# ✅ Thread efficiency @ 8T: 67% (target: ≥60%)
+# ✅ CV: 3.2% (target: <5%)
+# ✅ ALL CRITERIA MET
+```
+
+**Definition of Done**:
+- [ ] Benchmark campaign completed (100+ trials)
+- [ ] Statistical analysis completed
+- [ ] Benchmark report generated
+- [ ] All acceptance criteria verified
+- [ ] Results archived in profiling_reports/
+- [ ] STATE_POOLING_REPORT.md written
+
+---
+
+## 3. Phase 2: OpenMP Investigation (OPTIONAL)
+
+### T019a: OpenMP Linkage Verification
+
+**Summary**: Verify that OpenMP runtime is properly linked to the compiled C++ extension.
+
+**Rationale**:
+- Profiling shows `omp_parallel_success` = 0 across all 560 trials
+- Suspected root cause: OpenMP not linked or environment variable override
+- Quick diagnostic to rule out linkage issues
+
+**Affected Files**:
+- `scripts/verify_openmp_linkage.sh` (new diagnostic script)
+
+**Dependencies**: None (independent diagnostic)
+
+**Can Parallelize**: YES (can run in parallel with other tasks)
+
+**Estimated Effort**: 2 hours
+
+**Step-by-Step Implementation**:
+
+1. **Create linkage verification script**:
+   ```bash
+   #!/bin/bash
+   # scripts/verify_openmp_linkage.sh
+
+   set -e
+
+   echo "OpenMP Linkage Verification"
+   echo "=============================="
+
+   # Find compiled extension
+   EXT_PATH=$(find venv/lib/python*/site-packages -name "mcts_py*.so" | head -1)
+
+   if [ -z "$EXT_PATH" ]; then
+       echo "❌ ERROR: mcts_py extension not found"
+       exit 1
+   fi
+
+   echo "Extension path: $EXT_PATH"
+   echo ""
+
+   # Check for OpenMP library linkage
+   echo "1. Checking OpenMP library linkage..."
+   if ldd "$EXT_PATH" | grep -q "omp"; then
+       echo "✅ OpenMP library linked:"
+       ldd "$EXT_PATH" | grep omp
+   else
+       echo "❌ OpenMP library NOT linked"
+       echo "   Possible fixes:"
+       echo "   - Add -fopenmp to CXXFLAGS and LDFLAGS"
+       echo "   - Rebuild: pip install -e . --force-reinstall --no-deps"
+       exit 1
+   fi
+
+   # Check environment variables
+   echo ""
+   echo "2. Checking environment variables..."
+   if [ -z "$OMP_NUM_THREADS" ]; then
+       echo "✅ OMP_NUM_THREADS not set (will use all cores)"
+   else
+       echo "⚠️  OMP_NUM_THREADS=$OMP_NUM_THREADS"
+       if [ "$OMP_NUM_THREADS" -eq 1 ]; then
+           echo "   WARNING: Set to 1, OpenMP will use single thread!"
+           echo "   Fix: export OMP_NUM_THREADS=12"
+       fi
+   fi
+
+   # Check OpenMP symbols in binary
+   echo ""
+   echo "3. Checking OpenMP symbols in binary..."
+   if nm -D "$EXT_PATH" | grep -q "omp_get_num_threads"; then
+       echo "✅ OpenMP symbols found in binary"
+   else
+       echo "❌ OpenMP symbols NOT found in binary"
+       exit 1
+   fi
+
+   echo ""
+   echo "=============================="
+   echo "✅ OpenMP linkage verification PASSED"
+   ```
+
+2. **Run verification script**:
+   ```bash
+   chmod +x scripts/verify_openmp_linkage.sh
+   ./scripts/verify_openmp_linkage.sh
+   ```
+
+**Acceptance Criteria**:
+
+✅ **AC1**: OpenMP library (libgomp.so or libomp.so) linked to extension
+✅ **AC2**: OMP_NUM_THREADS either unset or >1
+✅ **AC3**: OpenMP symbols (omp_get_num_threads, etc.) found in binary
+✅ **AC4**: Diagnostic script runs without errors
+
+**Test Commands**:
+```bash
+# Run verification
+./scripts/verify_openmp_linkage.sh
+
+# Expected output:
+# ✅ OpenMP library linked: libgomp.so.1
+# ✅ OMP_NUM_THREADS not set (will use all cores)
+# ✅ OpenMP symbols found in binary
+# ✅ OpenMP linkage verification PASSED
+```
+
+**Definition of Done**:
+- [ ] Verification script created and executable
+- [ ] OpenMP linkage confirmed
+- [ ] Environment variables checked
+- [ ] OpenMP symbols verified
+- [ ] Diagnostic report generated
+
+---
+
+### T019b: OpenMP Instrumentation & Rebuild
+
+**Summary**: Add debug instrumentation to OpenMP pragmas and rebuild with explicit flags.
+
+**Rationale**:
+- Add logging to verify OpenMP activation at runtime
+- Rebuild with explicit -fopenmp flags
+- Test with simple OpenMP program first
+
+**Affected Files**:
+- `cpp_extensions/mcts/dlpack_bridge.cpp` (add debug instrumentation)
+- `test_openmp.cpp` (new test program)
+
+**Dependencies**: T019a (linkage verified)
+
+**Can Parallelize**: NO (requires sequential debugging)
+
+**Estimated Effort**: 4 hours
+
+**Implementation**: See TECHNICAL_PLAN.md Section 5.2 for detailed procedure.
+
+**Acceptance Criteria**:
+- ✅ Debug instrumentation added to dlpack_bridge.cpp
+- ✅ Simple OpenMP test program compiles and runs
+- ✅ Rebuild with explicit -fopenmp flags succeeds
+- ✅ Runtime output shows OpenMP activation
+
+---
+
+### T019c: OpenMP Validation & Thread Scaling
+
+**Summary**: Validate OpenMP parallelization and measure thread scaling improvements.
+
+**Rationale**:
+- Verify `omp_parallel_success` counter >0
+- Measure thread scaling improvements
+- Validate feature extraction speedup
+
+**Affected Files**:
+- `scripts/validate_openmp.py` (new validation script)
+
+**Dependencies**: T019b (rebuild complete)
+
+**Can Parallelize**: NO (sequential validation)
+
+**Estimated Effort**: 2 hours
+
+**Implementation**: See TECHNICAL_PLAN.md Section 5.4 for validation script.
+
+**Acceptance Criteria**:
+- ✅ `omp_parallel_success` counter >0
+- ✅ Thread scaling shows >1.0× speedup with multiple threads
+- ✅ Feature extraction time <1.0ms per batch-64
+- ✅ Overall throughput improvement 1.5-2.0× (if successful)
+
+---
+
+## 4. Phase 3: Memory Allocation Optimization (REFINEMENT)
+
+### T020a: Arena Expansion Design
+
+**Summary**: Design enhanced thread-local arena to cover all allocation types, not just nodes.
+
+**Rationale**:
+- Current arenas cover node allocation only
+- Residual allocations from vectors, strings, temporary objects
+- Target: <10 allocations per simulation (vs 8-10 post-state-pooling)
+
+**Affected Files**:
+- `cpp_extensions/mcts/enhanced_arena.hpp` (new design document)
+
+**Dependencies**: T018i (state pooling complete and benchmarked)
+
+**Can Parallelize**: YES (independent design task)
+
+**Estimated Effort**: 4 hours
+
+**Acceptance Criteria**:
+- ✅ Enhanced arena design documented
+- ✅ Separate pools for nodes vs general allocations
+- ✅ Free list design for deallocation reuse
+- ✅ Size class bucketing (small/medium/large)
+
+---
+
+### T020b: Enhanced Arena Implementation
+
+**Summary**: Implement enhanced thread-local arena with multiple size classes.
+
+**Affected Files**:
+- `cpp_extensions/mcts/enhanced_arena.hpp` (new)
+- `cpp_extensions/mcts/enhanced_arena.cpp` (new)
+
+**Dependencies**: T020a
+
+**Can Parallelize**: NO (implementation task)
+
+**Estimated Effort**: 1 day
+
+**Acceptance Criteria**:
+- ✅ Enhanced arena implemented
+- ✅ Separate pools for different allocation sizes
+- ✅ Free list for reuse
+- ✅ Code compiles and links
+
+---
+
+### T020c: Allocation Profiling & Validation
+
+**Summary**: Run profiling to validate allocation reduction.
+
+**Affected Files**:
+- `scripts/validate_allocations.py` (new validation script)
+
+**Dependencies**: T020b
+
+**Can Parallelize**: NO (sequential validation)
+
+**Estimated Effort**: 4 hours
+
+**Acceptance Criteria**:
+- ✅ `alloc_slow_path` counter <20,000 for 2,000 sims
+- ✅ Fast-path allocation rate ≥99.5%
+- ✅ No memory leaks (valgrind clean)
+- ✅ Throughput improvement ≥1.2× (AFTER state pooling)
+
+---
+
+## 5. Phase 4: Validation & Documentation
+
+### T021: Comprehensive Profiling Campaign
+
+**Summary**: Run comprehensive profiling campaign with all optimizations to establish final baseline.
+
+**Rationale**:
+- Validate combined impact of all optimizations
+- Generate statistical comparison vs original baseline
+- Establish production performance baseline
+
+**Affected Files**:
+- `profiling_reports/final_baseline_YYYYMMDD/` (new directory)
+
+**Dependencies**: T018i (state pooling), T020c (allocations, optional)
+
+**Can Parallelize**: NO (sequential benchmarking)
+
+**Estimated Effort**: 1 day
+
+**Step-by-Step Implementation**:
+
+1. **Run full profiling campaign** (560 trials):
+   ```bash
+   # Configuration matrix:
+   # - Simulations: [2000, 4000, 8000, 16000]
+   # - Threads: [1, 2, 4, 6, 8, 10, 12]
+   # - Batch sizes: [16, 32, 64, 128]
+   # - Repetitions: 5 per configuration
+   # Total: 4 × 7 × 4 × 5 = 560 trials
+
+   ./scripts/run_profiling_suite.sh --production
+   ```
+
+2. **Analyze results**:
+   ```bash
+   python scripts/analyze_profiling_results.py \
+       --campaign profiling_reports/final_baseline_* \
+       --baseline profiling_suite_20251016_124134 \
+       --output profiling_reports/FINAL_COMPARISON.json
+   ```
+
+3. **Verify target achievement**:
+   ```bash
+   python scripts/verify_target_achievement.py \
+       --campaign profiling_reports/final_baseline_* \
+       --target 8000
+   ```
+
+**Acceptance Criteria**:
+
+✅ **AC1**: Campaign completes 560 trials successfully
+✅ **AC2**: Mean throughput ≥8,000 sims/sec (PRIMARY TARGET)
+✅ **AC3**: State cloning <5% of time
+✅ **AC4**: Thread efficiency ≥60% @ 8 threads
+✅ **AC5**: GPU utilization ≥80% during search
+✅ **AC6**: Statistical significance vs baseline (p<0.05)
+✅ **AC7**: Coefficient of variation CV<5%
+✅ **AC8**: No TSan errors or memory leaks
+
+**Test Commands**:
+```bash
+# Run production campaign
+./scripts/run_profiling_suite.sh --production
+
+# Verify target achievement
+python scripts/verify_target_achievement.py \
+    --campaign profiling_reports/final_baseline_* \
+    --target 8000
+
+# Expected output:
+# ✅ Mean throughput: 9,838 sims/sec (target: ≥8,000)
+# ✅ State cloning: 3.2% of time (target: <5%)
+# ✅ Thread efficiency: 67% @ 8T (target: ≥60%)
+# ✅ GPU utilization: 82% (target: ≥80%)
+# ✅ Speedup: 3.70× vs baseline (p<0.0001)
+# ✅ CV: 3.2% (stable)
+# ✅ TARGET ACHIEVED
+```
+
+**Definition of Done**:
+- [ ] 560-trial campaign completed
+- [ ] Statistical analysis completed
+- [ ] Target ≥8,000 sims/sec achieved
+- [ ] All acceptance criteria verified
+- [ ] Results archived and documented
+
+---
+
+### T022: Documentation & Handoff
+
+**Summary**: Update documentation with final results and create handoff report.
+
+**Rationale**:
+- Document achieved performance improvements
+- Update profiling analysis with final data
+- Create comprehensive summary for stakeholders
+
+**Affected Files**:
+- `FINAL_PROFILING_ANALYSIS_20251016.md` (update with final results)
+- `specs/004-mcts-throughput-recovery/spec.md` (mark complete)
+- `specs/004-mcts-throughput-recovery/COMPLETION_REPORT.md` (new)
+
+**Dependencies**: T021 (campaign complete)
+
+**Can Parallelize**: YES (documentation tasks)
+
+**Estimated Effort**: 4 hours
+
+**Step-by-Step Implementation**:
+
+1. **Update FINAL_PROFILING_ANALYSIS.md**:
+   - Add section "Post-Optimization Results"
+   - Include final throughput numbers
+   - Document speedup vs baseline
+   - Archive original baseline for comparison
+
+2. **Create COMPLETION_REPORT.md**:
+   ```markdown
+   # Spec 004 Completion Report
+   ## MCTS Throughput Recovery - Final Results
+
+   ### Executive Summary
+   - **Target**: ≥8,000 sims/sec
+   - **Achieved**: 9,838 sims/sec ✅
+   - **Improvement**: 3.70× vs baseline (2,659 sims/sec)
+   - **Status**: TARGET EXCEEDED
+
+   ### Optimizations Implemented
+   1. State Pooling (T018): 3.7× gain
+   2. OpenMP Parallelization (T019): [if completed]
+   3. Allocation Reduction (T020): [if completed]
+
+   ### Performance Validation
+   - Profiling campaign: 560 trials, 100% capture
+   - Statistical significance: p<0.0001
+   - Thread efficiency: 67% @ 8 threads
+   - GPU utilization: 82%
+
+   ### Next Steps
+   - Deploy to production
+   - Monitor performance in self-play
+   - [Optional] Multi-actor implementation
+   ```
+
+3. **Update spec.md status**:
+   ```markdown
+   **Status**: ✅ COMPLETE
+   **Completion Date**: 2025-10-XX
+   **Final Throughput**: 9,838 sims/sec (123% of target)
+   ```
+
+**Acceptance Criteria**:
+
+✅ **AC1**: FINAL_PROFILING_ANALYSIS.md updated with post-optimization results
+✅ **AC2**: COMPLETION_REPORT.md created with comprehensive summary
+✅ **AC3**: spec.md status updated to COMPLETE
+✅ **AC4**: All profiling sessions archived with git commit hashes
+✅ **AC5**: Performance graphs and charts generated
+✅ **AC6**: Handoff document ready for review
+
+**Test Commands**:
+```bash
+# Verify documentation exists
+test -f specs/004-mcts-throughput-recovery/COMPLETION_REPORT.md
+test -f FINAL_PROFILING_ANALYSIS_20251016.md
+
+# Verify spec status updated
+grep -q "Status: ✅ COMPLETE" specs/004-mcts-throughput-recovery/spec.md
+
+# Verify profiling sessions archived
+git log --grep="profiling campaign" -n 5
+```
+
+**Definition of Done**:
+- [ ] FINAL_PROFILING_ANALYSIS.md updated
+- [ ] COMPLETION_REPORT.md created
+- [ ] spec.md marked COMPLETE
+- [ ] Profiling sessions archived
+- [ ] Performance graphs generated
+- [ ] Documentation review completed
+
+---
+
+### T023: Rollback Procedure (CONDITIONAL)
+
+**Summary**: Rollback to last known-good commit if validation fails.
+
+**Rationale**:
+- Critical safety mechanism if optimizations introduce regressions
+- Ensures baseline performance can always be restored
+- Provides structured root cause analysis process
+
+**Trigger Conditions**:
+- Throughput < 95% of baseline (regression detected)
+- `alloc_slow_path` counter increases >10% over baseline
+- TSan reports data races
+- Memory leaks detected (valgrind or RSS growth)
+- Search quality regression: win rate <99.5% vs baseline
+
+**Affected Files**:
+- All files modified in T018, T019, T020
+
+**Dependencies**: T018h, T021 (validation tasks)
+
+**Can Parallelize**: NO (emergency procedure)
+
+**Estimated Effort**: 2 hours
+
+**Step-by-Step Procedure**:
+
+1. **Identify last known good commit**:
+   ```bash
+   # Find last commit with passing benchmarks
+   git log --grep="benchmark: PASS" -n 1
+
+   # Alternative: Use git bisect
+   git bisect start
+   git bisect bad HEAD
+   git bisect good <last-known-good-commit>
+   ```
+
+2. **Revert changes**:
+   ```bash
+   # Revert to last known good
+   git revert --no-commit <bad-commit>..<HEAD>
+   git commit -m "Rollback: State pooling regression (see issue #XXX)"
+   ```
+
+3. **Rebuild**:
+   ```bash
+   # Clean rebuild without optimizations
+   export CXXFLAGS="-O3 -march=znver3 -fopenmp"
+   pip install -e . --force-reinstall --no-deps
+   ```
+
+4. **Validate rollback**:
+   ```bash
+   python scripts/validate_rollback.py \
+       --baseline profiling_suite_20251016_124134 \
+       --iterations 10
+
+   # Expected output:
+   # ✅ Throughput: 2,659 ± 53 sims/sec (baseline restored)
+   # ✅ Allocation overhead: 223 per sim (baseline restored)
+   # ✅ TSan clean (0 races)
+   ```
+
+5. **Root cause analysis**:
+   ```bash
+   # Extract profiling data from failed run
+   cd profiling_reports/failed_campaign_YYYYMMDD_HHMMSS/
+
+   # Generate failure report
+   python scripts/analyze_failure.py \
+       --campaign . \
+       --baseline profiling_suite_20251016_124134 \
+       --output failure_report.md
+
+   # Review failure report
+   cat failure_report.md
+   ```
+
+6. **Create issue with evidence**:
+   ```bash
+   gh issue create \
+       --title "State pooling regression: Throughput below target" \
+       --body-file failure_report.md \
+       --label "bug,performance,rollback"
+
+   # Archive failed profiling session
+   git add profiling_reports/failed_campaign_*/
+   git commit -m "Archive failed profiling session for state pooling"
+   ```
+
+7. **Redesign approach**:
+   - Review profiling data to understand failure mode
+   - Propose alternative implementation approach
+   - Document expected impact and risks
+   - Submit for review before re-implementation
+
+**Acceptance Criteria**:
+
+✅ **AC1**: Baseline performance restored within 5% (2,659 ± 133 sims/sec)
+✅ **AC2**: Allocation overhead matches baseline (223 ± 10 per sim)
+✅ **AC3**: TSan clean (0 races)
+✅ **AC4**: Memory leaks fixed (valgrind clean)
+✅ **AC5**: Root cause documented in GitHub issue
+✅ **AC6**: Redesign plan proposed before re-implementation
+
+**Test Commands**:
+```bash
+# Validate rollback
+python scripts/validate_rollback.py \
+    --baseline profiling_suite_20251016_124134 \
+    --iterations 10
+
+# Expected output:
+# ✅ Throughput: 2,659 ± 53 sims/sec (baseline restored)
+# ✅ Allocations per sim: 223 (baseline restored)
+# ✅ TSan clean (0 races)
+# ✅ ROLLBACK SUCCESSFUL
+```
+
+**Definition of Done**:
+- [ ] Code reverted to last known-good commit
+- [ ] Baseline performance validated (within 5%)
+- [ ] Root cause analysis documented
+- [ ] GitHub issue created with failure report
+- [ ] Failed profiling session archived
+- [ ] Redesign plan proposed and approved
+
+---
+
+## 6. Appendix: Quick Reference
+
+### 6.1 Critical Path Summary
+
+```
+T018a (4h) → T018b (1d) → T018c (4h) → T018f (4h) → T018g (6h) → T018h (4h) → T018i (2h)
+                                       ↑
+                              T018d (4h) ┘
+                              T018e (4h) ┘
+
+Total: 2.5 days (with parallelization)
+```
+
+### 6.2 Acceptance Criteria Quick Check
+
+**State Pooling (T018)**:
+- [ ] `alloc_slow_path` <20,000 for 2,000 sims
+- [ ] `state_clone_total` <50 ms (<5% of time)
+- [ ] Throughput ≥7,500 sims/sec
+- [ ] Speedup ≥3.0× vs baseline
+- [ ] TSan clean (0 races)
+
+**OpenMP (T019)** - OPTIONAL:
+- [ ] `omp_parallel_success` >0
+- [ ] Thread scaling >1.0× with multiple threads
+- [ ] Feature extraction <1.0ms per batch-64
+
+**Final Target (T021)**:
+- [ ] Throughput ≥8,000 sims/sec ✅ **PRIMARY**
+- [ ] State cloning <5% of time
+- [ ] Thread efficiency ≥60% @ 8 threads
+- [ ] GPU utilization ≥80%
+- [ ] Statistical significance p<0.05
+
+### 6.3 Validation Script Quick Reference
+
+```bash
+# State pooling validation
+python scripts/validate_state_pooling.py
+
+# OpenMP validation
+./scripts/verify_openmp_linkage.sh
+python scripts/validate_openmp.py
+
+# Allocation validation
+python scripts/validate_allocations.py
+
+# Final target verification
+python scripts/verify_target_achievement.py --target 8000
+```
+
+### 6.4 Build Commands Quick Reference
+
+```bash
+# Clean rebuild with profiling
+export CXXFLAGS="-O3 -march=znver3 -fopenmp -DPROFILE_LEVEL_VALUE=3"
+export PROFILE_BUFFER_SIZE=524288  # 512K samples (avoid overflow)
+rm -rf build/ *.so
+pip install -e . --force-reinstall --no-deps
+
+# TSan build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Debug -DSANITIZE_THREAD=ON
+make -j$(nproc)
+
+# Release build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+```
+
+### 6.5 Performance Target Reference
+
+| Metric | Baseline | Target | Projected |
+|--------|----------|--------|-----------|
+| Throughput | 2,659 sims/sec | ≥8,000 | 9,838 |
+| State clone % | 86.6% | <5% | 3.2% |
+| Allocations/sim | 223 | <10 | 8 |
+| Thread efficiency | 12.7% | ≥60% | 67% |
+| GPU utilization | ~70% | ≥80% | 82% |
+
+---
+
+**END OF TASKS.md v1.0**
+
+**Next Steps**:
+1. Begin implementation with T018a (IGameState::copyFrom() API Design)
+2. Follow dependency order strictly
+3. Validate each task with acceptance criteria before proceeding
+4. Archive profiling sessions with git commits
+5. Achieve ≥8,000 sims/sec target

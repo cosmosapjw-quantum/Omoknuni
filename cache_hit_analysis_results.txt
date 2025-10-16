@@ -1,9 +1,0 @@
-Cache Hit Rate Analysis Results
-======================================================================
-
-Throughput:        884.5 sims/sec
-Cache hit rate:    -0.1%
-Total simulations: 800
-NN evaluations:    35
-States evaluated:  801
-GPU utilization:   53.5%

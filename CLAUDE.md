@@ -18,23 +18,22 @@ This is a high-performance AlphaZero-style reinforcement learning engine targeti
 - **CPU**: Shared-tree MCTS with 2-4 threads using Structure-of-Arrays memory layout (optimal efficiency)
 - **GPU**: Asynchronous micro-batched neural network inference (batch size 64, 0.5-1.0ms timeout)
 - **Target Hardware**: AMD Ryzen 9 5900X (12C/24T, dual-CCD) + NVIDIA RTX 3060 Ti (8GB VRAM, Ampere)
-- **Current Performance**: 2,147 sims/sec (REGRESSION from 3,831 baseline, cause: state cloning waste + coordination overhead)
-- **Performance Goals**: 80% GPU utilization, <1GB tree memory, 200-300 games/hour self-play
-- **Bottleneck** (CORRECTED 2025-10-14): CPU coordination (67.2% of time) vs GPU inference (32.8%) - NOT GPU!
+- **Current Performance**: 2,659 sims/sec (measured mean, profiling campaign profiling_suite_20251016_124134, 560 trials, 100% capture)
+- **Performance Goals**: ≥8,000 sims/sec, 80% GPU utilization, <1GB tree memory, 200-300 games/hour self-play
+- **Bottleneck** (PROFILING-VALIDATED 2025-10-16): State cloning (86.6% of time) due to 223 allocations per clone
 - **Spec 004 Status**: Profiling complete ✅, Ready for Priority #1 fix (state pooling) 🔴
-- **Validation Results (2025-10-14 - COMPREHENSIVE PROFILING COMPLETE)**:
-  - ✅ **FP16**: Working correctly (1.72× speedup, T008f complete)
-  - ✅ **OpenMP**: Working correctly (8.64ms→1.57ms @ 12 threads) BUT NOT THE BOTTLENECK
-  - ✅ **MCTS Throughput**: SAME regardless of OMP threads (1,543 vs 1,529 sims/sec)
-  - ❌ **WRONG ANALYSIS**: Feature extraction NOT the primary bottleneck (batching amortizes cost)
-  - ✅ **CORRECT ANALYSIS**: State cloning (2-3× per sim) + thread contention (60% idle) are real issues
-- **Real Bottlenecks** (per review.txt + validation):
-  1. **State cloning waste**: 2-3× clones per simulation (review.txt lines 37-54) - HIGHEST PRIORITY
-  2. **Thread contention**: 60% idle time, global mutex, spin-waits (review.txt lines 71-136)
-  3. **Thread affinity**: Suboptimal CCD pinning (review.txt lines 244-250)
-  4. **Python interface**: Batch callback overhead (review.txt lines 258-307)
-- **Expected Performance After Fixes**: 7,300-8,500 sims/sec (91-106% of 8k target)
-- **Full Analysis**: [COMPREHENSIVE_CORRECTED_PLAN_2025-10-14.md](COMPREHENSIVE_CORRECTED_PLAN_2025-10-14.md)
+- **Validation Results (2025-10-16 - 560-TRIAL PROFILING CAMPAIGN)**:
+  - 🔴 **PRIMARY BOTTLENECK**: State cloning = 86.6% of execution time (418μs per clone vs 20μs target)
+  - 🔴 **ROOT CAUSE**: 223 allocations per clone (~2μs each = 446μs allocation overhead)
+  - ⚠️ **OpenMP**: NOT ACTIVE (0/560 trials) - explains flat thread scaling
+  - ⚠️ **Thread efficiency**: 12.7% @ 8 threads (vs target ≥60%)
+  - ✅ **GPU utilization**: ~70% (not the bottleneck - only 2.1% of time)
+  - ✅ **FP16**: Working correctly (1.72× speedup validated)
+- **Optimization Priorities** (profiling-grounded):
+  1. **State pooling (T018)**: Expected 3.7× gain → 9,838 sims/sec ✅ **Exceeds 8k target ALONE**
+  2. **Fix OpenMP (T019)**: Optional 1.5-2.0× additional → 14,757-19,676 sims/sec
+  3. **Reduce allocations (T020)**: Optional 1.2-1.5× additional → 17,708-29,514 sims/sec
+- **Full Analysis**: [FINAL_PROFILING_ANALYSIS_20251016.md](FINAL_PROFILING_ANALYSIS_20251016.md)
 
 ## Architecture Overview
 
@@ -396,15 +395,15 @@ See `docs/mcts_cpp_runner.md` for detailed architecture and `docs/performance/cp
 | Node footprint | <64 bytes | ✅ 27 bytes | ✅ Complete |
 | Thread safety | TSan clean | ✅ 6 races fixed | ✅ Complete |
 
-**Critical Finding (Validation 2025-10-13)**: Feature extraction loop at dlpack_bridge.cpp:431-434 NOT parallelized with OpenMP. This 7.5ms overhead caps throughput at ~1,675 states/sec, explaining regression from 3,831 to 2,147 sims/sec. GPU hardware limit (RTX 3060 Ti @ FP16) caps realistic target at 8,000-10,000 sims/sec.
+**Critical Finding (Profiling 2025-10-16)**: Comprehensive profiling campaign (560 trials, 100% capture) revealed state cloning as PRIMARY bottleneck (86.6% of execution time, 418μs per clone). GPU inference is only 2.1% of time. OpenMP is working (8.64ms → 1.57ms) but secondary priority. State pooling (T018) alone achieves 9,838 sims/sec target.
 
-**Spec 004 Progress (2025-10-13)**:
+**Spec 004 Progress (2025-10-16)**:
 - **Phase 1 Complete** (✅): WU-UCT virtual loss, epoch clearing, busy-edge masking, root pre-expansion, thread affinity, collision metrics
-- **Phase 2 Complete + Validated** (✅): Lock-free queue (T006/T006b/T006c ✅), DLPack bridge (T007a-g ✅), FP16 mixed precision (T008f ✅ T-VALID-1 PASS), Python integration (T008a-b,e ✅), thread arenas (T009a-f ✅), pending map replacement (T010 ✅)
-- **Phase 3 Partial** (🟡): Persistent coordinator (T011 ✅), batched results (T014 ✅), remaining optimizations deferred
-- **Current Status** (🔴): Validation complete, OpenMP parallelization missing (critical blocker)
-- **Critical Next Steps**: Fix OpenMP → re-validate T-VALID-2 → T017 baseline investigation + T016 benchmarking
-- **Realistic Path**: Fix OpenMP → 2,000-3,000 sims/sec (est) → T017/T016 analysis → parameter tuning → 6,000-10,000 sims/sec (target range)
+- **Phase 2 Complete + Validated** (✅): Lock-free queue (T006/T006b/T006c ✅), DLPack bridge (T007a-g ✅), FP16 mixed precision (T008f ✅ 1.72× speedup), Python integration (T008a-b,e ✅), thread arenas (T009a-f ✅), pending map replacement (T010 ✅)
+- **Phase 3 Partial** (🟡): Persistent coordinator (T011 ✅), batched results (T014 ✅), state pooling (T018 - CRITICAL PATH, ready to implement)
+- **Current Status** (🟢): Profiling complete, root cause identified, clear path to 8k target
+- **Critical Next Steps**: Implement T018 (state pooling) → 9,838 sims/sec (exceeds 8k target)
+- **Path to Target**: T018 state pooling (critical) → T019 OpenMP investigation (optional for 14k+ stretch goal)
 
 See `specs/004-mcts-throughput-recovery/spec.md` for detailed status and `review.pdf` for comprehensive analysis.
 

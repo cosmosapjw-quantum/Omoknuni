@@ -141,12 +141,15 @@ ProfileReport EnhancedProfiler::generate_report_internal() const {
         }
     }
 
-    // Compute statistics for each metric
+    // Compute statistics for each metric from samples
+    // Note: Only compute from samples if we have them; otherwise keep aggregate stats
     StatisticalAnalyzer analyzer;
     for (auto& [metric, samples] : metric_samples) {
         if (!samples.empty()) {
+            // Samples available - compute full statistics (mean, p50, p95, etc.)
             report.timing_stats[metric] = analyzer.compute(samples);
         }
+        // If no samples but we have aggregates, they're already in timing_stats via add_timing_aggregate
     }
 
     // Compute derived metrics

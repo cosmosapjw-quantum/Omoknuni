@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Spec 004: Profiling Campaign Complete - State Pooling Ready (2025-10-16)
+
+#### Comprehensive Profiling Campaign (profiling_suite_20251016_124134)
+- **Status**: PROFILING COMPLETE - Root cause identified, clear path to 8k target
+- **Achievement**: 560 trials, 100% capture rate, authoritative baseline established
+- **Key Findings**:
+  - **Baseline Performance**: 2,659 sims/sec (profiling-validated, supersedes all prior measurements)
+  - **Primary Bottleneck**: State cloning (86.6% of execution time, 418μs per clone)
+  - **Root Cause**: 223 allocations per clone (~2μs each = 446μs overhead)
+  - **GPU Inference**: NOT the bottleneck (only 2.1% of execution time, 20.66ms per batch-64)
+  - **OpenMP Status**: Working correctly (8.64ms → 1.57ms @ 12 threads), but 0/560 trials active
+  - **Thread Efficiency**: 12.7% @ 8 threads (target ≥60% after state pooling)
+
+#### Documentation Updates
+- **Updated Files** (aligned with profiling data):
+  - All files in `specs/004-mcts-throughput-recovery/` (research.md, quickstart.md, data-model.md, contracts/)
+  - `CLAUDE.md` - Updated baseline: 2,659 sims/sec, state pooling priority
+  - `README.md` - Updated status, performance tables, critical path
+  - Removed `specs/004-mcts-throughput-recovery/archive/` (192KB outdated data)
+
+#### Next Steps (T018 Critical Path)
+- **T018 State Pooling**: Thread-local state pools with copyFrom() API
+  - Expected: 2,659 → 9,838 sims/sec (3.7× improvement)
+  - Status: Ready to implement (2-3 days estimated)
+- **T019 OpenMP Investigation**: Optional (stretch goal for 14k+ sims/sec)
+- **T020 Allocation Reduction**: Optional refinement (~5% improvement)
+
+**Historical Note**: Previous measurements (3,831, 2,147 sims/sec) predated comprehensive profiling campaign and have been marked as deprecated in all documentation.
+
+---
+
 ### Spec 004: MCTS Throughput Recovery - Phase 4 In Progress (2025-10-10)
 
 #### T023: Update Performance Documentation (2025-10-10)

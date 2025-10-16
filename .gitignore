@@ -81,4 +81,9 @@ tmp/
 temp/
 
 # Profiling
-*.profresults/
+*.prof
+results/
+profiling_suite_*/
+profiling_reports/
+profiling_production_run.log
+wall_clock_validation_*.json

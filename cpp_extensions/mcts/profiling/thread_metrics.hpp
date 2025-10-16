@@ -34,8 +34,13 @@ struct TimingSample {
 
 /**
  * @brief Lock-free single-producer ring buffer for timing samples
+ *
+ * FIXED 2025-10-16: Increased default capacity from 4096 to 524288
+ * - Prevents buffer overflow during profiling (was dropping 88.6% of samples)
+ * - Supports 17,476 simulations @ 30 samples/sim
+ * - Memory: 16.4 MB per thread (192 MB for 12 threads) - acceptable
  */
-template<size_t Capacity = 4096>
+template<size_t Capacity = 524288>
 class TimingRingBuffer {
 public:
     static constexpr size_t kCapacity = Capacity;
@@ -204,7 +209,7 @@ public:
     /**
      * @brief Get timing buffer for analysis
      */
-    TimingRingBuffer<4096>& get_timing_buffer() {
+    TimingRingBuffer<524288>& get_timing_buffer() {
         return timing_buffer_;
     }
 
@@ -254,7 +259,7 @@ public:
 
 private:
     // Cache-line aligned for performance
-    alignas(64) TimingRingBuffer<4096> timing_buffer_;
+    alignas(64) TimingRingBuffer<524288> timing_buffer_;
     alignas(64) std::array<std::atomic<uint64_t>, static_cast<size_t>(ProfileMetric::MetricCount)> counters_;
     alignas(64) std::array<std::atomic<uint64_t>, static_cast<size_t>(ProfileMetric::MetricCount)> gauges_;
     alignas(64) std::array<std::atomic<uint64_t>, static_cast<size_t>(ProfileMetric::MetricCount)> total_durations_;

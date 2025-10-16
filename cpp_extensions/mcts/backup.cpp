@@ -4,10 +4,13 @@
  */
 
 #include "backup.hpp"
+#include "profiling/enhanced_profiler.hpp"
 #include <algorithm>
 #include <cmath>
 #include <atomic>
 #include <cassert>
+
+using namespace mcts::profiling;
 
 namespace mcts {
 
@@ -196,12 +199,16 @@ float BackupManager::clip_value(float value) const {
 }
 
 bool BackupManager::atomic_add_visit_count(NodeIndex node_index, float increment) {
+    PROFILE_SCOPE(ProfileMetric::BackupAtomicOperations);
+
     // Get pointer to visit count array for atomic operations
     float* visit_counts_ptr = tree_.get_visit_counts_ptr();
 
     // Use atomic operations to safely update visit count
     std::atomic<float>* atomic_visit = reinterpret_cast<std::atomic<float>*>(&visit_counts_ptr[node_index]);
 
+    // Track CAS retries (review.txt: atomic contention)
+    int retry_count = 0;
     float expected, desired;
     do {
         expected = atomic_visit->load(std::memory_order_acquire);
@@ -217,20 +224,39 @@ bool BackupManager::atomic_add_visit_count(NodeIndex node_index, float increment
             return false;  // Something is wrong - too many visits
         }
 
+        // Track retry on failure
+        if (retry_count > 0) {
+            PROFILE_COUNTER(ProfileMetric::CAS_RetryCount, 1);
+            PROFILE_COUNTER(ProfileMetric::BackupCASRetries, 1);
+        }
+        retry_count++;
+
     } while (!atomic_visit->compare_exchange_weak(expected, desired,
                                                   std::memory_order_release,
                                                   std::memory_order_acquire));
+
+    // Track success/failure counts
+    if (retry_count == 1) {
+        PROFILE_COUNTER(ProfileMetric::CAS_SuccessCount, 1);
+    } else {
+        PROFILE_COUNTER(ProfileMetric::CAS_FailureCount, retry_count - 1);
+        PROFILE_GAUGE(ProfileMetric::CAS_MaxRetriesPerOp, retry_count - 1);
+    }
 
     return true;
 }
 
 bool BackupManager::atomic_add_total_value(NodeIndex node_index, float increment) {
+    PROFILE_SCOPE(ProfileMetric::BackupValueUpdate);
+
     // Get pointer to total value array for atomic operations
     float* total_values_ptr = tree_.get_total_values_ptr();
 
     // Use atomic operations to safely update total value
     std::atomic<float>* atomic_value = reinterpret_cast<std::atomic<float>*>(&total_values_ptr[node_index]);
 
+    // Track CAS retries
+    int retry_count = 0;
     float expected, desired;
     do {
         expected = atomic_value->load(std::memory_order_acquire);
@@ -241,9 +267,24 @@ bool BackupManager::atomic_add_total_value(NodeIndex node_index, float increment
             return false;  // Something is wrong - extreme total value
         }
 
+        // Track retry on failure
+        if (retry_count > 0) {
+            PROFILE_COUNTER(ProfileMetric::CAS_RetryCount, 1);
+            PROFILE_COUNTER(ProfileMetric::BackupCASRetries, 1);
+        }
+        retry_count++;
+
     } while (!atomic_value->compare_exchange_weak(expected, desired,
                                                   std::memory_order_release,
                                                   std::memory_order_acquire));
+
+    // Track success/failure counts
+    if (retry_count == 1) {
+        PROFILE_COUNTER(ProfileMetric::CAS_SuccessCount, 1);
+    } else {
+        PROFILE_COUNTER(ProfileMetric::CAS_FailureCount, retry_count - 1);
+        PROFILE_GAUGE(ProfileMetric::CAS_MaxRetriesPerOp, retry_count - 1);
+    }
 
     return true;
 }

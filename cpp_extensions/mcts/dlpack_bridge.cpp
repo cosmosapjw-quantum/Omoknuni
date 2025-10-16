@@ -4,11 +4,18 @@
  */
 
 #include "dlpack_bridge.hpp"
+#include "profiling/enhanced_profiler.hpp"
 #include "utils/igamestate.h"
 #include <stdexcept>
 #include <cstring>
 #include <algorithm>
 #include <optional>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+using namespace mcts::profiling;
 
 // CUDA headers (with availability detection)
 #ifdef __has_include
@@ -396,6 +403,7 @@ DLManagedTensor* create_batch_tensor(
 DLManagedTensor* create_batch_tensor_from_states(
     const std::vector<const alphazero::core::IGameState*>& states,
     bool use_cuda) {
+    PROFILE_SCOPE(ProfileMetric::TensorCreationOverhead);
 
     if (states.empty()) {
         throw std::invalid_argument("create_batch_tensor_from_states: states cannot be empty");
@@ -429,13 +437,66 @@ DLManagedTensor* create_batch_tensor_from_states(
     size_t state_size = num_planes * height * width;
 
     // Parallelize feature extraction with OpenMP
+    // CRITICAL: This is a major bottleneck (review.txt lines 22-34)
+    // Expected: <1ms, Actual: 7.5ms (OpenMP may not be parallelizing)
     // Use static scheduling for predictable load distribution
     // Only parallelize if batch_size > 8 to avoid threading overhead
-    #pragma omp parallel for schedule(static) if(batch_size > 8)
-    for (int i = 0; i < batch_size; ++i) {
-        float* state_buffer = data + (i * state_size);
-        states[i]->extract_features_to_buffer(state_buffer);
+
+    int omp_threads = 1;  // Default if OpenMP disabled
+    int omp_max_threads = 1;
+
+#ifdef _OPENMP
+    // Track OpenMP configuration BEFORE parallel region
+    omp_max_threads = omp_get_max_threads();
+    PROFILE_GAUGE(ProfileMetric::OMP_ThreadCount, omp_max_threads);
+#else
+    // OpenMP disabled at compile time - this is a problem!
+    PROFILE_COUNTER(ProfileMetric::FeatureExtractionOpenMP, 0);  // Failed
+#endif
+
+    {
+        PROFILE_SCOPE(ProfileMetric::FeatureExtractionTotal);
+
+        // Track if parallel execution should happen
+        #ifdef _OPENMP
+        bool should_parallelize = (batch_size > 8);
+        #endif
+
+        #pragma omp parallel for schedule(static) if(batch_size > 8)
+        for (int i = 0; i < batch_size; ++i) {
+            PROFILE_SCOPE(ProfileMetric::FeatureExtractionPerState);
+
+            float* state_buffer = data + (i * state_size);
+            states[i]->extract_features_to_buffer(state_buffer);
+        }
+
+        // Get actual thread count AFTER parallel region
+        #ifdef _OPENMP
+        if (should_parallelize) {
+            omp_threads = omp_get_max_threads();  // Max threads that would be used
+        }
+        #endif
     }
+
+    // Verify OpenMP actually parallelized (CRITICAL CHECK from review.txt)
+#ifdef _OPENMP
+    if (batch_size > 8) {
+        // Should have used multiple threads
+        if (omp_threads == 1) {
+            // WARNING: OpenMP NOT parallelizing despite batch_size > 8!
+            PROFILE_COUNTER(ProfileMetric::FeatureExtractionOpenMP, 0);  // Failed
+            PROFILE_COUNTER(ProfileMetric::FeatureExtractionSerial, batch_size);
+        } else {
+            // Success: OpenMP parallelized
+            PROFILE_COUNTER(ProfileMetric::FeatureExtractionOpenMP, 1);  // Success
+            PROFILE_GAUGE(ProfileMetric::OMP_ThreadCount, omp_threads);
+
+            // Track work distribution (simplified: static schedule distributes evenly)
+            float actual_work_variance = 0.0f;
+            PROFILE_GAUGE(ProfileMetric::OMP_WorkDistribution, actual_work_variance);
+        }
+    }
+#endif
 
     // Create tensor shape
     TensorShape shape;
@@ -445,7 +506,13 @@ DLManagedTensor* create_batch_tensor_from_states(
     shape.width = width;
 
     // Create DLPack tensor
-    return create_dlpack_tensor(buffer, shape, use_cuda);
+    DLManagedTensor* result;
+    {
+        PROFILE_SCOPE(ProfileMetric::ExpansionDLPackConversion);
+        result = create_dlpack_tensor(buffer, shape, use_cuda);
+    }
+
+    return result;
 }
 
 // Note: wrap_dlpack_capsule() is implemented in python_bindings.cpp

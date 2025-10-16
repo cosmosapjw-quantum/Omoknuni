@@ -72,7 +72,15 @@ struct ProfileReport {
     }
 
     void add_timing_aggregate(ProfileMetric metric, uint64_t total_ns, uint64_t count) {
-        (void)metric; (void)total_ns; (void)count;
+        if (count > 0) {
+            // Create MetricStats from aggregates
+            MetricStats& stats = timing_stats[metric];
+            stats.count = count;
+            stats.total = total_ns;
+            stats.mean = static_cast<double>(total_ns) / count;
+            // Note: min/max/percentiles not available from aggregates alone
+            // These will be 0 unless populated from samples
+        }
     }
 
     void compute_derived_metrics() {
@@ -97,16 +105,64 @@ struct ProfileReport {
         std::string json = "{\n";
         json += "  \"session_name\": \"" + session_name + "\",\n";
         json += "  \"duration_ns\": " + std::to_string(duration_ns) + ",\n";
+
+        // Export timing statistics with full details
         json += "  \"timing_stats\": {\n";
         bool first = true;
         for (const auto& [metric, stats] : timing_stats) {
             if (!first) json += ",\n";
             json += "    \"" + std::string(metric_to_string(metric)) + "\": {";
             json += "\"count\": " + std::to_string(stats.count) + ", ";
-            json += "\"mean\": " + std::to_string(stats.mean) + "}";
+            json += "\"total\": " + std::to_string(stats.total) + ", ";
+            json += "\"mean\": " + std::to_string(stats.mean) + ", ";
+            json += "\"min\": " + std::to_string(stats.min) + ", ";
+            json += "\"max\": " + std::to_string(stats.max) + ", ";
+            json += "\"p50\": " + std::to_string(stats.p50) + ", ";
+            json += "\"p75\": " + std::to_string(stats.p75) + ", ";
+            json += "\"p90\": " + std::to_string(stats.p90) + ", ";
+            json += "\"p95\": " + std::to_string(stats.p95) + ", ";
+            json += "\"p99\": " + std::to_string(stats.p99) + ", ";
+            json += "\"p999\": " + std::to_string(stats.p999) + ", ";
+            json += "\"stddev\": " + std::to_string(stats.stddev) + "}";
             first = false;
         }
-        json += "\n  }\n}\n";
+        json += "\n  },\n";
+
+        // Export counters (state cloning, OpenMP, CAS retries, etc.)
+        json += "  \"counters\": {\n";
+        first = true;
+        for (const auto& [metric, value] : counters) {
+            if (!first) json += ",\n";
+            json += "    \"" + std::string(metric_to_string(metric)) + "\": " + std::to_string(value);
+            first = false;
+        }
+        json += "\n  },\n";
+
+        // Export gauges (peak values, thresholds)
+        json += "  \"gauges\": {\n";
+        first = true;
+        for (const auto& [metric, value] : gauges) {
+            if (!first) json += ",\n";
+            json += "    \"" + std::string(metric_to_string(metric)) + "\": " + std::to_string(value);
+            first = false;
+        }
+        json += "\n  },\n";
+
+        // Export bottlenecks
+        json += "  \"bottlenecks\": [\n";
+        first = true;
+        for (const auto& b : bottlenecks) {
+            if (!first) json += ",\n";
+            json += "    {";
+            json += "\"metric\": \"" + std::string(metric_to_string(b.metric)) + "\", ";
+            json += "\"severity\": " + std::to_string(b.severity) + ", ";
+            json += "\"description\": \"" + b.description + "\", ";
+            json += "\"recommendation\": \"" + b.recommendation + "\"}";
+            first = false;
+        }
+        json += "\n  ]\n";
+
+        json += "}\n";
         return json;
     }
 
@@ -125,12 +181,53 @@ struct ProfileReport {
         std::string md = "# Profiling Report\n\n";
         md += "**Session:** " + session_name + "\n\n";
         md += "**Duration:** " + std::to_string(duration_ns / 1e9) + "s\n\n";
+
         md += "## Timing Statistics\n\n";
+        md += "| Metric | Count | Mean | Min | Max | P50 | P95 | P99 | StdDev |\n";
+        md += "|--------|-------|------|-----|-----|-----|-----|-----|--------|\n";
         for (const auto& [metric, stats] : timing_stats) {
-            md += "- **" + std::string(metric_to_string(metric)) + "**: ";
-            md += std::to_string(stats.count) + " calls, ";
-            md += std::to_string(stats.mean / 1e6) + "ms avg\n";
+            md += "| " + std::string(metric_to_string(metric)) + " ";
+            md += "| " + std::to_string(stats.count) + " ";
+            md += "| " + std::to_string(stats.mean / 1e3) + "μs ";
+            md += "| " + std::to_string(stats.min / 1e3) + "μs ";
+            md += "| " + std::to_string(stats.max / 1e3) + "μs ";
+            md += "| " + std::to_string(stats.p50 / 1e3) + "μs ";
+            md += "| " + std::to_string(stats.p95 / 1e3) + "μs ";
+            md += "| " + std::to_string(stats.p99 / 1e3) + "μs ";
+            md += "| " + std::to_string(stats.stddev / 1e3) + "μs |\n";
         }
+        md += "\n";
+
+        if (!counters.empty()) {
+            md += "## Counters\n\n";
+            md += "| Metric | Value |\n";
+            md += "|--------|-------|\n";
+            for (const auto& [metric, value] : counters) {
+                md += "| " + std::string(metric_to_string(metric)) + " | " + std::to_string(value) + " |\n";
+            }
+            md += "\n";
+        }
+
+        if (!gauges.empty()) {
+            md += "## Gauges (Peak Values)\n\n";
+            md += "| Metric | Value |\n";
+            md += "|--------|-------|\n";
+            for (const auto& [metric, value] : gauges) {
+                md += "| " + std::string(metric_to_string(metric)) + " | " + std::to_string(value) + " |\n";
+            }
+            md += "\n";
+        }
+
+        if (!bottlenecks.empty()) {
+            md += "## Detected Bottlenecks\n\n";
+            for (const auto& b : bottlenecks) {
+                md += "### " + std::string(metric_to_string(b.metric)) + " (" +
+                      std::to_string(static_cast<int>(b.severity)) + "%)\n\n";
+                md += "**Description:** " + b.description + "\n\n";
+                md += "**Recommendation:** " + b.recommendation + "\n\n";
+            }
+        }
+
         return md;
     }
 };

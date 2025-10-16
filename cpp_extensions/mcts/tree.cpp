@@ -5,9 +5,13 @@
 
 #include "tree.hpp"
 #include "instrumentation.hpp"
+#include "profiling/enhanced_profiler.hpp"
 #include <stdexcept>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
+
+using namespace mcts::profiling;
 
 #ifdef _WIN32
 #include <malloc.h>
@@ -425,7 +429,25 @@ NodeIndex MCTSTree::allocate_nodes(std::uint16_t count) {
     }
 
     ScopedMetric metric(InstrumentationMetric::TreeAllocateNodes);
+    PROFILE_SCOPE(ProfileMetric::MemoryNodeAllocation);
+
+    // Track mutex wait time (review.txt lines 225-236: allocation contention)
+    auto lock_start = std::chrono::steady_clock::now();
+
     std::lock_guard<std::mutex> lock(allocation_mutex_);
+
+    auto lock_acquired = std::chrono::steady_clock::now();
+    auto wait_time_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        lock_acquired - lock_start).count();
+
+    if (wait_time_ns > 0) {
+        PROFILE_GAUGE(ProfileMetric::AllocationMutexWait, wait_time_ns);
+        PROFILE_GAUGE(ProfileMetric::MutexLockWaitTime, wait_time_ns);
+        PROFILE_COUNTER(ProfileMetric::MutexContentionEvents, 1);
+    }
+
+    // Slow path allocation (global mutex)
+    PROFILE_COUNTER(ProfileMetric::AllocationSlowPath, count);
 
     // For multiple nodes, we need contiguous allocation
     // Check if we have enough contiguous space from the pool

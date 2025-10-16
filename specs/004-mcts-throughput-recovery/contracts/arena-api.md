@@ -518,9 +518,12 @@ Clear statistics
 
 ### 7.4 Expected Impact on MCTS
 
-- Allocation time: 150ms/sec → 4.5ms/sec = **145ms saved**
-- Overall throughput: 3,831 sims/sec → 4,200 sims/sec = **1.1× speedup**
-- Memory footprint: 1GB → 643MB = **36% reduction**
+**NOTE**: Memory arenas (T009) already implemented. Current bottleneck is state cloning (86.6%), not allocation.
+
+- Allocation time: Optimized via thread-local arenas (99.93% fast-path)
+- Overall throughput baseline: 2,659 sims/sec (profiling_suite_20251016_124134)
+- After state pooling (T018): 9,838 sims/sec = **3.7× speedup** (exceeds 8k target)
+- Memory footprint: <1GB (27 bytes per node, 270MB for 10M nodes) ✅ ACHIEVED
 
 ## 8. Error Handling
 

@@ -5,11 +5,14 @@
 
 #include "async_inference_queue.hpp"
 #include "instrumentation.hpp"
+#include "profiling/enhanced_profiler.hpp"
 #include <chrono>
 #include <iostream>
 #include <limits>
 #include <thread>
 #include <unordered_set>
+
+using namespace mcts::profiling;
 
 namespace mcts {
 
@@ -25,32 +28,67 @@ uint64_t AsyncInferenceQueue::submit_request(std::unique_ptr<IGameState> state,
                                                NodeIndex node_index,
                                                std::vector<NodeIndex> path) {
     ScopedMetric metric(InstrumentationMetric::QueueSubmit);
+    PROFILE_SCOPE(ProfileMetric::QueueSubmitTotal);
+
     // Generate unique request ID
     uint64_t request_id = next_request_id_.fetch_add(1, std::memory_order_relaxed);
 
     // Wait-free enqueue with retry on full (T006b: lock-free queue)
+    // CRITICAL: State cloning in retry loop (review.txt lines 37-54)
     int retry_count = 0;
+    int clone_count = 0;
     while (true) {
         // Create request for this attempt
         InferenceRequest request;
         request.request_id = request_id;
-        request.state = state->clone();  // Clone for each attempt
+
+        // State cloning - track this bottleneck
+        {
+            PROFILE_SCOPE(ProfileMetric::StateCloneTotal);
+            PROFILE_COUNTER(ProfileMetric::StateCloneCount, 1);
+            request.state = state->clone();  // Clone for each attempt
+            clone_count++;
+
+            if (request.state) {
+                size_t estimated_bytes = sizeof(IGameState) + state->getActionSpaceSize() * 4;
+                PROFILE_GAUGE(ProfileMetric::StateCloneBytes, estimated_bytes);
+            }
+        }
+
         request.node_index = node_index;
         request.path = path;
 
         // Try to enqueue (wait-free, no locks)
-        if (pending_requests_.try_enqueue(std::move(request))) {
-            break;  // Success
+        {
+            PROFILE_SCOPE(ProfileMetric::QueueSubmitEnqueue);
+            if (pending_requests_.try_enqueue(std::move(request))) {
+                PROFILE_COUNTER(ProfileMetric::CAS_SuccessCount, 1);
+                break;  // Success
+            }
         }
 
         // Queue full - yield and retry (rare with 4096 capacity)
+        PROFILE_COUNTER(ProfileMetric::CAS_FailureCount, 1);
+        PROFILE_COUNTER(ProfileMetric::QueueSubmitRetries, 1);
         retry_count++;
+
         if (retry_count > 10000) {
             // Emergency: queue saturated for extended period
             // This should never happen in practice
             break;
         }
-        std::this_thread::yield();
+
+        {
+            PROFILE_SCOPE(ProfileMetric::ThreadYieldCount);
+            std::this_thread::yield();
+        }
+    }
+
+    // Track retry statistics
+    PROFILE_GAUGE(ProfileMetric::CAS_MaxRetriesPerOp, retry_count);
+    if (clone_count > 1) {
+        // Multiple clones due to retry - this is wasteful!
+        PROFILE_COUNTER(ProfileMetric::StatePoolMiss, clone_count - 1);
     }
 
     pending_count_.fetch_add(1, std::memory_order_relaxed);
@@ -66,6 +104,7 @@ uint64_t AsyncInferenceQueue::submit_request(std::unique_ptr<IGameState> state,
 std::vector<InferenceRequest> AsyncInferenceQueue::collect_batch(size_t min_batch_size,
                                                                    double timeout_ms) {
     ScopedMetric metric(InstrumentationMetric::QueueCollect);
+    PROFILE_SCOPE(ProfileMetric::QueueCollectTotal);
     using namespace std::chrono;
 
     std::vector<InferenceRequest> batch;
@@ -87,6 +126,7 @@ std::vector<InferenceRequest> AsyncInferenceQueue::collect_batch(size_t min_batc
     }
 
     // T006c: Wait for min_batch_size with timeout using condition variable (eliminates CPU waste)
+    uint64_t total_wait_ns = 0;
     if (min_batch_size > 0 && timeout_ms > 0.0) {
         while (batch.size() < min_batch_size && !shutting_down_.load(std::memory_order_relaxed)) {
             InferenceRequest request;
@@ -103,12 +143,21 @@ std::vector<InferenceRequest> AsyncInferenceQueue::collect_batch(size_t min_batc
                 auto remaining = deadline - now;
 
                 // Block on condition variable instead of polling
-                std::unique_lock<std::mutex> lock(cv_mutex_);
-                request_ready_.wait_for(lock, remaining, [this, &batch, min_batch_size] {
-                    // Wake up if: shutdown requested, or queue has data
-                    return shutting_down_.load(std::memory_order_relaxed) ||
-                           pending_count_.load(std::memory_order_relaxed) > 0;
-                });
+                // Track wait time (review.txt lines 71-136: thread idle time)
+                auto wait_start = steady_clock::now();
+                {
+                    // Use single PROFILE_SCOPE to avoid macro name collision
+                    PROFILE_SCOPE(ProfileMetric::ThreadWaitingForResults);
+
+                    std::unique_lock<std::mutex> lock(cv_mutex_);
+                    request_ready_.wait_for(lock, remaining, [this, &batch, min_batch_size] {
+                        // Wake up if: shutdown requested, or queue has data
+                        return shutting_down_.load(std::memory_order_relaxed) ||
+                               pending_count_.load(std::memory_order_relaxed) > 0;
+                    });
+                }
+                auto wait_elapsed = steady_clock::now() - wait_start;
+                total_wait_ns += duration_cast<nanoseconds>(wait_elapsed).count();
 
                 // Re-check timeout after waking up
                 if (steady_clock::now() >= deadline) {
@@ -116,6 +165,11 @@ std::vector<InferenceRequest> AsyncInferenceQueue::collect_batch(size_t min_batc
                 }
             }
         }
+    }
+
+    // Track idle/wait time for this collect operation
+    if (total_wait_ns > 0) {
+        PROFILE_GAUGE(ProfileMetric::ThreadIdleTotal, total_wait_ns);
     }
 
     // Opportunistically grab more up to max_batch_size
@@ -139,6 +193,10 @@ std::vector<InferenceRequest> AsyncInferenceQueue::collect_batch(size_t min_batc
             InstrumentationMetric::UniqueBatchPositions,
             unique_nodes.size()
         );
+
+        // Track batch size
+        PROFILE_GAUGE(ProfileMetric::QueueCollectBatchSize, batch.size());
+        PROFILE_GAUGE(ProfileMetric::GPUBatchSize, batch.size());
     }
 
     return batch;
@@ -163,6 +221,7 @@ void AsyncInferenceQueue::submit_results(const std::vector<InferenceResult>& res
 
 std::optional<InferenceResult> AsyncInferenceQueue::try_get_result(uint64_t request_id) {
     ScopedMetric metric(InstrumentationMetric::QueueTryGetResult);
+    PROFILE_SCOPE(ProfileMetric::QueueTryGetResult);
 
     // T006b: Lock-free O(1) lookup using ring buffer
     size_t slot_index = request_id % RESULTS_BUFFER_CAPACITY;

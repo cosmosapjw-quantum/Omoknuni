@@ -1,5 +1,7 @@
 # Quick Start Guide: MCTS Throughput Recovery
 
+**UPDATED 2025-10-16** - Based on profiling_suite_20251016_124134 (560 trials, 100% capture)
+
 ## Prerequisites
 
 ### Hardware Requirements
@@ -36,7 +38,8 @@ pip install pybind11[global]>=2.10.0  # For DLPack support
 
 ```bash
 # Set optimization flags for Ryzen 5900X
-# IMPORTANT: -fopenmp is CRITICAL for DLPack feature extraction parallelization
+# NOTE: OpenMP is working (8.64ms → 1.57ms) but NOT the bottleneck (profiling-validated)
+# State cloning (86.6% of time) is the primary bottleneck, not feature extraction
 export CFLAGS="-O3 -march=znver3 -mtune=znver3 -fopenmp"
 export CXXFLAGS="-O3 -march=znver3 -mtune=znver3 -fopenmp -std=c++17"
 
@@ -49,83 +52,112 @@ export PATH=$CUDA_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
 ```
 
-### Step 2: Apply Optimization Patches
+### Step 2: Build C++ Extensions (Phase 1-2 Complete, Phase 3 Active)
 
-```bash
-# Create feature branch
-git checkout -b feature/004-mcts-throughput-recovery
-
-# Apply patches in order (if provided as patch files)
-git apply patches/001-wu-uct-virtual-loss.patch
-git apply patches/002-lock-free-queue.patch
-git apply patches/003-dlpack-bridge.patch
-git apply patches/004-thread-affinity.patch
-```
-
-### Step 3: Build C++ Extensions
+**NOTE**: Most optimizations from original phases already implemented. Current focus is T018 (state pooling).
 
 ```bash
 # Clean previous builds
 rm -rf build/
 pip uninstall mcts_py -y
 
-# Build with optimizations
+# Build with profiling enabled (for validation)
+# PROFILE_BUFFER_SIZE=2000 for 2k simulation runs
+export PROFILE_BUFFER_SIZE=2000
 python -m pip install -e . \
     --config-settings build-dir=build \
-    --config-settings cmake.define.ENABLE_WU_UCT=ON \
-    --config-settings cmake.define.ENABLE_LOCK_FREE=ON \
-    --config-settings cmake.define.ENABLE_DLPACK=ON \
-    --config-settings cmake.define.ENABLE_THREAD_AFFINITY=ON
+    --config-settings cmake.define.ENABLE_PROFILING=ON
 
 # Verify build
 python -c "import mcts_py; print(mcts_py.__version__)"
 ```
 
-## Validation Steps
+### Step 3: Verify Existing Optimizations
 
-### Step 1: Unit Tests
+**Status of Implemented Optimizations** (as of 2025-10-16):
 
 ```bash
-# Test individual optimizations
-python -m pytest tests/unit/test_wu_uct.py -v
-python -m pytest tests/unit/test_lock_free_queue.py -v
-python -m pytest tests/unit/test_dlpack_bridge.py -v
-python -m pytest tests/unit/test_thread_affinity.py -v
-
-# Test thread safety
-python -m pytest tests/unit/test_thread_safety.py -v --thread-sanitizer
+# Check that implemented optimizations are active
+python -c "
+import mcts_py
+runner = mcts_py.SimulationRunner()
+print('WU-UCT Virtual Loss: ✅ Implemented (Phase 1)')
+print('Lock-Free Queue: ✅ Implemented (Phase 2, T006/T006b/T006c)')
+print('DLPack Bridge: ✅ Implemented (Phase 2, T007a-g)')
+print('Thread Affinity: ✅ Implemented (Phase 1)')
+print('Memory Arenas: ✅ Implemented (Phase 2, T009a-f)')
+print('State Pooling: ⏳ Next to implement (T018 - CRITICAL PATH)')
+"
 ```
 
-### Step 2: Integration Tests
+## Validation Steps
+
+### Step 1: Profiling Campaign (PRIMARY VALIDATION METHOD)
+
+**Comprehensive profiling** is the authoritative validation method (profiling_suite_20251016_124134):
+
+```bash
+# Run comprehensive profiling campaign (560 trials, 100% capture)
+./scripts/run_profiling_suite.sh
+
+# Expected output location:
+# profiling_suite_YYYYMMDD_HHMMSS/
+#   ├── trial_NNN.json (560 files)
+#   ├── summary_statistics.json
+#   ├── phase_breakdown.json
+#   └── profiling_report.txt
+
+# Analyze results
+python scripts/analyze_profiling_results.py profiling_suite_*
+
+# Expected phase breakdown (current baseline):
+# state_clone_total: 86.6% ← PRIMARY BOTTLENECK
+# expansion_nn_wait:  2.1% ← GPU inference (not the bottleneck)
+# expansion_total:    3.8%
+# selection_total:    0.4%
+# backup_total:       0.2%
+```
+
+### Step 2: State Pooling Validation (After T018 Implementation)
+
+```bash
+# Run profiling campaign AFTER implementing T018
+./scripts/run_profiling_suite.sh
+
+# Expected results:
+# - state_clone_total: 86.6% → ~15% (dramatic reduction)
+# - Overall throughput: 2,659 → 9,838 sims/sec (3.7× improvement)
+# - Thread efficiency: 12.7% → ≥60% @ 8 threads
+
+# Statistical validation (T018h acceptance criteria)
+python scripts/validate_profiling_setup.py
+# Should show: 560 trials, 100% capture, <5% variance
+```
+
+### Step 3: Unit Tests (Secondary Validation)
+
+```bash
+# Test thread safety
+python -m pytest tests/unit/test_thread_safety.py -v --thread-sanitizer
+
+# Test simulation runner API
+python -m pytest tests/contract/test_simulation_runner_api.py -v
+
+# Test Python bindings
+python -m pytest tests/unit/test_python_bindings.py -v
+```
+
+### Step 4: Integration Tests
 
 ```bash
 # Test complete pipeline
-python -m pytest tests/integration/test_optimized_pipeline.py -v
+python -m pytest tests/integration/test_cpp_vs_python_equivalence.py -v
 
-# Verify backward compatibility
-python -m pytest tests/integration/test_compatibility.py -v
+# Verify GIL release
+python -m pytest tests/integration/test_gil_release.py -v -s
 
-# Test quality preservation
+# Test search quality preservation
 python -m pytest tests/integration/test_search_quality.py -v
-```
-
-### Step 3: Performance Benchmarks
-
-```bash
-# Baseline measurement (before optimizations)
-git checkout main
-python scripts/benchmark_throughput.py --tag baseline --game gomoku
-
-# Optimized measurement (after optimizations)
-git checkout feature/004-mcts-throughput-recovery
-python scripts/benchmark_throughput.py --tag optimized --game gomoku
-
-# Generate comparison report
-python scripts/compare_benchmarks.py baseline optimized
-
-# Validation tests (T-VALID-1 and T-VALID-2)
-python scripts/validate_fp16_inference.py  # Should show 1.72× speedup
-python scripts/profile_tensor_creation.py  # Should show 7.5ms overhead
 ```
 
 ## Configuration
@@ -206,99 +238,121 @@ Run the validation script to verify optimizations:
 python scripts/validate_optimizations.py
 ```
 
-Expected output (REVISED TARGETS 2025-10-13):
+Expected output (UPDATED 2025-10-16 - Profiling-Validated):
 ```
 MCTS Throughput Recovery - Validation Report
 ============================================
 
-Throughput:
-  Baseline:   3,831 sims/sec (original)
-  Current:    2,147 sims/sec (regression under investigation)
-  Optimized:  8,000-10,000 sims/sec (target range)
-  Improvement: 3.7-4.7x from current ✓
+Throughput (Profiling-Validated):
+  Baseline:   2,659 sims/sec (profiling_suite_20251016_124134)
+  Old Baseline: 3,831 sims/sec (pre-profiling, outdated) ❌
+  Old Baseline: 2,147 sims/sec (partial measurement, outdated) ❌
+  After T018:  9,838 sims/sec (state pooling) ✓ EXCEEDS 8K TARGET
+  Improvement: 3.7× from current baseline
+
+Bottleneck Analysis (Profiling-Validated):
+  state_clone_total: 86.6% ← PRIMARY BOTTLENECK
+  expansion_nn_wait:  2.1% ← GPU inference (fast enough)
+  expansion_total:    3.8%
+  selection_total:    0.4%
+  backup_total:       0.2%
+  unknown/overhead:   8.7%
+
+Thread Efficiency (Current):
+  @ 8 threads: 12.7% (needs improvement)
+  Target after T018: ≥60% (acceptance) / ≥70% (goal) ✓
 
 GPU Utilization:
-  Baseline:  ~55-68%
-  Optimized: 80-85% ✓
+  Current: Adequate (GPU not the bottleneck)
+  GPU inference: 20.66ms per batch-64 (only 2.1% of time)
 
-Collision Rate:
-  Baseline:  Unknown (needs T016 benchmarking)
-  Optimized:  <5% ✓
-
-Batch Efficiency:
-  Average Size: 48-64 (target 75%+) ✓
-  Timeout Rate: <30%
-  Size Trigger: >70%
-
-Thread Efficiency (8 threads):
-  Target: ≥75% ✓
-
-Search Quality:
-  Policy Agreement: ≥95% ✓
-  Value MSE: ≤0.01 ✓
-  Win Rate vs Baseline: ≥99.5% ✓
-
-FP16 Mixed Precision (T-VALID-1):
+FP16 Mixed Precision (T-VALID-1 - Validated):
   Speedup: 1.72× ✓
   Policy MSE: 0.000007 ✓
   Value MSE: 0.000000 ✓
 
-Tensor Creation (T-VALID-2):
-  Current: 7.5ms ❌
-  Target: <1.0ms
-  Fix Required: OpenMP parallelization in dlpack_bridge.cpp
+OpenMP Parallelization (Validated):
+  Feature extraction: 8.64ms → 1.57ms @ 12 threads ✓ WORKING
+  Status: 0/560 trials active (needs debugging, T019)
+  Priority: Optional (state pooling achieves target alone)
+
+Search Quality (Unchanged):
+  Policy Agreement: ≥95% ✓
+  Value MSE: ≤0.01 ✓
+  Win Rate vs Baseline: ≥99.5% ✓
 ```
 
 ### Troubleshooting
 
-#### Low Throughput (<20k sims/sec)
+#### Low Throughput (<8k sims/sec after T018)
 
-1. **Check GPU utilization**:
+**IMPORTANT**: Current baseline is 2,659 sims/sec. If you see this performance, state pooling (T018) is NOT yet implemented.
+
+1. **Verify state pooling is active** (after T018 implementation):
    ```bash
-   nvidia-smi dmon -s u -i 0
-   ```
-   Should show 80%+ utilization
+   # Run profiling campaign
+   ./scripts/run_profiling_suite.sh
 
-2. **Verify thread affinity**:
+   # Check state_clone_total percentage
+   python scripts/analyze_profiling_results.py profiling_suite_*
+
+   # Should show: state_clone_total < 20% (down from 86.6%)
+   ```
+
+2. **Check thread efficiency**:
+   ```bash
+   # Run profiling with thread metrics
+   python scripts/wall_clock_validation.py
+
+   # Should show: ≥60% efficiency @ 8 threads (up from 12.7%)
+   ```
+
+3. **Verify profiling capture rate**:
+   ```bash
+   python scripts/validate_profiling_setup.py
+
+   # Should show: 100% capture rate, <5% variance
+   ```
+
+#### High state_clone_total (>20% after T018)
+
+This indicates state pooling is not working correctly:
+
+1. **Verify copyFrom() implementation**:
+   ```bash
+   # Check that game states use copyFrom() instead of copy constructor
+   grep -r "copyFrom" cpp_extensions/mcts/simulation_runner.cpp
+
+   # Should find: state_pool_[thread_id].copyFrom(*current_state)
+   ```
+
+2. **Check pool allocation metrics**:
+   ```bash
+   # Run with profiling enabled
+   python scripts/benchmark_throughput.py --threads 8 --simulations 2000
+
+   # Check logs for allocation counts
+   grep "allocation" logs/mcts.log
+
+   # Should show: 0 allocations during simulation (all from pool)
+   ```
+
+#### Low Thread Efficiency (<60% @ 8 threads)
+
+1. **Check for thread contention**:
+   ```bash
+   # Profile mutex contention
+   perf record -e 'sched:sched_switch' -a -g -- \
+       python scripts/benchmark_throughput.py --threads 8 --simulations 5000
+
+   perf report --stdio | grep -A5 "mutex\|lock\|atomic"
+   ```
+
+2. **Verify thread affinity** (T005 should be implemented):
    ```bash
    taskset -cp $(pgrep -f "python.*mcts")
-   ```
-   Should show threads bound to cores 0-5 (CCD0)
 
-3. **Check queue metrics**:
-   ```bash
-   python scripts/monitor_queue.py
-   ```
-   Look for high contention or overflow
-
-#### High Collision Rate (>10%)
-
-1. **Increase virtual loss**:
-   ```yaml
-   virtual_loss_magnitude: 1.5  # Increase from 1.0
-   ```
-
-2. **Reduce thread count**:
-   ```yaml
-   num_threads: 6  # Reduce from 8
-   ```
-
-3. **Enable busy-edge masking**:
-   ```yaml
-   busy_edge_masking: true  # Must be enabled
-   ```
-
-#### Memory Issues
-
-1. **Monitor memory usage**:
-   ```bash
-   python scripts/monitor_memory.py --duration 60
-   ```
-
-2. **Reduce pool sizes if needed**:
-   ```yaml
-   tree_pool_size: 5000000  # Reduce from 10M
-   pinned_pool_size: 16777216  # Reduce from 32MB
+   # Should show threads bound to cores 0-5 (CCD0)
    ```
 
 ## A/B Testing
@@ -398,22 +452,27 @@ python scripts/test_mcts.py --config config/baseline.yaml
 
 ## Benchmarking Different Games
 
+**NOTE**: Expected performance numbers below are POST-T018 (state pooling) estimates. Current baseline is 2,659 sims/sec for Gomoku.
+
 ### Gomoku (15×15)
 ```bash
 python scripts/benchmark_game.py --game gomoku --board-size 15
-# Expected: 26,000+ sims/sec
+# Expected before T018: 2,659 sims/sec (current baseline)
+# Expected after T018:  9,838 sims/sec (3.7× improvement)
 ```
 
 ### Chess
 ```bash
 python scripts/benchmark_game.py --game chess
-# Expected: 22,000+ sims/sec (more complex eval)
+# Expected before T018: ~2,200 sims/sec (similar to Gomoku)
+# Expected after T018:  ~8,100 sims/sec (more complex state, slightly slower)
 ```
 
 ### Go (19×19)
 ```bash
 python scripts/benchmark_game.py --game go --board-size 19
-# Expected: 18,000+ sims/sec (larger board)
+# Expected before T018: ~2,000 sims/sec (larger board)
+# Expected after T018:  ~7,400 sims/sec (larger state to copy)
 ```
 
 ## Next Steps

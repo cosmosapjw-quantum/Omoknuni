@@ -55,6 +55,15 @@ add_library(mcts_core STATIC
     batch_inference_coordinator.hpp
     dlpack_bridge.cpp
     dlpack_bridge.hpp
+    # Profiling framework (header-only + implementation files)
+    profiling/enhanced_profiler.cpp
+    profiling/enhanced_profiler.hpp
+    profiling/validation.cpp
+    profiling/validation.hpp
+    profiling/enhanced_metrics.hpp
+    profiling/thread_metrics.hpp
+    profiling/statistical_analyzer.hpp
+    profiling/export.hpp
 )
 
 # Set compile features and flags
@@ -94,21 +103,13 @@ endif()
 target_compile_definitions(mcts_core PRIVATE
     _REENTRANT
     ALIGNMENT=64
+    PROFILE_LEVEL_VALUE=3  # Enable FULL profiling (all 295 metrics)
 )
 
 # Enable position independent code for Python extension
 set_target_properties(mcts_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# Minimal compilation test
-add_executable(mcts_compile_test
-    tree.cpp
-    selection.cpp
-    virtual_loss.cpp
-    backup.cpp
-    simulation_runner.cpp
-    instrumentation.cpp
-)
-
+# Minimal compilation test - links against mcts_core library
 # Create minimal main function for compilation test
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/test_main.cpp"
 "#include \"tree.hpp\"
@@ -119,21 +120,22 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/test_main.cpp"
 
 int main() {
     std::cout << \"MCTS components compiled successfully!\" << std::endl;
-    
+
     // Basic instantiation test
     mcts::MCTSTree tree(1000);
     mcts::VirtualLossConfig vl_config;
     mcts::BackupConfig backup_config;
-    
+
     std::cout << \"Tree nodes: \" << tree.get_node_count() << std::endl;
     std::cout << \"All components instantiated successfully!\" << std::endl;
     return 0;
 }
 ")
 
-target_sources(mcts_compile_test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/test_main.cpp")
+add_executable(mcts_compile_test "${CMAKE_CURRENT_BINARY_DIR}/test_main.cpp")
 target_include_directories(mcts_compile_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(mcts_compile_test OpenMP::OpenMP_CXX pthread)
+# Link against mcts_core library which includes profiling
+target_link_libraries(mcts_compile_test PRIVATE mcts_core OpenMP::OpenMP_CXX pthread)
 
 # Add AVX2 support to test executable
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -169,6 +171,7 @@ if(pybind11_FOUND)
     target_compile_definitions(mcts_py PRIVATE
         VERSION_INFO="${PROJECT_VERSION}"
         PYBIND11_DETAILED_ERROR_MESSAGES
+        PROFILE_LEVEL_VALUE=3  # Enable FULL profiling (all 295 metrics)
     )
 
     # Install the module to the Python package
