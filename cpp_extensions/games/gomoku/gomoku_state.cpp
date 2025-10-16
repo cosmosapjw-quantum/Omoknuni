@@ -777,6 +777,7 @@ void GomokuState::copyFrom(const core::IGameState& source) {
     black_first_stone_ = gomoku_source->black_first_stone_;
     last_action_played_ = gomoku_source->last_action_played_;
     move_history_ = gomoku_source->move_history_;
+    zobrist_ = gomoku_source->zobrist_;
     
     // Deep copy bitboards
     size_t expected_size = (board_size_ * board_size_ + 63) / 64;

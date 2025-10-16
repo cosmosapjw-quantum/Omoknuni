@@ -299,7 +299,10 @@ public:
      *
      * @see ThreadLocalStatePool for pool sizing based on this value
      */
-    virtual size_t estimated_size_bytes() const = 0;
+    virtual size_t estimated_size_bytes() const {
+        // Default implementation - derived classes should override
+        return estimateMemoryUsage();
+    }
 
     /**
      * @brief Convert action to string representation
