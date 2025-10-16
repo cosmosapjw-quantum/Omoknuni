@@ -2786,14 +2786,51 @@ This approach:
 
 | ID | Task | Duration | Status | Dependencies |
 |----|------|----------|--------|--------------|
-| **T024f-1** | TinyNode Storage Layer | 3-4h | ⬜ READY | T024a-e |
-| **T024f-2** | Sibling-Linked Children | 3-4h | ⬜ PENDING | T024f-1 |
+| **T024f-1** | TinyNode Storage Layer | 3-4h | ✅ COMPLETE (2025-10-17) | T024a-e |
+| **T024f-2** | Sibling-Linked Children | 3-4h | 🟡 READY | T024f-1 |
 | **T024f-3** | Path Traversal Methods | 4h | ⬜ PENDING | T024f-2 |
 | **T024f-4** | Zobrist Hash Integration | 2-3h | ⬜ PENDING | T024f-3 |
 | **T024f-5** | Adapter Layer | 2-3h | ⬜ PENDING | T024f-4 |
 | **T024f-6** | SimRunner Integration | 4-5h | ⬜ PENDING | T024f-5 |
 | **T024f-7** | Correctness Validation | 3-4h | ⬜ PENDING | T024f-6 |
 | **T024f-8** | Cleanup & Documentation | 2h | ⬜ PENDING | T024f-7 |
+
+**Completion Notes**:
+
+### T024f-1: TinyNode Storage Layer ✅ (2025-10-17)
+**Duration**: ~3 hours (as estimated)
+**Commit**: d9185ad
+
+**Implementation**:
+- Created `TinyNodeTree` class with O(1) bump allocator
+- 64-byte aligned nodes (34 bytes data + 30 bytes padding)
+- Free list for node reuse (efficient memory management)
+- Thread-safe allocation via atomics (lock-free bump path)
+- Root initialization with zobrist hash support
+
+**Testing**:
+- 21 comprehensive unit tests (100% pass rate)
+- Basic allocation/deallocation tests
+- Capacity management tests
+- Thread safety validation (concurrent allocation)
+- Performance validation (O(1) confirmed)
+
+**Files**:
+- `cpp_extensions/mcts/tiny_node_tree.{hpp,cpp}` (NEW)
+- `cpp_extensions/mcts/python_bindings.cpp` (updated - TinyNode/TinyNodeTree bindings)
+- `tests/unit/test_tiny_node_tree.py` (NEW - 21 tests)
+- `cpp_extensions/mcts/CMakeLists.txt` (updated - added to build)
+
+**Acceptance Criteria Met**:
+- ✅ Allocate/deallocate nodes
+- ✅ O(1) bump allocation
+- ✅ Tree capacity management
+- ✅ Memory leak prevention
+- ✅ Thread safety (basic)
+
+**Next**: Proceed to T024f-2 (Sibling-Linked Children)
+
+---
 
 **Key Changes**:
 - Replace SoA (9 arrays) with AoS (TinyNode struct)
