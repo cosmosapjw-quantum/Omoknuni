@@ -808,17 +808,29 @@ class AlphaZeroMCTS(MCTSEngine):
                         positions.append(tensor)
 
                     # All inference workers expect tensors, not states (T018g optimization)
-                    # DLPackInferenceBridge and GPUInferenceWorker both accept tensors
-                    policies, values = self.inference_fn.batch_inference(positions)
+                    # DLPackInferenceBridge returns List[(policy, value)]
+                    # GPUInferenceWorker returns (policies, values) tuple
+                    result = self.inference_fn.batch_inference(positions)
 
-                    # Convert to expected format
-                    # T029: Return numpy arrays directly (pybind11 converts to std::vector<float>)
-                    results = []
-                    for i in range(len(policies)):
-                        policy_array = policies[i]  # Keep as numpy array
-                        results.append((policy_array, float(values[i])))
-
-                    return results
+                    # Handle both return formats
+                    if isinstance(result, list):
+                        # Check if it's List[(policy, value)] format
+                        if len(result) > 0 and isinstance(result[0], tuple) and len(result[0]) == 2:
+                            # DLPackInferenceBridge format: List[(policy, value)]
+                            return result
+                        else:
+                            # Unexpected format
+                            raise ValueError(f"Unexpected list format: {type(result[0]) if result else 'empty'}")
+                    elif isinstance(result, tuple) and len(result) == 2:
+                        # GPUInferenceWorker format: (policies, values)
+                        policies, values = result
+                        results = []
+                        for i in range(len(policies)):
+                            policy_array = policies[i]
+                            results.append((policy_array, float(values[i])))
+                        return results
+                    else:
+                        raise ValueError(f"Unexpected result format: {type(result)}")
 
                 except Exception as e:
                     self.logger.error(f"Direct GPU batch inference failed: {e}")

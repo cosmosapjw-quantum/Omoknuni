@@ -264,45 +264,40 @@ class DLPackInferenceBridge:
 
     def batch_inference(
         self,
-        states: List
+        inputs: List
     ) -> List[Tuple[List[float], float]]:
-        """Execute neural network inference for a batch of game states.
+        """Execute neural network inference for a batch of game states or feature tensors.
 
-        This is the main entry point called by C++ BatchInferenceCoordinator.
-
-        Flow:
-        1. Validate inputs (non-empty, same game type)
-        2. Create DLPack tensor from states
-        3. Convert to PyTorch tensor (zero-copy)
-        4. Transfer to GPU if needed (async copy)
-        5. Run model forward pass
-        6. Transfer results back to CPU
-        7. Extract policy/value pairs
-        8. Return as list of tuples
+        **T018g Optimization**: Now accepts pre-extracted feature tensors in addition
+        to game states. When features are provided, skips state-to-tensor conversion.
 
         Args:
-            states: List of IGameState objects from C++
+            inputs: List of IGameState objects from C++ OR
+                    List of numpy arrays (C, H, W) with pre-extracted features
 
         Returns:
             List[(policy, value)] where:
-                policy: List[float] - action probabilities
+                policy: List[float] or numpy array - action probabilities
                 value: float - position evaluation
-
-        Raises:
-            ValueError: If states is empty or contains mixed game types
-            RuntimeError: If DLPack conversion fails and fallback disabled
         """
         start_time = time.perf_counter()
 
-        # Validate inputs
-        if not states or len(states) == 0:
-            raise ValueError("states list cannot be empty")
+        if not inputs or len(inputs) == 0:
+            raise ValueError("inputs list cannot be empty")
 
-        batch_size = len(states)
+        batch_size = len(inputs)
+
+        # Detect input type: game states or pre-extracted tensors
+        first_input = inputs[0]
+        is_tensor_input = isinstance(first_input, np.ndarray)
 
         try:
-            # Try DLPack path (zero-copy)
-            results = self._dlpack_inference(states)
+            if is_tensor_input:
+                # T018g optimized path: pre-extracted features
+                results = self._tensor_inference(inputs)
+            else:
+                # Legacy path: game states (requires DLPack conversion)
+                results = self._dlpack_inference(inputs)
 
             with self._metrics_lock:
                 self._dlpack_successes += 1
@@ -310,14 +305,17 @@ class DLPackInferenceBridge:
         except Exception as e:
             if self.enable_fallback:
                 self.logger.warning(
-                    f"DLPack inference failed: {e}, using numpy fallback"
+                    f"Inference failed: {e}, using numpy fallback"
                 )
-                results = self._numpy_fallback_inference(states)
+                if is_tensor_input:
+                    results = self._numpy_tensor_inference(inputs)
+                else:
+                    results = self._numpy_fallback_inference(inputs)
 
                 with self._metrics_lock:
                     self._fallback_uses += 1
             else:
-                raise RuntimeError(f"DLPack inference failed: {e}") from e
+                raise RuntimeError(f"Inference failed: {e}") from e
 
         # Update metrics
         elapsed_ms = (time.perf_counter() - start_time) * 1000.0
@@ -524,6 +522,84 @@ class DLPackInferenceBridge:
             results.append((policy_array, value_scalar))
 
         return results
+
+    def _tensor_inference(
+        self,
+        tensors: List[np.ndarray]
+    ) -> List[Tuple[List[float], float]]:
+        """Optimized inference path for pre-extracted feature tensors (T018g).
+
+        This method bypasses state-to-tensor conversion entirely, accepting
+        numpy arrays directly from the C++ feature extraction.
+
+        Args:
+            tensors: List of numpy arrays with shape (C, H, W)
+
+        Returns:
+            List of (policy, value) tuples
+        """
+        batch_size = len(tensors)
+
+        # Stack tensors into batch: (B, C, H, W)
+        features_np = np.stack(tensors, axis=0)
+
+        # Convert to PyTorch tensor
+        features = torch.from_numpy(features_np)
+
+        # Run inference (same path as _numpy_fallback_inference)
+        if self.device.type == 'cuda':
+            # Transfer to GPU
+            features_gpu = features.to(self.device, non_blocking=True)
+
+            # Inference with mixed precision if enabled
+            with torch.no_grad():
+                if self.use_mixed_precision:
+                    with torch.cuda.amp.autocast():
+                        policy_logits, value = self.model(features_gpu)
+                else:
+                    policy_logits, value = self.model(features_gpu)
+
+            policy = torch.softmax(policy_logits.float(), dim=1)
+
+            # Transfer back to CPU
+            policy_cpu = policy.cpu()
+            value_cpu = value.cpu()
+        else:
+            # CPU path
+            with torch.no_grad():
+                policy_logits, value = self.model(features)
+            policy = torch.softmax(policy_logits.float(), dim=1)
+            policy_cpu = policy
+            value_cpu = value
+
+        # Extract results
+        results = []
+        policy_np = policy_cpu.numpy()
+        value_np = value_cpu.numpy()
+
+        for i in range(batch_size):
+            policy_array = policy_np[i]
+            value_scalar = float(value_np[i])
+            results.append((policy_array, value_scalar))
+
+        return results
+
+    def _numpy_tensor_inference(
+        self,
+        tensors: List[np.ndarray]
+    ) -> List[Tuple[List[float], float]]:
+        """Fallback numpy inference for pre-extracted tensors (T018g).
+
+        Used when _tensor_inference fails (same logic, just explicitly numpy).
+
+        Args:
+            tensors: List of numpy arrays with shape (C, H, W)
+
+        Returns:
+            List of (policy, value) tuples
+        """
+        # Same implementation as _tensor_inference (fallback is identical)
+        return self._tensor_inference(tensors)
 
     def warmup(self, batch_size: int = 64, game_type: str = 'gomoku'):
         """Warm up GPU with dummy batches.
