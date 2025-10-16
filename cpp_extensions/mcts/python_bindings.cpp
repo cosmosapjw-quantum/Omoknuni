@@ -21,6 +21,7 @@
 #include "tree.hpp"
 #include "tiny_node.hpp"
 #include "tiny_node_tree.hpp"
+#include "tree_adapter.hpp"
 #include "virtual_loss.hpp"
 #include "selection.hpp"
 #include "backup.hpp"
@@ -1424,6 +1425,148 @@ PYBIND11_MODULE(mcts_py, m) {
              "Args:\n"
              "    path: Path from root to leaf (list of node indices)\n"
              "    leaf_value: Value at the leaf node");
+
+    // ====== TreeAdapter Bindings (T024f-5) ======
+    py::class_<TreeAdapter>(m, "TreeAdapter", "Adapter for TinyNodeTree with MCTSTree-compatible API")
+        .def(py::init<std::size_t>(),
+             py::arg("max_nodes") = 50'000'000,
+             "Initialize TreeAdapter with specified capacity")
+
+        // Tree management
+        .def("get_root_index", &TreeAdapter::get_root_index,
+             "Get root node index (always 0 when tree has nodes)")
+        .def("get_node_count", &TreeAdapter::get_node_count,
+             "Get current number of nodes in tree")
+        .def("get_max_nodes", &TreeAdapter::get_max_nodes,
+             "Get maximum capacity of tree")
+        .def("get_memory_usage", &TreeAdapter::get_memory_usage,
+             "Get memory usage in bytes")
+        .def("get_bytes_per_node", &TreeAdapter::get_bytes_per_node,
+             "Get bytes per node (actual memory efficiency)")
+        .def("clear", &TreeAdapter::clear,
+             "Clear all nodes and reset tree")
+
+        .def("add_root_node", &TreeAdapter::add_root_node,
+             py::arg("prior_prob"),
+             py::arg("current_player"),
+             py::arg("zobrist_hash") = 0,
+             "Add root node to empty tree")
+
+        .def("allocate_node", &TreeAdapter::allocate_node,
+             "Allocate a single node from the pool")
+        .def("allocate_nodes", &TreeAdapter::allocate_nodes,
+             py::arg("count"),
+             "Allocate multiple nodes from the pool")
+        .def("deallocate_node", &TreeAdapter::deallocate_node,
+             py::arg("index"),
+             "Deallocate a single node back to the pool")
+        .def("deallocate_nodes", &TreeAdapter::deallocate_nodes,
+             py::arg("first_index"),
+             py::arg("count"),
+             "Deallocate multiple nodes back to the pool")
+
+        .def("get_available_nodes", &TreeAdapter::get_available_nodes,
+             "Get number of available nodes in the pool")
+        .def("has_space_for", &TreeAdapter::has_space_for,
+             py::arg("count"),
+             "Check if tree has space for additional nodes")
+        .def("validate_tree", &TreeAdapter::validate_tree,
+             "Validate tree structure and constraints")
+
+        // Node data accessors
+        .def("get_visit_count", &TreeAdapter::get_visit_count,
+             py::arg("index"),
+             "Get visit count for node")
+        .def("get_total_value", &TreeAdapter::get_total_value,
+             py::arg("index"),
+             "Get total value for node")
+        .def("get_prior_prob", &TreeAdapter::get_prior_prob,
+             py::arg("index"),
+             "Get prior probability for node")
+        .def("get_virtual_loss", &TreeAdapter::get_virtual_loss,
+             py::arg("index"),
+             "Get virtual loss for node")
+        .def("get_parent_index", &TreeAdapter::get_parent_index,
+             py::arg("index"),
+             "Get parent index for node")
+        .def("get_first_child_index", &TreeAdapter::get_first_child_index,
+             py::arg("index"),
+             "Get first child index for node")
+        .def("get_num_children", &TreeAdapter::get_num_children,
+             py::arg("index"),
+             "Get number of children for node")
+        .def("get_flags", &TreeAdapter::get_flags,
+             py::arg("index"),
+             "Get flags for node")
+        .def("get_node_info", &TreeAdapter::get_node_info,
+             py::arg("index"),
+             "Get complete node information for debugging")
+
+        // Node data mutators
+        .def("set_visit_count", &TreeAdapter::set_visit_count,
+             py::arg("index"),
+             py::arg("value"),
+             "Set visit count for node")
+        .def("set_total_value", &TreeAdapter::set_total_value,
+             py::arg("index"),
+             py::arg("value"),
+             "Set total value for node")
+        .def("set_prior_prob", &TreeAdapter::set_prior_prob,
+             py::arg("index"),
+             py::arg("value"),
+             "Set prior probability for node")
+        .def("set_virtual_loss", &TreeAdapter::set_virtual_loss,
+             py::arg("index"),
+             py::arg("value"),
+             "Set virtual loss for node")
+        .def("set_parent_index", &TreeAdapter::set_parent_index,
+             py::arg("index"),
+             py::arg("parent"),
+             "Set parent index for node")
+        .def("set_first_child_index", &TreeAdapter::set_first_child_index,
+             py::arg("index"),
+             py::arg("first_child"),
+             "Set first child index for node")
+        .def("set_num_children", &TreeAdapter::set_num_children,
+             py::arg("index"),
+             py::arg("count"),
+             "Set number of children for node (NO-OP in TinyNodeTree)")
+        .def("set_flags", &TreeAdapter::set_flags,
+             py::arg("index"),
+             py::arg("flags"),
+             "Set flags for node")
+
+        // Atomic operations
+        .def("atomic_try_set_expanded", &TreeAdapter::atomic_try_set_expanded,
+             py::arg("index"),
+             "Atomically try to set expanded flag")
+        .def("atomic_try_mark_expanding", &TreeAdapter::atomic_try_mark_expanding,
+             py::arg("index"),
+             "Atomically mark node as being expanded")
+        .def("clear_expanding_flag", &TreeAdapter::clear_expanding_flag,
+             py::arg("index"),
+             "Clear the expanding flag on a node")
+
+        // TinyNodeTree-specific extensions
+        .def("get_zobrist_hash", &TreeAdapter::get_zobrist_hash,
+             py::arg("index"),
+             "Get zobrist hash for node")
+        .def("set_zobrist_hash", &TreeAdapter::set_zobrist_hash,
+             py::arg("index"),
+             py::arg("hash"),
+             "Set zobrist hash for node")
+        .def("get_move", &TreeAdapter::get_move,
+             py::arg("index"),
+             "Get move that led to this node")
+        .def("set_move", &TreeAdapter::set_move,
+             py::arg("index"),
+             py::arg("move"),
+             "Set move that led to this node")
+
+        .def("get_tiny_tree",
+             static_cast<TinyNodeTree* (TreeAdapter::*)()>(&TreeAdapter::get_tiny_tree),
+             py::return_value_policy::reference_internal,
+             "Get underlying TinyNodeTree");
 }
 
 } // namespace python

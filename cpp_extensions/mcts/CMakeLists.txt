@@ -35,6 +35,8 @@ add_library(mcts_core STATIC
     tiny_node.hpp
     tiny_node_tree.cpp
     tiny_node_tree.hpp
+    tree_adapter.cpp
+    tree_adapter.hpp
     selection.cpp
     selection.hpp
     virtual_loss.cpp
