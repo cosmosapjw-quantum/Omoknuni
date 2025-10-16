@@ -134,15 +134,27 @@ PYBIND11_MODULE(alphazero_py, m) {
             }
             return state.isLegalMove(action);
         })
-        .def("make_move", [](core::IGameState& state, int action) {
+        .def("make_move", [](core::IGameState& state, int action) -> uint64_t {
+            // T024b: Zero-copy make_move returns undo token
             int action_space_size = state.getActionSpaceSize();
             // Handle Go pass move: map last index back to -1
             if (action == action_space_size - 1 && state.isLegalMove(-1)) {
-                state.makeMove(-1);
+                return state.make_move(static_cast<uint16_t>(-1));
             } else {
-                state.makeMove(action);
+                return state.make_move(static_cast<uint16_t>(action));
             }
         })
+        .def("unmake_move", [](core::IGameState& state, int action, uint64_t undo_token) {
+            // T024b: Zero-copy unmake_move restores state
+            int action_space_size = state.getActionSpaceSize();
+            // Handle Go pass move: map last index back to -1
+            if (action == action_space_size - 1 && state.isLegalMove(-1)) {
+                state.unmake_move(static_cast<uint16_t>(-1), undo_token);
+            } else {
+                state.unmake_move(static_cast<uint16_t>(action), undo_token);
+            }
+        })
+        .def("zobrist_hash", &core::IGameState::zobrist_hash)
         .def("apply_move_inplace", [](core::IGameState& state, int action) {
             int action_space_size = state.getActionSpaceSize();
             // Handle Go pass move: map last index back to -1

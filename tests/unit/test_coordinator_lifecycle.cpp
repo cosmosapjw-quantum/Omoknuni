@@ -29,6 +29,16 @@ public:
         return std::make_unique<MockGameState>(id_);
     }
 
+    // T024c: Stub implementations for make/unmake (not used in coordinator tests)
+    uint64_t make_move(uint16_t move) override {
+        last_move_ = move;
+        return 0;  // Dummy undo token
+    }
+
+    void unmake_move(uint16_t move, uint64_t undo_token) override {
+        // No-op for this test
+    }
+
     void apply_move(uint16_t move) override { last_move_ = move; }
     bool is_terminal() const override { return false; }
     int get_current_player() const override { return 0; }

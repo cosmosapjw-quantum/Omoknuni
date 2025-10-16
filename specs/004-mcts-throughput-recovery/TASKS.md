@@ -2651,35 +2651,40 @@ grep -q "15ns" docs/api/make_unmake_pattern.md
 
 ---
 
-## ⚠️ NEEDS DECISION: T024c Compilation Blocked
+## ✅ T024c COMPLETE: Gomoku make/unmake Implementation
 
-**Status**: T024c Gomoku make/unmake implementation is COMPLETE but build is BLOCKED
+**Status**: COMPLETE - All tests passing (8/8)
 
-**Issue**: Adding `make_move/unmake_move` to IGameState (pure virtual) requires:
-1. ✅ GomokuState implementation - COMPLETE
-2. ❌ ChessState stub - ADDED (throws runtime_error)
-3. ❌ GoState stub - ADDED (throws runtime_error)
-4. ❌ MockGameState in test files - NEEDS STUBS
-
-**Blocking Test Files**:
-- `tests/unit/test_root_pre_expansion.cpp` - MockGameState needs make/unmake stubs - FIXED
-- `tests/unit/test_coordinator_lifecycle.cpp` - MockGameState uses old interface
-
-**Options**:
-1. **Skip tests for now**: Disable failing tests temporarily, proceed with T024d-e
-2. **Fix all mocks**: Update all test mocks with make/unmake stubs (time-consuming)
-3. **Split interface**: Keep old IGameState interface for MCTS tests (complex refactor)
-
-**Recommendation**: Option 1 - Add make/unmake stubs to remaining mocks, continue with T024d-e implementation
+**Implementation Summary**:
+- **Undo Token**: 64-bit packed structure with 8 fields (game_result, move_count, black_first_stone_flag, last_action, cached_winner, current_player, hash_dirty, winner_dirty)
+- **make_move**: In-place move application with incremental state updates (~15ns target)
+- **unmake_move**: Bit-exact state restoration using undo token (~15ns target)
+- **Python Bindings**: Added make_move/unmake_move/zobrist_hash to IGameState bindings
 
 **Files Modified**:
 - `cpp_extensions/games/gomoku/gomoku_state.{h,cpp}` - Full make/unmake implementation ✅
-- `cpp_extensions/games/chess/chess_state.h` - Stub added (throws) ✅
-- `cpp_extensions/games/go/go_state.h` - Stub added (throws) ✅
+- `cpp_extensions/games/chess/chess_state.h` - Stub added (pending T024d) ✅
+- `cpp_extensions/games/go/go_state.h` - Stub added (pending T024e) ✅
+- `cpp_extensions/games/python_bindings.cpp` - Added make_move/unmake_move/zobrist_hash bindings ✅
 - `tests/unit/test_root_pre_expansion.cpp` - MockGameState stub added ✅
-- `tests/unit/test_coordinator_lifecycle.cpp` - MockGameState NEEDS stub ❌
+- `tests/unit/test_coordinator_lifecycle.cpp` - MockGameState stub added ✅
+- `tests/unit/test_gomoku_make_unmake.py` - 8 comprehensive unit tests ✅
 
-**Decision Required**: How to proceed with T024c given compilation blocker?
+**Test Results**:
+```
+test_make_unmake_single_move PASSED           (bit-exact restoration)
+test_make_unmake_multiple_moves PASSED        (LIFO unwind correctness)
+test_zobrist_hash_consistency PASSED          (hash matches clone())
+test_deep_path_no_drift PASSED                (25 moves no drift)
+test_player_flip PASSED                       (player correctly flips)
+test_legal_moves_consistency PASSED           (moves unchanged after make/unmake)
+test_terminal_state_handling PASSED           (terminal state restoration)
+test_board_occupation_correctness PASSED      (board cells correctly occupied)
+
+All 8 tests PASSED in 0.04s
+```
+
+**Next Steps**: Proceed to T024d (Chess make/unmake implementation)
 
 ---
 
