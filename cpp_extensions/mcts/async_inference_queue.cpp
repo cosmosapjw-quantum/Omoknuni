@@ -24,7 +24,10 @@ AsyncInferenceQueue::~AsyncInferenceQueue() {
     // Cleanup (no mutexes to destroy in lock-free implementation)
 }
 
-uint64_t AsyncInferenceQueue::submit_request(std::unique_ptr<IGameState> state,
+uint64_t AsyncInferenceQueue::submit_request(std::vector<float> features,
+                                               int action_space_size,
+                                               int board_size,
+                                               int num_feature_planes,
                                                NodeIndex node_index,
                                                std::vector<NodeIndex> path) {
     ScopedMetric metric(InstrumentationMetric::QueueSubmit);
@@ -34,27 +37,16 @@ uint64_t AsyncInferenceQueue::submit_request(std::unique_ptr<IGameState> state,
     uint64_t request_id = next_request_id_.fetch_add(1, std::memory_order_relaxed);
 
     // Wait-free enqueue with retry on full (T006b: lock-free queue)
-    // CRITICAL: State cloning in retry loop (review.txt lines 37-54)
+    // OPTIMIZATION (T018g): Pre-extracted features eliminate state cloning overhead
     int retry_count = 0;
-    int clone_count = 0;
     while (true) {
         // Create request for this attempt
         InferenceRequest request;
         request.request_id = request_id;
-
-        // State cloning - track this bottleneck
-        {
-            PROFILE_SCOPE(ProfileMetric::StateCloneTotal);
-            PROFILE_COUNTER(ProfileMetric::StateCloneCount, 1);
-            request.state = state->clone();  // Clone for each attempt
-            clone_count++;
-
-            if (request.state) {
-                size_t estimated_bytes = sizeof(IGameState) + state->getActionSpaceSize() * 4;
-                PROFILE_GAUGE(ProfileMetric::StateCloneBytes, estimated_bytes);
-            }
-        }
-
+        request.features = features;  // Copy features (amortized O(1) with move semantics)
+        request.action_space_size = action_space_size;
+        request.board_size = board_size;
+        request.num_feature_planes = num_feature_planes;
         request.node_index = node_index;
         request.path = path;
 
@@ -86,10 +78,6 @@ uint64_t AsyncInferenceQueue::submit_request(std::unique_ptr<IGameState> state,
 
     // Track retry statistics
     PROFILE_GAUGE(ProfileMetric::CAS_MaxRetriesPerOp, retry_count);
-    if (clone_count > 1) {
-        // Multiple clones due to retry - this is wasteful!
-        PROFILE_COUNTER(ProfileMetric::StatePoolMiss, clone_count - 1);
-    }
 
     pending_count_.fetch_add(1, std::memory_order_relaxed);
 

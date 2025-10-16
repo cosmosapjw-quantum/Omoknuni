@@ -355,20 +355,23 @@ PYBIND11_MODULE(mcts_py, m) {
              "Construct batch callback with Python callable");
 
     // AsyncInferenceQueue - Non-blocking inference queue for async MCTS
-    py::class_<InferenceRequest>(m, "InferenceRequest")
+    py::class_<InferenceRequest>(m, "InferenceRequest",
+            "Inference request with pre-extracted features (T018g optimization)")
         .def(py::init<>())
         .def_readwrite("request_id", &InferenceRequest::request_id)
         .def_readwrite("node_index", &InferenceRequest::node_index)
-        .def_property("state",
-            [](InferenceRequest& req) -> IGameState* {
-                return req.state.get();
-            },
-            [](InferenceRequest& req, std::unique_ptr<IGameState> state) {
-                req.state = std::move(state);
-            })
+        .def_readwrite("features", &InferenceRequest::features,
+                       "Pre-extracted feature tensor (C×H×W flattened)")
+        .def_readwrite("action_space_size", &InferenceRequest::action_space_size,
+                       "Action space size for fallback policy")
+        .def_readwrite("board_size", &InferenceRequest::board_size,
+                       "Board size for tensor reshaping")
+        .def_readwrite("num_feature_planes", &InferenceRequest::num_feature_planes,
+                       "Number of feature planes")
         .def("__repr__", [](const InferenceRequest& req) {
             return "<InferenceRequest id=" + std::to_string(req.request_id) +
-                   " node=" + std::to_string(req.node_index) + ">";
+                   " node=" + std::to_string(req.node_index) +
+                   " features=" + std::to_string(req.features.size()) + ">";
         });
 
     py::class_<InferenceResult>(m, "InferenceResult")
@@ -390,12 +393,30 @@ PYBIND11_MODULE(mcts_py, m) {
         .def("submit_request",
              [](AsyncInferenceQueue& queue, IGameState* state,
                 NodeIndex node_index, std::vector<NodeIndex> path) -> uint64_t {
-                 // Clone the state to transfer ownership to queue
-                 auto cloned_state = state->clone();
-                 return queue.submit_request(std::move(cloned_state), node_index, std::move(path));
+                 // T018g OPTIMIZATION: Extract features in C++ (zero-clone submission)
+                 int board_size = state->getBoardSize();
+                 int num_feature_planes = state->get_num_feature_planes();
+                 int action_space_size = state->getActionSpaceSize();
+
+                 // Pre-allocate features buffer
+                 size_t features_size = num_feature_planes * board_size * board_size;
+                 std::vector<float> features(features_size);
+
+                 // Extract features to buffer (zero-allocation, ~10μs)
+                 state->extract_features_to_buffer(features.data());
+
+                 // Submit pre-extracted features (no clone needed!)
+                 return queue.submit_request(
+                     std::move(features),
+                     action_space_size,
+                     board_size,
+                     num_feature_planes,
+                     node_index,
+                     std::move(path)
+                 );
              },
              py::arg("state"), py::arg("node_index"), py::arg("path"),
-             "Submit inference request (non-blocking)\n\n"
+             "Submit inference request with pre-extracted features (non-blocking)\n\n"
              "Args:\n"
              "    state: Game state to evaluate (ownership transferred)\n"
              "    node_index: Tree node to expand\n"

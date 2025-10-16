@@ -64,6 +64,7 @@ add_executable(test_root_pre_expansion
 target_link_libraries(test_root_pre_expansion
     PRIVATE
     mcts_core
+    games_core
     utils_core
     gtest_main
     gtest

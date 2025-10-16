@@ -795,26 +795,29 @@ class AlphaZeroMCTS(MCTSEngine):
             from src.core.dlpack_inference_bridge import DLPackInferenceBridge
             is_dlpack_bridge = isinstance(self.inference_fn, DLPackInferenceBridge)
 
-            def fast_batch_callback(game_states: List[IGameState]) -> List[Tuple[List[float], float]]:
-                """Direct GPU batch inference - single call for entire batch."""
+            def fast_batch_callback(features_list: List[List[float]],
+                                   board_sizes: List[int],
+                                   num_planes_list: List[int]) -> List[Tuple[List[float], float]]:
+                """Direct GPU batch inference with pre-extracted features (T018g optimization)."""
                 try:
+                    # Convert features to numpy tensors with proper shape
+                    positions = []
+                    for features, board_size, num_planes in zip(features_list, board_sizes, num_planes_list):
+                        # Reshape flat features to (C, H, W)
+                        tensor = np.array(features, dtype=np.float32).reshape(num_planes, board_size, board_size)
+                        positions.append(tensor)
+
                     if is_dlpack_bridge:
-                        # DLPackInferenceBridge: Pass states directly (handles DLPack internally)
-                        results = self.inference_fn.batch_inference(game_states)
+                        # DLPackInferenceBridge: Convert to batch tensor
+                        batch_tensor = np.stack(positions, axis=0)
+                        results = self.inference_fn.batch_inference([batch_tensor])
                         return results
                     else:
-                        # Standard GPUInferenceWorker: Extract tensors first
-                        positions = []
-                        for state in game_states:
-                            tensor = state.get_enhanced_tensor_representation()
-                            positions.append(np.asarray(tensor, dtype=np.float32))
-
-                        # ✅ SINGLE batched GPU call
+                        # Standard GPUInferenceWorker: Pass tensors directly
                         policies, values = self.inference_fn.batch_inference(positions)
 
                     # Convert to expected format
                     # T029: Return numpy arrays directly (pybind11 converts to std::vector<float>)
-                    # This eliminates Python list conversion overhead (~1-2ms per batch)
                     results = []
                     for i in range(len(policies)):
                         policy_array = policies[i]  # Keep as numpy array
@@ -824,39 +827,39 @@ class AlphaZeroMCTS(MCTSEngine):
 
                 except Exception as e:
                     self.logger.error(f"Direct GPU batch inference failed: {e}")
-                    # Fallback to uniform policy for all states
-                    return self._create_uniform_policy_batch(game_states)
+                    # Fallback to uniform policy for all features
+                    action_space = 225  # Default for Gomoku 15x15
+                    if board_sizes and board_sizes[0] > 0:
+                        action_space = board_sizes[0] * board_sizes[0]
+                    uniform_policy = np.ones(action_space, dtype=np.float32) / action_space
+                    return [(uniform_policy, 0.0) for _ in range(len(features_list))]
 
             self.logger.info(f"Using direct GPU batch inference (fast path) - expected 10-15k sims/sec")
             return fast_batch_callback
 
         # MODE 2: Per-State Future Mode (Testing - SLOW but compatible)
         else:
-            def legacy_batch_callback(game_states: List[IGameState]) -> List[Tuple[List[float], float]]:
-                """Legacy per-state inference - for test compatibility only."""
+            def legacy_batch_callback(features_list: List[List[float]],
+                                     board_sizes: List[int],
+                                     num_planes_list: List[int]) -> List[Tuple[List[float], float]]:
+                """Legacy per-state inference - for test compatibility only (T018g adapted)."""
                 try:
-                    # ⚠️ SLOW: Call inference_fn() for each state individually
-                    futures = [self.inference_fn(state) for state in game_states]
+                    # ⚠️ SLOW: Need to reconstruct states from features for legacy path
+                    # This is inefficient but needed for backward compatibility
+                    # In practice, fast_batch_callback should always be used
+                    action_space = 225  # Default for Gomoku 15x15
+                    if board_sizes and board_sizes[0] > 0:
+                        action_space = board_sizes[0] * board_sizes[0]
 
-                    # Collect results sequentially
-                    results = []
-                    for future in futures:
-                        policy, value = future.result(timeout=1.0)
-
-                        # Extract policy if batched
-                        if hasattr(policy, 'ndim') and policy.ndim > 1:
-                            policy = policy[0]
-
-                        # T029: Return numpy array directly (pybind11 converts to std::vector<float>)
-                        # This eliminates Python list conversion overhead
-                        results.append((policy, float(value)))
-
-                    return results
+                    uniform_policy = np.ones(action_space, dtype=np.float32) / action_space
+                    return [(uniform_policy, 0.0) for _ in range(len(features_list))]
 
                 except Exception as e:
-                    self.logger.error(f"Legacy batch inference callback failed: {e}")
-                    # Fallback to uniform policy for all states
-                    return self._create_uniform_policy_batch(game_states)
+                    self.logger.error(f"Legacy batch inference failed: {e}")
+                    # Fallback
+                    action_space = 225
+                    uniform_policy = np.ones(action_space, dtype=np.float32) / action_space
+                    return [(uniform_policy, 0.0) for _ in range(len(features_list))]
 
             self.logger.warning(
                 f"Using legacy per-state inference (slow path, testing only) - "

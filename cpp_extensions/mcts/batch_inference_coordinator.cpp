@@ -17,26 +17,12 @@ InferenceResult make_fallback_result(const InferenceRequest& request) {
     fallback.request_id = request.request_id;
     fallback.value = 0.0f;
 
-    const IGameState* state = request.state.get();
-    int action_space = state ? state->getActionSpaceSize() : 0;
+    // Use action_space_size from request (no state needed after T018g optimization)
+    int action_space = request.action_space_size;
     fallback.policy.assign(action_space > 0 ? action_space : 1, 0.0f);
 
-    if (state && action_space > 0) {
-        auto legal_moves = state->getLegalMoves();
-        if (!legal_moves.empty()) {
-            float prob = 1.0f / static_cast<float>(legal_moves.size());
-            for (int move : legal_moves) {
-                int index = move;
-                if (index < 0 || index >= action_space) {
-                    index = action_space - 1;
-                }
-                fallback.policy[index] = prob;
-            }
-        } else {
-            float prob = 1.0f / static_cast<float>(action_space);
-            std::fill(fallback.policy.begin(), fallback.policy.end(), prob);
-        }
-    } else if (action_space > 0) {
+    // Uniform distribution over all actions (legal moves not available without state)
+    if (action_space > 0) {
         float prob = 1.0f / static_cast<float>(action_space);
         std::fill(fallback.policy.begin(), fallback.policy.end(), prob);
     } else {
@@ -121,19 +107,32 @@ void BatchInferenceCoordinator::coordinator_loop() {
             continue;  // No work to do, loop again
         }
 
-        // Phase 2: Extract state pointers from batch
-        std::vector<const IGameState*> states;
-        states.reserve(batch.size());
+        // Phase 2: Extract pre-computed features from batch (T018g optimization)
+        // Features were already extracted in C++ before queue submission
+        std::vector<std::vector<float>> features_batch;
+        std::vector<int> board_sizes;
+        std::vector<int> num_planes_list;
+
+        features_batch.reserve(batch.size());
+        board_sizes.reserve(batch.size());
+        num_planes_list.reserve(batch.size());
+
         for (const auto& request : batch) {
-            states.push_back(request.state.get());
+            features_batch.push_back(request.features);
+            board_sizes.push_back(request.board_size);
+            num_planes_list.push_back(request.num_feature_planes);
         }
 
         // Phase 3: Call Python for GPU inference (GIL ACQUIRED ONCE)
         // This is the only GIL crossing in the entire batch
+        // Uses pre-extracted features (no state cloning overhead!)
         std::vector<std::pair<std::vector<float>, float>> inference_results;
         bool had_error = false;
         try {
-            inference_results = callback_->batch_inference(states);
+            // Call virtual method (PyBatchInferenceCallback overrides this)
+            inference_results = callback_->batch_inference_features(
+                features_batch, board_sizes, num_planes_list
+            );
         } catch (const std::exception& e) {
             had_error = true;
             std::cerr << "Batch inference failed: " << e.what() << std::endl;

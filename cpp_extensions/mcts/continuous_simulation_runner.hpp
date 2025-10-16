@@ -36,14 +36,18 @@ namespace mcts {
  * Tracks state for a simulation that has selected to a leaf
  * and submitted an inference request, but hasn't yet received
  * the result to expand the node.
+ *
+ * **Optimization (T018g)**: Uses raw pointer to pool-allocated state
+ * instead of unique_ptr to eliminate clone() allocation overhead.
+ * State lifecycle managed by ThreadLocalStatePool.
  */
 struct PendingExpansion {
     NodeIndex leaf_node;                       // Node to expand with result
     std::vector<NodeIndex> path;               // Path from root to leaf (for backup)
-    std::unique_ptr<IGameState> state;         // Game state at leaf (for expansion)
+    IGameState* state;                         // Game state at leaf (pool-managed, NON-owning)
 
-    // Move-only type (owns game state)
-    PendingExpansion() = default;
+    // Move-only type (paths use vector move semantics)
+    PendingExpansion() : leaf_node(0), state(nullptr) {}
     PendingExpansion(PendingExpansion&&) = default;
     PendingExpansion& operator=(PendingExpansion&&) = default;
     PendingExpansion(const PendingExpansion&) = delete;

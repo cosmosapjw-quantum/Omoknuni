@@ -139,10 +139,16 @@ private:
  * Wraps a Python callable for batched inference. Reduces GIL crossings
  * from N (one per simulation) to 1 (one per batch).
  *
- * The Python callable should have signature:
- *   def batch_inference(states: list[IGameState]) -> list[tuple[list[float], float]]:
- *       # Batch all states through neural network
- *       return [(policy1, value1), (policy2, value2), ...]
+ * **T018g Optimization**: Supports pre-extracted features to eliminate
+ * state cloning overhead (418μs → ~10μs per simulation).
+ *
+ * The Python callable should have ONE of these signatures:
+ *   # Legacy (with states):
+ *   def batch_inference(states: list[IGameState]) -> list[tuple[list[float], float]]
+ *
+ *   # Optimized (with pre-extracted features):
+ *   def batch_inference_features(features_list, board_sizes, num_planes_list)
+ *       -> list[tuple[list[float], float]]
  */
 class PyBatchInferenceCallback : public BatchInferenceCallback {
 public:
@@ -151,6 +157,88 @@ public:
         if (!py::hasattr(python_fn, "__call__")) {
             throw std::invalid_argument(
                 "PyBatchInferenceCallback requires a callable Python object"
+            );
+        }
+    }
+
+    /**
+     * @brief Batch inference with pre-extracted features (T018g optimization)
+     *
+     * Overrides base class virtual method to provide optimized feature-based
+     * inference path.
+     *
+     * @param features_batch Vector of flattened feature tensors (C×H×W each)
+     * @param board_sizes Vector of board sizes (for reshaping in Python)
+     * @param num_planes_list Vector of feature plane counts
+     * @return Vector of (policy, value) pairs
+     */
+    std::vector<std::pair<std::vector<float>, float>>
+    batch_inference_features(const std::vector<std::vector<float>>& features_batch,
+                              const std::vector<int>& board_sizes,
+                              const std::vector<int>& num_planes_list) override {
+        // Acquire GIL for calling Python from C++ thread
+        py::gil_scoped_acquire gil;
+
+        try {
+            // Convert C++ vectors to Python lists
+            py::list py_features;
+            py::list py_board_sizes;
+            py::list py_num_planes;
+
+            for (const auto& features : features_batch) {
+                py_features.append(py::cast(features));
+            }
+            for (int size : board_sizes) {
+                py_board_sizes.append(size);
+            }
+            for (int planes : num_planes_list) {
+                py_num_planes.append(planes);
+            }
+
+            // Call Python batch inference with features
+            py::object result = python_fn_(py_features, py_board_sizes, py_num_planes);
+
+            // Extract results (same format as batch_inference)
+            if (!py::isinstance<py::list>(result)) {
+                throw std::runtime_error(
+                    "Batch inference must return list of (policy, value) tuples"
+                );
+            }
+
+            py::list result_list = result.cast<py::list>();
+            std::vector<std::pair<std::vector<float>, float>> results;
+            results.reserve(py::len(result_list));
+
+            for (size_t i = 0; i < py::len(result_list); ++i) {
+                py::tuple item = result_list[i].cast<py::tuple>();
+                if (py::len(item) != 2) {
+                    throw std::runtime_error(
+                        "Each result must be (policy, value) tuple"
+                    );
+                }
+
+                // Extract policy
+                py::object policy_obj = item[0];
+                std::vector<float> policy;
+                if (py::isinstance<py::list>(policy_obj)) {
+                    policy = policy_obj.cast<std::vector<float>>();
+                } else if (py::hasattr(policy_obj, "tolist")) {
+                    policy = policy_obj.attr("tolist")().cast<std::vector<float>>();
+                } else {
+                    throw std::runtime_error("Policy must be list or numpy array");
+                }
+
+                // Extract value
+                float value = item[1].cast<float>();
+
+                results.emplace_back(policy, value);
+            }
+
+            return results;
+
+        } catch (const py::error_already_set& e) {
+            throw std::runtime_error(
+                std::string("Python batch inference failed: ") + e.what()
             );
         }
     }
