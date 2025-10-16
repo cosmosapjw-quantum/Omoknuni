@@ -19,6 +19,8 @@
 #endif
 
 #include "tree.hpp"
+#include "tiny_node.hpp"
+#include "tiny_node_tree.hpp"
 #include "virtual_loss.hpp"
 #include "selection.hpp"
 #include "backup.hpp"
@@ -1176,6 +1178,123 @@ PYBIND11_MODULE(mcts_py, m) {
           "    >>> pool.release(state)  # No-op, ring buffer reuses\n"
           "    >>> stats = pool.get_stats()\n"
           "    >>> print(f'Allocated: {stats.slots_allocated}/{stats.ring_size}')");
+
+    // ====== TinyNode and TinyNodeTree (T024f) ======
+
+    // TinyNode structure (read-only access from Python)
+    py::class_<TinyNode>(m, "TinyNode")
+        .def_readonly("move", &TinyNode::move,
+                     "Move that led to this node (uint16_t)")
+        .def_readonly("parent_idx", &TinyNode::parent_idx,
+                     "Parent node index (uint32_t)")
+        .def_readonly("first_child_idx", &TinyNode::first_child_idx,
+                     "First child index (uint32_t)")
+        .def_readonly("next_sibling_idx", &TinyNode::next_sibling_idx,
+                     "Next sibling index (uint32_t)")
+        .def_readonly("prior_scaled", &TinyNode::prior_scaled,
+                     "Prior probability (scaled to 0-65535)")
+        .def_readonly("flags", &TinyNode::flags,
+                     "Node flags (uint8_t)")
+        .def_readonly("zobrist_hash", &TinyNode::zobrist_hash,
+                     "Zobrist hash (uint64_t)")
+        .def("get_visit_count", [](const TinyNode& node) {
+            return node.visit_count.load(std::memory_order_relaxed);
+        }, "Get visit count (atomic read)")
+        .def("get_total_value", [](const TinyNode& node) {
+            return node.total_value_scaled.load(std::memory_order_relaxed);
+        }, "Get total value scaled (atomic read)")
+        .def("get_virtual_loss", [](const TinyNode& node) {
+            return node.virtual_loss.load(std::memory_order_relaxed);
+        }, "Get virtual loss (atomic read)")
+        .def("is_terminal", &TinyNode::is_terminal,
+             "Check if node is terminal")
+        .def("is_expanded", &TinyNode::is_expanded,
+             "Check if node is expanded")
+        .def("is_root", &TinyNode::is_root,
+             "Check if node is root")
+        .def("get_value", &TinyNode::get_value,
+             "Get floating-point value")
+        .def("get_prior", &TinyNode::get_prior,
+             "Get floating-point prior probability")
+        .def("get_q_value", &TinyNode::get_q_value,
+             "Get Q-value (W/N)");
+
+    // TinyNodeTree - Zero-copy MCTS tree
+    py::class_<TinyNodeTree, std::shared_ptr<TinyNodeTree>>(m, "TinyNodeTree")
+        .def(py::init<std::size_t>(),
+             py::arg("max_nodes") = 50000000,
+             NoGil(),
+             "Initialize TinyNodeTree with specified capacity\n\n"
+             "Args:\n"
+             "    max_nodes: Maximum number of nodes (default: 50M)")
+        .def("allocate_node", &TinyNodeTree::allocate_node, NoGil(),
+             "Allocate a single node (O(1) bump allocation)\n\n"
+             "Returns:\n"
+             "    int: Node index, or -1 if pool is full")
+        .def("deallocate_node", &TinyNodeTree::deallocate_node, NoGil(),
+             py::arg("index"),
+             "Deallocate a node back to the free list\n\n"
+             "Args:\n"
+             "    index: Node index to deallocate")
+        .def("clear", &TinyNodeTree::clear, NoGil(),
+             "Clear all nodes and reset tree (O(1) operation)")
+        .def("get_node",
+             [](TinyNodeTree& tree, int32_t index) -> TinyNode* {
+                 return tree.get_node(index);
+             },
+             py::arg("index"),
+             py::return_value_policy::reference_internal,
+             "Get pointer to node by index\n\n"
+             "Args:\n"
+             "    index: Node index\n\n"
+             "Returns:\n"
+             "    TinyNode*: Pointer to node, or None if invalid")
+        .def("is_valid_index", &TinyNodeTree::is_valid_index,
+             py::arg("index"),
+             "Check if node index is valid\n\n"
+             "Args:\n"
+             "    index: Node index\n\n"
+             "Returns:\n"
+             "    bool: True if valid")
+        .def("get_node_count", &TinyNodeTree::get_node_count,
+             "Get current number of allocated nodes\n\n"
+             "Returns:\n"
+             "    int: Node count")
+        .def("get_max_nodes", &TinyNodeTree::get_max_nodes,
+             "Get maximum capacity\n\n"
+             "Returns:\n"
+             "    int: Maximum nodes")
+        .def("get_memory_usage", &TinyNodeTree::get_memory_usage,
+             "Get memory usage in bytes\n\n"
+             "Returns:\n"
+             "    int: Memory usage (bytes)")
+        .def("get_bytes_per_node", &TinyNodeTree::get_bytes_per_node,
+             "Get bytes per node (always 64 due to alignment)\n\n"
+             "Returns:\n"
+             "    float: Bytes per node")
+        .def("get_root_index", &TinyNodeTree::get_root_index,
+             "Get root node index (0 if tree has nodes)\n\n"
+             "Returns:\n"
+             "    int: Root index, or -1 if empty")
+        .def("has_space_for", &TinyNodeTree::has_space_for,
+             py::arg("count"),
+             "Check if tree has space for additional nodes\n\n"
+             "Args:\n"
+             "    count: Number of nodes to check\n\n"
+             "Returns:\n"
+             "    bool: True if space available")
+        .def("init_root", &TinyNodeTree::init_root,
+             py::arg("zobrist_hash"),
+             NoGil(),
+             "Initialize root node\n\n"
+             "Args:\n"
+             "    zobrist_hash: Initial zobrist hash for root\n\n"
+             "Returns:\n"
+             "    int: Root index (always 0)")
+        .def("validate", &TinyNodeTree::validate,
+             "Validate tree structure and constraints\n\n"
+             "Returns:\n"
+             "    bool: True if tree is valid");
 }
 
 } // namespace python

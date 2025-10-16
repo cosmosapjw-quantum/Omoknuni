@@ -32,6 +32,9 @@ endif()
 add_library(mcts_core STATIC
     tree.cpp
     tree.hpp
+    tiny_node.hpp
+    tiny_node_tree.cpp
+    tiny_node_tree.hpp
     selection.cpp
     selection.hpp
     virtual_loss.cpp

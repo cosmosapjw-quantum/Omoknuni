@@ -2777,6 +2777,44 @@ This approach:
 
 ---
 
+## T024f: Tree Refactor - Subjob Breakdown
+
+**Status**: PLANNED - Ready to implement
+**Detailed Plan**: See `T024F_REFACTORING_PLAN.md` for complete analysis
+
+**Subjobs** (8 total, ~29 hours):
+
+| ID | Task | Duration | Status | Dependencies |
+|----|------|----------|--------|--------------|
+| **T024f-1** | TinyNode Storage Layer | 3-4h | ⬜ READY | T024a-e |
+| **T024f-2** | Sibling-Linked Children | 3-4h | ⬜ PENDING | T024f-1 |
+| **T024f-3** | Path Traversal Methods | 4h | ⬜ PENDING | T024f-2 |
+| **T024f-4** | Zobrist Hash Integration | 2-3h | ⬜ PENDING | T024f-3 |
+| **T024f-5** | Adapter Layer | 2-3h | ⬜ PENDING | T024f-4 |
+| **T024f-6** | SimRunner Integration | 4-5h | ⬜ PENDING | T024f-5 |
+| **T024f-7** | Correctness Validation | 3-4h | ⬜ PENDING | T024f-6 |
+| **T024f-8** | Cleanup & Documentation | 2h | ⬜ PENDING | T024f-7 |
+
+**Key Changes**:
+- Replace SoA (9 arrays) with AoS (TinyNode struct)
+- Replace array-based children with sibling linking
+- Add zobrist_hash for transposition support
+- Replace state pooling with make/unmake traversal
+
+**Risk Mitigation**:
+- Parallel implementation (keep both trees)
+- Adapter layer for gradual migration
+- Feature flags for A/B testing
+- Rollback to T018 if KPIs fail
+
+**Success Criteria**:
+- ✓ Throughput ≥ 8,000 sims/sec
+- ✓ Memory ≤ 1GB (10M nodes)
+- ✓ All tests pass (existing + new)
+- ✓ Equivalence validation (A/B)
+
+---
+
 **Critical Next Steps After T018 Closure**:
 1. Complete T018 state pooling validation and documentation
 2. Archive T018 findings and performance results
