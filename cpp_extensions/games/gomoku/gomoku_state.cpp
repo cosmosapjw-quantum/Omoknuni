@@ -750,60 +750,38 @@ std::vector<std::unique_ptr<core::IGameState>> GomokuState::batchClone(int count
 }
 
 void GomokuState::copyFrom(const core::IGameState& source) {
-    // DEBUG: Track copyFrom usage
-    static int copyFrom_calls = 0;
-    if (++copyFrom_calls <= 5) {
-        std::cout << "[DEBUG] GomokuState::copyFrom() called - call #" << copyFrom_calls << std::endl;
-    }
-    
     // Ensure source is a GomokuState
     const GomokuState* gomoku_source = dynamic_cast<const GomokuState*>(&source);
     if (!gomoku_source) {
         throw std::runtime_error("Cannot copy from non-GomokuState: incompatible game types");
     }
-    
-    // Verify board sizes match
-    if (board_size_ != gomoku_source->board_size_) {
-        throw std::runtime_error("Cannot copy: board sizes mismatch");
-    }
-    
+
     // Copy rule configurations
     use_renju_ = gomoku_source->use_renju_;
     use_omok_ = gomoku_source->use_omok_;
     use_pro_long_opening_ = gomoku_source->use_pro_long_opening_;
-    
+
     // Copy game state
     current_player_ = gomoku_source->current_player_;
     black_first_stone_ = gomoku_source->black_first_stone_;
     last_action_played_ = gomoku_source->last_action_played_;
     move_history_ = gomoku_source->move_history_;
-    zobrist_ = gomoku_source->zobrist_;
-    
-    // Deep copy bitboards
-    size_t expected_size = (board_size_ * board_size_ + 63) / 64;
-    for (int p = 0; p < 2; ++p) {
-        if (player_bitboards_[p].size() != expected_size) {
-            player_bitboards_[p].resize(expected_size, 0);
-        }
-        std::copy(
-            gomoku_source->player_bitboards_[p].begin(),
-            gomoku_source->player_bitboards_[p].end(),
-            player_bitboards_[p].begin()
-        );
-    }
-    
-    // Mark all caches as dirty to ensure thread safety
-    valid_moves_dirty_.store(true, std::memory_order_release);
-    cached_valid_moves_.clear();
-    cached_winner_.store(NO_PLAYER, std::memory_order_release);
-    winner_check_dirty_.store(true, std::memory_order_release);
-    hash_signature_.store(0, std::memory_order_release);
-    hash_dirty_.store(true, std::memory_order_release);
-    
-    // Validate the copied state
-    if (!validate()) {
-        throw std::runtime_error("Copied GomokuState failed validation");
-    }
+    // NOTE: Don't copy zobrist_ - it's deterministic for board_size and reused
+
+    // Deep copy bitboards using vector assignment (reuses allocation)
+    player_bitboards_[0] = gomoku_source->player_bitboards_[0];
+    player_bitboards_[1] = gomoku_source->player_bitboards_[1];
+
+    // Mark caches as dirty (use relaxed ordering - copyFrom is single-threaded)
+    valid_moves_dirty_.store(true, std::memory_order_relaxed);
+    winner_check_dirty_.store(true, std::memory_order_relaxed);
+    hash_dirty_.store(true, std::memory_order_relaxed);
+    tensor_cache_dirty_.store(true, std::memory_order_relaxed);
+    enhanced_tensor_cache_dirty_.store(true, std::memory_order_relaxed);
+
+    // Set cache values (don't clear unordered_set - just mark dirty)
+    cached_winner_ = NO_PLAYER;
+    hash_signature_ = 0;
 }
 
 std::string GomokuState::actionToString(int action) const {
