@@ -27,8 +27,9 @@ import json
 # Import training API contracts
 import sys
 import os
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
-from specs.contracts.training_api import (
+# Add specs directory to path to import contracts
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'specs', '001-goal-create-spec'))
+from contracts.training_api import (
     SelfPlayGenerator, GameResult, TrainingExample
 )
 

@@ -26,7 +26,10 @@ from src.training.self_play import (
     SelfPlayGameGenerator, SelfPlayConfig, create_self_play_generator,
     save_games_to_disk, load_games_from_disk
 )
-from specs.contracts.training_api import GameResult, TrainingExample
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "specs" / "001-goal-create-spec"))
+from contracts.training_api import GameResult, TrainingExample
 from src.core.search_coordinator import SearchResult
 from src.games.game_state import create_game_state
 

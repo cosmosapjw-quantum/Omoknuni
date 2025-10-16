@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import pytest
 import mcts_py
-from src.games.gomoku import GomokuState
+import alphazero_py
 
 
 class TestAsyncInferenceQueueAPI:
@@ -33,10 +33,10 @@ class TestAsyncInferenceQueueAPI:
     def test_submit_request(self):
         """Test submitting inference request."""
         queue = mcts_py.AsyncInferenceQueue()
-        state = GomokuState()
+        state = alphazero_py.GomokuState()
 
         # Submit request
-        req_id = queue.submit_request(state._state, 0, [0])
+        req_id = queue.submit_request(state, 0, [0])
 
         assert isinstance(req_id, int)
         assert req_id == 0  # First request ID
@@ -48,8 +48,8 @@ class TestAsyncInferenceQueueAPI:
 
         ids = []
         for i in range(10):
-            state = GomokuState()
-            req_id = queue.submit_request(state._state, i, [i])
+            state = alphazero_py.GomokuState()
+            req_id = queue.submit_request(state, i, [i])
             ids.append(req_id)
 
         # All unique
@@ -64,8 +64,8 @@ class TestAsyncInferenceQueueAPI:
 
         # Submit 32 requests
         for i in range(32):
-            state = GomokuState()
-            queue.submit_request(state._state, i, [i])
+            state = alphazero_py.GomokuState()
+            queue.submit_request(state, i, [i])
 
         # Collect batch (min_size=32, timeout=1000ms)
         batch = queue.collect_batch(32, 1000.0)
@@ -80,8 +80,8 @@ class TestAsyncInferenceQueueAPI:
 
         # Submit only 10 requests (less than min_size=32)
         for i in range(10):
-            state = GomokuState()
-            queue.submit_request(state._state, i, [i])
+            state = alphazero_py.GomokuState()
+            queue.submit_request(state, i, [i])
 
         # Collect batch with short timeout
         start = time.time()
@@ -190,8 +190,8 @@ class TestAsyncInferenceQueueAPI:
 
         # Submit 100 requests
         for i in range(100):
-            state = GomokuState()
-            queue.submit_request(state._state, i, [i])
+            state = alphazero_py.GomokuState()
+            queue.submit_request(state, i, [i])
 
         mem_with_requests = queue.get_memory_usage()
         assert mem_with_requests > initial_mem

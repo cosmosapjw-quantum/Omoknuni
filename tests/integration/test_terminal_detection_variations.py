@@ -22,7 +22,10 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from src.training.self_play import SelfPlayGameGenerator, SelfPlayConfig
-from specs.contracts.training_api import GameResult, TrainingExample
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "specs" / "001-goal-create-spec"))
+from contracts.training_api import GameResult, TrainingExample
 
 
 class TerminalDetectionTester:

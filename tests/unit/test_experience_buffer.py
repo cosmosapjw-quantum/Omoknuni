@@ -15,7 +15,10 @@ import time
 from src.training.experience_buffer import (
     MemoryMappedExperienceBuffer, LRUCache, create_experience_buffer
 )
-from specs.contracts.training_api import TrainingExample, GameResult
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "specs" / "001-goal-create-spec"))
+from contracts.training_api import TrainingExample, GameResult
 
 
 class TestLRUCache:

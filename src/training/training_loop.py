@@ -38,7 +38,8 @@ from src.telemetry.metrics import MetricsCollector
 
 # Import contracts
 import sys
-sys.path.append('specs/001-goal-create-spec')
+# Add specs directory to path to import contracts
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "specs" / "001-goal-create-spec"))
 from contracts.training_api import GameResult, TrainingExample
 
 logger = logging.getLogger(__name__)

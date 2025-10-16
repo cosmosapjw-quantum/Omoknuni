@@ -21,7 +21,12 @@ import logging
 from threading import Lock
 import math
 
-from specs.contracts.training_api import (
+import sys
+from pathlib import Path
+# Add specs directory to path to import contracts
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "specs" / "001-goal-create-spec"))
+
+from contracts.training_api import (
     ExperienceBuffer, TrainingExample, GameResult
 )
 
