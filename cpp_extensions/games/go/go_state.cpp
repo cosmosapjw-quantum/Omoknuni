@@ -495,8 +495,36 @@ bool GoState::undoMove() {
     
     // Invalidate rules cache
     rules_->invalidateCache();
-    
+
     return true;
+}
+
+// T024e: Zero-copy make/unmake implementation for Go
+uint64_t GoState::make_move(uint16_t action) {
+    // Apply move using existing makeMove(int) which stores MoveRecord in full_move_history_
+    // This leverages existing infrastructure for complex Go logic (captures, ko, superko)
+
+    // Handle pass move: uint16_t(-1) = 65535, convert back to -1
+    int move_action = (action == 65535) ? -1 : static_cast<int>(action);
+    makeMove(move_action);
+
+    // Return move history size as undo token for LIFO validation
+    // (Similar to Chess approach - leverages existing move_history_ infrastructure)
+    return static_cast<uint64_t>(full_move_history_.size());
+}
+
+void GoState::unmake_move(uint16_t action, uint64_t undo_token) {
+    // Use existing undoMove() which handles all Go-specific logic
+    // (captures restoration, ko point, superko, position history, etc.)
+    if (!undoMove()) {
+        throw std::runtime_error("Go unmake_move: no move to undo");
+    }
+
+    // Verify undo_token matches expected move_history_ size for correctness
+    // After undoing, size should be undo_token - 1
+    if (full_move_history_.size() != undo_token - 1) {
+        throw std::runtime_error("Go unmake_move: move history size mismatch (LIFO violation)");
+    }
 }
 
 bool GoState::isTerminal() const {

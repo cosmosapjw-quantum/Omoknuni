@@ -2728,6 +2728,55 @@ Unlike Gomoku's explicit undo token encoding, Chess leverages the existing move_
 
 ---
 
+## ✅ T024e COMPLETE: Go make/unmake Implementation
+
+**Status**: COMPLETE - All tests passing (9/9)
+
+**Implementation Summary**:
+- **Approach**: Leverage existing full_move_history_ infrastructure (similar to Chess)
+- **make_move**: Delegates to existing makeMove(int), handles pass move (uint16_t(-1) = 65535), returns full_move_history_.size()
+- **unmake_move**: Delegates to existing undoMove(), validates LIFO order via undo_token
+- **Pass Move Handling**: Correctly converts uint16_t(65535) back to -1 for pass moves
+
+**Files Modified**:
+- `cpp_extensions/games/go/go_state.{h,cpp}` - make_move/unmake_move implementation ✅
+- `tests/unit/test_go_make_unmake.py` - 9 comprehensive unit tests ✅
+
+**Test Results**:
+```
+test_make_unmake_single_move PASSED           (bit-exact restoration)
+test_make_unmake_multiple_moves PASSED        (LIFO unwind correctness)
+test_zobrist_hash_consistency PASSED          (hash matches clone())
+test_deep_path_no_drift PASSED                (15 moves no drift)
+test_player_flip PASSED                       (player correctly flips)
+test_legal_moves_consistency PASSED           (moves unchanged after make/unmake)
+test_pass_handling PASSED                     (pass moves correctly handled)
+test_capture_handling PASSED                  (captures correctly handled)
+test_board_occupation_correctness PASSED      (board state restoration)
+
+All 9 tests PASSED in 0.04s
+```
+
+**Design Decision**:
+Similar to Chess, Go leverages existing full_move_history_ (MoveRecord vector) which stores:
+- action (move or -1 for pass)
+- ko_point (ko point before move)
+- captured_positions (vector of captured stone positions)
+- consecutive_passes (pass count for game ending)
+
+This approach:
++ Avoids duplicating ~300 lines of complex Go logic (captures, ko, superko, group analysis)
++ Reuses thoroughly tested existing implementation
++ Maintains O(1) undo performance with pre-allocated vector
++ Handles pass moves correctly (uint16_t representation mapping)
+- Requires full_move_history_ vector (already exists, minimal overhead)
+
+**Performance Impact**: Same as Chess and Gomoku - eliminates 418μs state cloning overhead per simulation.
+
+**Next Steps**: Proceed to T024f (Tree Refactor with TinyNode integration)
+
+---
+
 **Critical Next Steps After T018 Closure**:
 1. Complete T018 state pooling validation and documentation
 2. Archive T018 findings and performance results
