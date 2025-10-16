@@ -2,9 +2,9 @@
 #ifndef GOMOKU_STATE_H
 #define GOMOKU_STATE_H
 
-#include "igamestate.h"
-#include "utils/zobrist_hash.h" // Make sure this path is correct
-#include "export_macros.h" // Make sure this path is correct
+#include "../../utils/igamestate.h"
+#include "../../utils/zobrist_hash.h"
+#include "../../utils/export_macros.h"
 #include <vector>
 #include <string>
 #include <sstream>

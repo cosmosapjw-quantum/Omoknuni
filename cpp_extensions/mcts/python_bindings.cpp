@@ -31,6 +31,7 @@
 #include "dlpack_bridge.hpp"
 #include "profiling/enhanced_profiler.hpp"
 #include "profiling/validation.hpp"
+#include "state_pool.hpp"
 
 namespace py = pybind11;
 
@@ -1070,6 +1071,81 @@ PYBIND11_MODULE(mcts_py, m) {
           "    ...     print('Profiling system is ready!')\n"
           "    ... else:\n"
           "    ...     print('Fix validation failures before use')");
+
+    // ========================================================================
+    // State Pool Bindings (T018b)
+    // ========================================================================
+
+    // ThreadLocalStatePool::Stats
+    py::class_<ThreadLocalStatePool::Stats>(m, "StatePoolStats")
+        .def(py::init<>())
+        .def_readonly("total_acquires", &ThreadLocalStatePool::Stats::total_acquires)
+        .def_readonly("total_releases", &ThreadLocalStatePool::Stats::total_releases)
+        .def_readonly("peak_usage", &ThreadLocalStatePool::Stats::peak_usage)
+        .def_readonly("pool_size", &ThreadLocalStatePool::Stats::pool_size)
+        .def("__repr__", [](const ThreadLocalStatePool::Stats& s) {
+            return "StatePoolStats(acquires=" + std::to_string(s.total_acquires) +
+                   ", releases=" + std::to_string(s.total_releases) +
+                   ", peak=" + std::to_string(s.peak_usage) +
+                   ", size=" + std::to_string(s.pool_size) + ")";
+        });
+
+    // ThreadLocalStatePool
+    py::class_<ThreadLocalStatePool>(m, "ThreadLocalStatePool")
+        .def(py::init<GameType, size_t>(),
+             py::arg("game_type"),
+             py::arg("pool_size") = 16,
+             "Create a thread-local state pool\n\n"
+             "Args:\n"
+             "    game_type: Type of game (GameType.GOMOKU, GameType.CHESS, GameType.GO)\n"
+             "    pool_size: Number of pre-allocated states (default: 16)\n\n"
+             "Note: Each thread should have its own pool for lock-free operation.")
+        .def("acquire", &ThreadLocalStatePool::acquire,
+             py::return_value_policy::reference,
+             py::call_guard<py::gil_scoped_release>(),
+             "Acquire a state from the pool\n\n"
+             "Returns a state in O(1) time (~5ns) from the ring buffer.\n"
+             "Thread-safe when each thread has its own pool.\n\n"
+             "Returns:\n"
+             "    IGameState*: Pointer to state (owned by pool)")
+        .def("release", &ThreadLocalStatePool::release,
+             py::arg("state"),
+             py::call_guard<py::gil_scoped_release>(),
+             "Release a state back to the pool\n\n"
+             "For ring buffer implementation, this is a no-op (~2ns).\n"
+             "States are automatically reused via wraparound.\n\n"
+             "Args:\n"
+             "    state: State to release (must be from this pool)")
+        .def("get_stats", &ThreadLocalStatePool::get_stats,
+             "Get pool statistics\n\n"
+             "Returns:\n"
+             "    StatePoolStats: Acquisition/release counts and peak usage")
+        .def("reset_stats", &ThreadLocalStatePool::reset_stats,
+             "Reset statistics counters\n\n"
+             "Useful for benchmarking specific code sections.");
+
+    // Thread-local pool accessor function
+    m.def("get_thread_state_pool",
+          &get_thread_state_pool,
+          py::arg("game_type"),
+          py::arg("pool_size") = 16,
+          py::return_value_policy::reference,
+          "Get or create the thread-local state pool\n\n"
+          "This is the recommended way to access state pools.\n"
+          "Each thread gets its own pool for lock-free operation.\n\n"
+          "Args:\n"
+          "    game_type: Type of game\n"
+          "    pool_size: Number of states (only used on first call per thread)\n\n"
+          "Returns:\n"
+          "    ThreadLocalStatePool*: Thread-local pool instance\n\n"
+          "Example:\n"
+          "    >>> import mcts_py\n"
+          "    >>> pool = mcts_py.get_thread_state_pool(GameType.GOMOKU, 16)\n"
+          "    >>> state = pool.acquire()\n"
+          "    >>> # ... use state ...\n"
+          "    >>> pool.release(state)\n"
+          "    >>> stats = pool.get_stats()\n"
+          "    >>> print(f'Peak usage: {stats.peak_usage}/{stats.pool_size}')");
 }
 
 } // namespace python

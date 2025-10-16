@@ -50,6 +50,8 @@ add_library(mcts_core STATIC
     thread_affinity.hpp
     thread_local_arena.cpp
     thread_local_arena.hpp
+    state_pool.cpp
+    state_pool.hpp
     batch_inference_callback.hpp
     batch_inference_coordinator.cpp
     batch_inference_coordinator.hpp
@@ -157,7 +159,7 @@ if(pybind11_FOUND)
 
     # Link with MCTS core library and games library (for IGameState)
     # CRITICAL: Must link OpenMP explicitly when linking static library to shared object
-    target_link_libraries(mcts_py PRIVATE mcts_core utils_core OpenMP::OpenMP_CXX)
+    target_link_libraries(mcts_py PRIVATE mcts_core games_core utils_core OpenMP::OpenMP_CXX)
 
     # Include directories
     target_include_directories(mcts_py PRIVATE

@@ -10,10 +10,10 @@
 #include <unordered_map>
 #include <map>
 #include <atomic>
-#include "igamestate.h"
-#include "utils/zobrist_hash.h"
-#include "games/chess/chess_types.h"
-#include "export_macros.h"
+#include "../../utils/igamestate.h"
+#include "../../utils/zobrist_hash.h"
+#include "chess_types.h"
+#include "../../utils/export_macros.h"
 
 namespace alphazero {
 namespace games {

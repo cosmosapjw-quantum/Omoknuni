@@ -6,7 +6,7 @@
 #include <unordered_set>
 #include <functional>
 #include <unordered_map>
-#include "export_macros.h"
+#include "../../utils/export_macros.h"
 
 namespace alphazero {
 namespace games {

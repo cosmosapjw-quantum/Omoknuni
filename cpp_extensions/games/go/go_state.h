@@ -9,10 +9,10 @@
 #include <memory>
 #include <optional>
 #include <atomic>
-#include "igamestate.h"
-#include "utils/zobrist_hash.h"
-#include "games/go/go_rules.h"
-#include "export_macros.h"
+#include "../../utils/igamestate.h"
+#include "../../utils/zobrist_hash.h"
+#include "go_rules.h"
+#include "../../utils/export_macros.h"
 
 namespace alphazero {
 namespace games {

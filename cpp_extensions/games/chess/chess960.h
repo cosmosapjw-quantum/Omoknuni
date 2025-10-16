@@ -7,8 +7,8 @@
 #include <random>
 #include <cstdint>
 #include <string>
-#include "games/chess/chess_state.h"
-#include "export_macros.h"
+#include "chess_state.h"
+#include "../../utils/export_macros.h"
 
 namespace alphazero {
 namespace games {

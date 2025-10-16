@@ -12,7 +12,7 @@
 
 // Assuming these are correctly pathed in your project
 #include "utils/hash_specializations.h" // If used by this header directly
-#include "export_macros.h"
+#include "../../utils/export_macros.h"
 
 namespace alphazero {
 namespace games {

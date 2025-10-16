@@ -17,8 +17,8 @@
 #include <unordered_map>
 #include <fstream>
 
-#include "igamestate.h"
-#include "export_macros.h"
+#include "../utils/igamestate.h"
+#include "../utils/export_macros.h"
 
 namespace alphazero {
 namespace core {
