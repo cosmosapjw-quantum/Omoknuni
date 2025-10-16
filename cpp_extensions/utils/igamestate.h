@@ -304,6 +304,203 @@ public:
         return estimateMemoryUsage();
     }
 
+    //
+    // T024b: make/unmake API for Zero-Copy MCTS Architecture
+    //
+
+    /**
+     * @brief Apply move in-place and return undo token (T024b - Zero-Copy MCTS)
+     *
+     * Applies the specified move to the current state in-place, modifying
+     * the board, current player, and other game-specific fields. Returns
+     * an opaque 64-bit undo token that can be used with unmake_move() to
+     * restore the exact state before this move.
+     *
+     * **Zero-Copy Pattern**:
+     * This replaces the clone() + makeMove() pattern used in T018, eliminating
+     * state cloning overhead (418μs) with fast in-place updates (~15ns).
+     *
+     * **Performance Requirements**:
+     * - Target: ≤15ns per move (vs 418μs for clone())
+     * - NO heap allocations during move application
+     * - Thread-local usage only (NOT thread-safe)
+     * - Deterministic (same state + move → same result)
+     *
+     * **Undo Token Design**:
+     * Game-specific 64-bit value encoding modified fields:
+     *
+     * Gomoku (minimal):
+     * ```cpp
+     * return (last_move_row << 8) | last_move_col |
+     *        (game_result << 16) | (move_count << 24);
+     * ```
+     *
+     * Chess (complex):
+     * ```cpp
+     * return (captured_piece << 0) | (castling_rights << 4) |
+     *        (en_passant_square << 8) | (halfmove_clock << 16) |
+     *        (game_result << 24);
+     * ```
+     *
+     * Go (moderate):
+     * ```cpp
+     * return (ko_position << 0) | (captured_stones_mask << 16) |
+     *        (passes << 48) | (game_result << 56);
+     * ```
+     *
+     * **Usage Pattern**:
+     * ```cpp
+     * // Traverse MCTS path
+     * std::vector<uint64_t> undo_stack;
+     * for (TinyNode* node : path) {
+     *     uint64_t undo = state.make_move(node->move);
+     *     undo_stack.push_back(undo);
+     * }
+     *
+     * // Inference at leaf
+     * auto [policy, value] = infer(state);
+     *
+     * // Unwind path (LIFO)
+     * for (int i = path.size() - 1; i >= 0; --i) {
+     *     state.unmake_move(path[i]->move, undo_stack[i]);
+     * }
+     * ```
+     *
+     * **Thread Safety**:
+     * - NOT thread-safe (modifies state in-place)
+     * - Each thread MUST use its own IGameState instance
+     * - Recommended: thread_local IGameState per worker
+     *
+     * **Zobrist Hash Update**:
+     * Implementations should update Zobrist hash incrementally during make_move
+     * via XOR operations for efficient transposition table lookups.
+     *
+     * @param move The move to apply (game-specific encoding)
+     * @return Opaque 64-bit undo token for unmake_move()
+     * @throws std::runtime_error if move is illegal
+     *
+     * @see unmake_move() to reverse this move
+     * @see docs/api/make_unmake_pattern.md for complete API contract
+     */
+    virtual uint64_t make_move(uint16_t move) = 0;
+
+    /**
+     * @brief Reverse move using undo token (T024b - Zero-Copy MCTS)
+     *
+     * Restores the exact game state before the corresponding make_move() call
+     * by using the undo token returned by make_move(). This undoes all changes
+     * to the board, current player, game result, and other game-specific fields.
+     *
+     * **Performance Requirements**:
+     * - Target: ≤15ns per move (symmetric with make_move)
+     * - NO heap allocations during move reversal
+     * - Thread-local usage only (NOT thread-safe)
+     * - Bit-exact restoration (no state drift)
+     *
+     * **Correctness Requirements**:
+     * ```cpp
+     * // Save original state
+     * auto original_hash = state.getHash();
+     * auto original_player = state.getCurrentPlayer();
+     *
+     * // Apply and reverse move
+     * uint64_t undo = state.make_move(move);
+     * state.unmake_move(move, undo);
+     *
+     * // Verify bit-exact restoration
+     * assert(state.getHash() == original_hash);
+     * assert(state.getCurrentPlayer() == original_player);
+     * ```
+     *
+     * **Implementation Guidelines**:
+     * ```cpp
+     * void ConcreteState::unmake_move(uint16_t move, uint64_t undo_token) {
+     *     // Extract fields from undo token
+     *     uint8_t last_row = (undo_token >> 8) & 0xFF;
+     *     uint8_t last_col = (undo_token >> 0) & 0xFF;
+     *     uint8_t prev_result = (undo_token >> 16) & 0xFF;
+     *     uint8_t prev_count = (undo_token >> 24) & 0xFF;
+     *
+     *     // Restore board (remove stone)
+     *     board_[move] = EMPTY;
+     *
+     *     // Restore metadata
+     *     last_move_row_ = last_row;
+     *     last_move_col_ = last_col;
+     *     game_result_ = prev_result;
+     *     move_count_ = prev_count;
+     *
+     *     // Restore player (flip)
+     *     current_player_ = 3 - current_player_;
+     *
+     *     // Restore Zobrist hash (XOR with move)
+     *     zobrist_hash_ ^= zobrist_table_[move][current_player_];
+     * }
+     * ```
+     *
+     * **Thread Safety**:
+     * - NOT thread-safe (modifies state in-place)
+     * - Must be called on same thread as make_move()
+     * - Undo token is opaque (only valid for same state + move)
+     *
+     * **LIFO Order**:
+     * unmake_move() must be called in reverse order of make_move() calls:
+     * ```cpp
+     * // Correct LIFO order
+     * undo1 = state.make_move(move1);
+     * undo2 = state.make_move(move2);
+     * state.unmake_move(move2, undo2);  // Reverse order
+     * state.unmake_move(move1, undo1);
+     *
+     * // Wrong order - undefined behavior
+     * state.unmake_move(move1, undo1);  // ERROR
+     * state.unmake_move(move2, undo2);
+     * ```
+     *
+     * @param move The move to reverse (must match make_move call)
+     * @param undo_token Undo token returned by make_move()
+     *
+     * @see make_move() to apply a move
+     * @see docs/api/make_unmake_pattern.md for complete API contract
+     */
+    virtual void unmake_move(uint16_t move, uint64_t undo_token) = 0;
+
+    /**
+     * @brief Get Zobrist hash for transposition tables (T024b)
+     *
+     * Returns an incremental Zobrist hash of the current game state.
+     * The hash should be updated during make_move/unmake_move via XOR
+     * operations for O(1) incremental updates.
+     *
+     * **Zobrist Hashing**:
+     * ```cpp
+     * // Initialization (once per game type)
+     * zobrist_table_[position][piece_type] = random_64bit();
+     *
+     * // Incremental update in make_move
+     * zobrist_hash_ ^= zobrist_table_[move][piece];
+     *
+     * // Incremental restore in unmake_move
+     * zobrist_hash_ ^= zobrist_table_[move][piece];  // Same XOR
+     * ```
+     *
+     * **Properties**:
+     * - Same position → same hash (deterministic)
+     * - Different positions → different hash (high probability)
+     * - O(1) incremental updates (XOR only)
+     * - Used for transposition table lookups in DAG tree
+     *
+     * @return 64-bit Zobrist hash of current position
+     *
+     * @see getHash() for existing hash implementation (may differ)
+     */
+    virtual uint64_t zobrist_hash() const {
+        // Default implementation delegates to getHash()
+        // Game-specific implementations should override if Zobrist hashing
+        // is not the primary hash function
+        return getHash();
+    }
+
     /**
      * @brief Convert action to string representation
      * 
