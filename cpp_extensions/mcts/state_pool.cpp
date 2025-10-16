@@ -1,5 +1,6 @@
 // cpp_extensions/mcts/state_pool.cpp
-// T018b: ThreadLocalStatePool Implementation
+// T018b: ThreadLocalStatePool Implementation (PERFORMANCE FIX v2)
+// Lock-free ring buffer with lazy allocation
 
 #include "state_pool.hpp"
 #include "dlpack_bridge.hpp"  // For GameType definition
@@ -15,77 +16,79 @@ using alphazero::games::gomoku::GomokuState;
 using alphazero::games::chess::ChessState;
 using alphazero::games::go::GoState;
 
-ThreadLocalStatePool::ThreadLocalStatePool(GameType game_type, size_t pool_size)
-    : pool_size_(pool_size), next_free_(0) {
-
-    if (pool_size == 0) {
-        throw std::invalid_argument("ThreadLocalStatePool: pool_size must be > 0");
-    }
-
-    pool_.reserve(pool_size);
-
-    // Pre-allocate all states based on game type
-    for (size_t i = 0; i < pool_size; ++i) {
-        switch (game_type) {
-            case GameType::GOMOKU:
-                pool_.emplace_back(std::make_unique<GomokuState>());
-                break;
-            case GameType::CHESS:
-                pool_.emplace_back(std::make_unique<ChessState>());
-                break;
-            case GameType::GO:
-                pool_.emplace_back(std::make_unique<GoState>());
-                break;
-            default:
-                throw std::invalid_argument("ThreadLocalStatePool: unsupported game type");
-        }
+// Helper: Create state for game type
+static std::unique_ptr<IGameState> create_state_for_game(GameType game_type) {
+    switch (game_type) {
+        case GameType::GOMOKU:
+            return std::make_unique<GomokuState>();
+        case GameType::CHESS:
+            return std::make_unique<ChessState>();
+        case GameType::GO:
+            return std::make_unique<GoState>();
+        default:
+            throw std::invalid_argument("ThreadLocalStatePool: unsupported game type");
     }
 }
 
-IGameState* ThreadLocalStatePool::acquire() {
-    // Lock-free atomic increment (ring buffer index)
-    // Performance: ~5ns (single fetch_add instruction)
-    total_acquires_.fetch_add(1, std::memory_order_relaxed);
-    size_t idx = next_free_.fetch_add(1, std::memory_order_relaxed);
+ThreadLocalStatePool::ThreadLocalStatePool(GameType game_type, size_t ring_size)
+    : game_type_(game_type), ring_size_(ring_size) {
 
-    // Wrap around pool (ring buffer)
-    size_t pool_idx = idx % pool_size_;
+    if (ring_size == 0) {
+        throw std::invalid_argument("ThreadLocalStatePool: ring_size must be > 0");
+    }
+
+    // Reserve slots (but don't allocate states yet - lazy allocation!)
+    ring_.resize(ring_size);  // All slots initially null
+}
+
+IGameState* ThreadLocalStatePool::acquire() {
+    // Lock-free atomic increment
+    total_acquires_.fetch_add(1, std::memory_order_relaxed);
+    size_t idx = next_idx_.fetch_add(1, std::memory_order_relaxed);
+
+    // Wrap around ring buffer
+    size_t slot = idx % ring_size_;
+
+    // Lazy allocation: allocate state on first access to this slot
+    if (!ring_[slot]) {
+        ring_[slot] = create_state_for_game(game_type_);
+    }
 
     // Update peak usage tracking
-    // Usage = (total_acquires / pool_size) + 1
-    // If peak_usage > 1, pool is being wrapped (concurrent usage > pool_size)
-    size_t current_usage = (idx / pool_size_) + 1;
+    size_t current_usage = (idx / ring_size_) + 1;
     size_t peak = peak_usage_.load(std::memory_order_relaxed);
-
-    // CAS loop to update peak (rare, low contention)
     while (current_usage > peak) {
         if (peak_usage_.compare_exchange_weak(peak, current_usage,
-                                              std::memory_order_relaxed,
                                               std::memory_order_relaxed)) {
             break;
         }
     }
 
-    return pool_[pool_idx].get();
+    return ring_[slot].get();
 }
 
 void ThreadLocalStatePool::release(IGameState* state) {
     // No-op: Ring buffer automatically reuses states
-    // Included for API symmetry and future optimization potential
-    // Performance: ~2ns (single fetch_add for stats tracking)
+    // Update stats for monitoring
     total_releases_.fetch_add(1, std::memory_order_relaxed);
-
-    // Note: 'state' parameter unused - kept for API compatibility
-    // In ring buffer design, states are reused implicitly on next acquire()
-    (void)state;  // Suppress unused parameter warning
+    (void)state;  // Suppress unused warning
 }
 
 ThreadLocalStatePool::Stats ThreadLocalStatePool::get_stats() const {
+    // Count allocated slots
+    size_t allocated = 0;
+    for (const auto& slot : ring_) {
+        if (slot) {
+            ++allocated;
+        }
+    }
+
     return Stats{
         .total_acquires = total_acquires_.load(std::memory_order_relaxed),
         .total_releases = total_releases_.load(std::memory_order_relaxed),
-        .peak_usage = peak_usage_.load(std::memory_order_relaxed),
-        .pool_size = pool_size_
+        .slots_allocated = allocated,
+        .ring_size = ring_size_,
+        .peak_usage = peak_usage_.load(std::memory_order_relaxed)
     };
 }
 
@@ -96,14 +99,14 @@ void ThreadLocalStatePool::reset_stats() {
 }
 
 // Thread-local singleton accessor
-ThreadLocalStatePool* get_thread_state_pool(GameType game_type, size_t pool_size) {
+ThreadLocalStatePool* get_thread_state_pool(GameType game_type, size_t ring_size) {
     // Thread-local storage: each thread has its own pool (no contention)
     // Lazy initialization: created on first call per thread
     // Lifetime: persists for thread duration
     thread_local std::unique_ptr<ThreadLocalStatePool> pool;
 
     if (!pool) {
-        pool = std::make_unique<ThreadLocalStatePool>(game_type, pool_size);
+        pool = std::make_unique<ThreadLocalStatePool>(game_type, ring_size);
     }
 
     return pool.get();

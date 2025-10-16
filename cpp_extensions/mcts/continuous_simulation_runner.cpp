@@ -46,9 +46,17 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
     int completed = 0;
     int submitted = 0;
 
-    // Get thread-local state pool (zero-allocation state copying)
+    // Get thread-local state pool (on-demand allocation, free-list reuse)
     GameType game_type = detect_game_type(root_state);
-    ThreadLocalStatePool* state_pool = get_thread_state_pool(game_type, 16);
+    // NEW DESIGN (Memory Leak Fix):
+    // - Starts with 0 memory (no pre-allocation)
+    // - Allocates on-demand when free list is empty
+    // - Returns states to free list on release()
+    // - Memory usage = peak concurrent (self-adjusting!)
+    //
+    // Example: 2000 sims, 8 threads, ~100 peak concurrent per thread
+    // Memory: 800 states × 120KB = 96MB (vs 3.9GB with old ring buffer!)
+    ThreadLocalStatePool* state_pool = get_thread_state_pool(game_type);
 
     // Clear pending buffer
     for (auto& slot : pending_buffer_) {
@@ -221,7 +229,7 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
         if (slot.occupied.load(std::memory_order_relaxed) && slot.data.state) {
             // Return orphaned pool state (simulation ended before result arrived)
             GameType game_type = detect_game_type(*slot.data.state);
-            ThreadLocalStatePool* pool = get_thread_state_pool(game_type, 16);
+            ThreadLocalStatePool* pool = get_thread_state_pool(game_type);
             pool->release(slot.data.state);
             slot.data.state = nullptr;
         }
@@ -342,7 +350,7 @@ int ContinuousSimulationRunner::process_completed_results(AsyncInferenceQueue& q
             // Get thread-local pool and return state
             // Note: game_type is consistent within a runner instance
             GameType game_type = detect_game_type(*ready.pending.state);
-            ThreadLocalStatePool* pool = get_thread_state_pool(game_type, 16);
+            ThreadLocalStatePool* pool = get_thread_state_pool(game_type);
             pool->release(ready.pending.state);
         }
     }

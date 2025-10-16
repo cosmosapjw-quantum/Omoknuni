@@ -96,6 +96,34 @@ Conclusion: ZERO benefit from threading (allocation contention dominates)
 - **Speedup**: 1.57× GPU inference acceleration measured
 - **Note**: GPU is only 2.1% of total time (NOT the bottleneck!)
 
+### 1.3.1 Architectural Finding: State Pooling Limitation (2025-10-16)
+
+**T018 Outcomes**:
+- ✅ Solved memory leak (bounded growth via lock-free lazy ring buffer)
+- ✅ Solved illegal moves (proper ring sizing)
+- ❌ **Performance regression: 1,164 sims/sec** (56% slower than baseline)
+- ❌ **Architectural ceiling identified**: State cloning (418μs) cannot be optimized away
+
+**Root Cause**: Nodes contain full State objects → cloning required → 418μs floor
+
+**T019 Solution: Zero-Copy MCTS Architecture** 🔴 **NEW CRITICAL PATH**
+- **Approach**: Tiny nodes (32 bytes) + thread-local state reconstruction (make/unmake)
+- **Pattern**: Proven in Stockfish, KataGo, Leela Zero, AlphaZero
+- **Impact**: make/unmake (~15ns) vs state clone (418μs) = **2,787× faster**
+- **Expected**: **15,000-25,000 sims/sec** (5-10× improvement over current)
+- **Timeline**: 5-7 weeks (phased: core 2-3w, memory 1-2w, transpositions 1w, queues 3-5d, validation 1w)
+- **Risk**: MEDIUM (large refactor, but proven pattern)
+- **Authority**: See `T018_FINDINGS_AND_PATH_FORWARD.md` for comprehensive analysis
+
+**Components**:
+1. Tiny Node struct (32 bytes: move, stats, zobrist, children)
+2. Thread-local State with make/unmake for all games
+3. Per-thread bump arenas + epoch reclamation (QSBR)
+4. Transposition tables (DAG - Monte-Carlo Graph Search)
+5. Bounded SPSC queues (replace moodycamel retention)
+
+**Decision**: Close T018 as transitional solution, implement T019 for production performance.
+
 ### 1.4 Performance Calculation (Evidence-Based)
 
 **Current Performance**:

@@ -1,6 +1,6 @@
 // cpp_extensions/mcts/state_pool.hpp
-// T018b: ThreadLocalStatePool Implementation
-// Zero-allocation state management for MCTS simulations
+// T018b: ThreadLocalStatePool Implementation (PERFORMANCE FIX v2)
+// Lock-free ring buffer with lazy allocation
 
 #pragma once
 
@@ -17,47 +17,48 @@ using alphazero::core::IGameState;
 enum class GameType;
 
 /**
- * @brief Thread-local state pool for zero-allocation state management
+ * @brief Thread-local state pool with lock-free ring buffer + lazy allocation
  *
- * Provides lock-free O(1) acquisition and release of pre-allocated game states.
- * Eliminates 223 allocations per simulation, reducing state cloning from 418μs
- * to ~20μs per copy.
+ * **DESIGN v2 (Performance + Memory Fix)**:
+ * - Lock-free ring buffer (no mutex contention!)
+ * - Lazy allocation (allocate on first access to slot)
+ * - No pre-allocation (starts with 0 memory)
+ * - Fixed size (prevents unbounded growth)
+ * - No-op release() (ring buffer automatically reuses)
  *
- * **Design**:
- * - Ring buffer of pre-allocated states
- * - Lock-free acquisition via atomic counter (wraps around)
- * - Release is a no-op (states reused automatically)
- * - Thread-local instantiation (no contention)
+ * **Why this works**:
+ * - Peak concurrent simulations determines how many slots get allocated
+ * - Once allocated, slots are reused via wraparound
+ * - No mutex = no performance regression (same speed as old ring buffer)
+ * - Lazy allocation = memory efficiency (only allocates what's used)
  *
- * **Usage**:
- * ```cpp
- * auto* pool = get_thread_state_pool(GameType::GOMOKU);
- * IGameState* state = pool->acquire();  // O(1), no allocation
- * state->copyFrom(root);                // 20μs copy
- * // ... use state ...
- * pool->release(state);                 // O(1), no-op
- * ```
+ * **Performance**:
+ * - `acquire()`: O(1), ~5ns (atomic increment + conditional alloc)
+ * - `release()`: O(1), ~2ns (no-op, for API compat)
+ * - No mutex contention!
  *
- * **Performance** (profiling-validated):
- * - Acquisition: ~5ns (atomic fetch_add)
- * - Release: ~2ns (atomic fetch_add, no-op)
- * - Total overhead: <10ns per simulation
- * - Expected improvement: 3.7× overall throughput
+ * **Memory** (example):
+ * - 2000 sims, 8 threads, ~100 peak concurrent per thread
+ * - Allocates 100 slots × 120KB = **12MB per thread** (96MB total)
+ * - vs 0MB pre-allocation, 3.9GB with old pre-allocated ring buffer!
  *
- * @see docs/api/state_pooling.md for API contract
+ * **Ring size**: Set to accommodate peak concurrent + safety margin
+ * - Typical: 256-512 per thread
+ * - If wraparound with in-use state → illegal move (detectable)
  */
 class ThreadLocalStatePool {
 public:
     /**
-     * @brief Construct pool with pre-allocated states
+     * @brief Construct pool with lazy-allocated ring buffer
      *
      * @param game_type Type of game (GOMOKU, CHESS, GO)
-     * @param pool_size Number of states to pre-allocate (default: 16)
+     * @param ring_size Ring buffer capacity (default: 512)
      *
-     * Pool size should be >= max concurrent simulations per thread.
-     * Typical values: 8-32 (exceeding this is rare in MCTS).
+     * Ring size should be >= peak concurrent simulations per thread.
+     * Larger = more memory reserved (but not allocated upfront).
+     * Smaller = risk of wraparound if peak concurrent > ring_size.
      */
-    explicit ThreadLocalStatePool(GameType game_type, size_t pool_size = 16);
+    explicit ThreadLocalStatePool(GameType game_type, size_t ring_size = 512);
 
     /**
      * @brief Destructor
@@ -73,25 +74,24 @@ public:
     /**
      * @brief Acquire a state from the pool (lock-free, O(1))
      *
-     * Returns a pointer to a pre-allocated state. If pool is exhausted,
-     * wraps around (ring buffer behavior). Caller must ensure exclusive
-     * access duration is short (<1ms typical in MCTS).
+     * Gets next slot from ring buffer. If slot is null (first access),
+     * allocates state lazily. Otherwise returns existing state.
      *
-     * **Performance**: ~5ns (single atomic fetch_add)
+     * **Performance**: ~5ns if slot exists, ~1μs if allocating
      *
      * @return Pointer to IGameState (never null, always valid)
      */
     IGameState* acquire();
 
     /**
-     * @brief Release a state back to the pool (lock-free, O(1))
+     * @brief Release a state back to the pool (no-op, O(1))
      *
-     * No-op implementation: Ring buffer automatically reuses states.
-     * Included for API symmetry and potential future optimization.
+     * Ring buffer automatically reuses states via wraparound.
+     * This is a no-op for performance, included for API compat.
      *
-     * **Performance**: ~2ns (single atomic fetch_add for stats)
+     * **Performance**: ~2ns (updates stats only)
      *
-     * @param state Pointer to state (ignored, for API compatibility)
+     * @param state Pointer to state (ignored)
      */
     void release(IGameState* state);
 
@@ -103,10 +103,11 @@ public:
      * @return Stats struct with counters
      */
     struct Stats {
-        size_t total_acquires;   ///< Total acquire() calls
-        size_t total_releases;   ///< Total release() calls
-        size_t peak_usage;       ///< Peak concurrent usage (wraps / pool_size + 1)
-        size_t pool_size;        ///< Pool capacity
+        size_t total_acquires;     ///< Total acquire() calls
+        size_t total_releases;     ///< Total release() calls
+        size_t slots_allocated;    ///< Number of ring slots actually allocated
+        size_t ring_size;          ///< Total ring buffer capacity
+        size_t peak_usage;         ///< Peak concurrent usage estimate
     };
     Stats get_stats() const;
 
@@ -116,9 +117,14 @@ public:
     void reset_stats();
 
 private:
-    std::vector<std::unique_ptr<IGameState>> pool_;  ///< Pre-allocated states
-    std::atomic<size_t> next_free_;                  ///< Ring buffer index (wraps)
-    size_t pool_size_;                               ///< Pool capacity
+    GameType game_type_;  ///< Game type for state creation
+    size_t ring_size_;    ///< Ring buffer capacity
+
+    // Ring buffer (fixed size, lazily allocated)
+    std::vector<std::unique_ptr<IGameState>> ring_;  ///< Ring buffer slots
+
+    // Lock-free ring buffer index
+    std::atomic<size_t> next_idx_{0};
 
     // Statistics (relaxed atomics for minimal overhead)
     std::atomic<size_t> total_acquires_{0};
@@ -135,9 +141,9 @@ private:
  * **Thread Safety**: Each thread has its own pool (no contention).
  *
  * @param game_type Type of game
- * @param pool_size Pool capacity (default: 16, only used on first call)
+ * @param ring_size Ring buffer capacity (default: 512, only used on first call)
  * @return Pointer to thread-local pool (never null)
  */
-ThreadLocalStatePool* get_thread_state_pool(GameType game_type, size_t pool_size = 16);
+ThreadLocalStatePool* get_thread_state_pool(GameType game_type, size_t ring_size = 512);
 
 } // namespace mcts

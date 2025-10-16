@@ -1097,50 +1097,59 @@ PYBIND11_MODULE(mcts_py, m) {
     // State Pool Bindings (T018b)
     // ========================================================================
 
-    // ThreadLocalStatePool::Stats
+    // ThreadLocalStatePool::Stats (v2: lock-free ring buffer + lazy allocation)
     py::class_<ThreadLocalStatePool::Stats>(m, "StatePoolStats")
         .def(py::init<>())
         .def_readonly("total_acquires", &ThreadLocalStatePool::Stats::total_acquires)
         .def_readonly("total_releases", &ThreadLocalStatePool::Stats::total_releases)
+        .def_readonly("slots_allocated", &ThreadLocalStatePool::Stats::slots_allocated)
+        .def_readonly("ring_size", &ThreadLocalStatePool::Stats::ring_size)
         .def_readonly("peak_usage", &ThreadLocalStatePool::Stats::peak_usage)
-        .def_readonly("pool_size", &ThreadLocalStatePool::Stats::pool_size)
         .def("__repr__", [](const ThreadLocalStatePool::Stats& s) {
             return "StatePoolStats(acquires=" + std::to_string(s.total_acquires) +
                    ", releases=" + std::to_string(s.total_releases) +
-                   ", peak=" + std::to_string(s.peak_usage) +
-                   ", size=" + std::to_string(s.pool_size) + ")";
+                   ", allocated=" + std::to_string(s.slots_allocated) + "/" +
+                   std::to_string(s.ring_size) +
+                   ", peak=" + std::to_string(s.peak_usage) + ")";
         });
 
-    // ThreadLocalStatePool
+    // ThreadLocalStatePool (v2: lock-free ring buffer + lazy allocation)
     py::class_<ThreadLocalStatePool>(m, "ThreadLocalStatePool")
         .def(py::init<GameType, size_t>(),
              py::arg("game_type"),
-             py::arg("pool_size") = 16,
-             "Create a thread-local state pool\n\n"
+             py::arg("ring_size") = 512,
+             "Create a thread-local state pool (v2: lock-free + lazy allocation)\n\n"
              "Args:\n"
              "    game_type: Type of game (GameType.GOMOKU, GameType.CHESS, GameType.GO)\n"
-             "    pool_size: Number of pre-allocated states (default: 16)\n\n"
-             "Note: Each thread should have its own pool for lock-free operation.")
+             "    ring_size: Ring buffer capacity (default: 512)\n\n"
+             "DESIGN v2 (Performance + Memory Fix):\n"
+             "- Lock-free ring buffer (no mutex contention!)\n"
+             "- Lazy allocation (allocate on first access to slot)\n"
+             "- No pre-allocation (starts with 0 memory)\n"
+             "- Memory usage = peak concurrent simulations\n\n"
+             "Example: 100 peak concurrent → 100 slots × 120KB = 12MB")
         .def("acquire", &ThreadLocalStatePool::acquire,
              py::return_value_policy::reference,
              py::call_guard<py::gil_scoped_release>(),
-             "Acquire a state from the pool\n\n"
-             "Returns a state in O(1) time (~5ns) from the ring buffer.\n"
-             "Thread-safe when each thread has its own pool.\n\n"
+             "Acquire a state from the pool (lock-free, lazy allocation)\n\n"
+             "Gets next slot from ring buffer. If slot is null (first access),\n"
+             "allocates state lazily. Otherwise returns existing state.\n\n"
+             "Performance: ~5ns if slot exists, ~1μs if allocating\n\n"
              "Returns:\n"
              "    IGameState*: Pointer to state (owned by pool)")
         .def("release", &ThreadLocalStatePool::release,
              py::arg("state"),
              py::call_guard<py::gil_scoped_release>(),
-             "Release a state back to the pool\n\n"
-             "For ring buffer implementation, this is a no-op (~2ns).\n"
-             "States are automatically reused via wraparound.\n\n"
+             "Release a state back to the pool (no-op)\n\n"
+             "Ring buffer automatically reuses states via wraparound.\n"
+             "This is a no-op for performance, included for API compat.\n\n"
+             "Performance: ~2ns (updates stats only)\n\n"
              "Args:\n"
-             "    state: State to release (must be from this pool)")
+             "    state: State to release (ignored)")
         .def("get_stats", &ThreadLocalStatePool::get_stats,
              "Get pool statistics\n\n"
              "Returns:\n"
-             "    StatePoolStats: Acquisition/release counts and peak usage")
+             "    StatePoolStats: Acquire/release counts, allocated slots, peak usage")
         .def("reset_stats", &ThreadLocalStatePool::reset_stats,
              "Reset statistics counters\n\n"
              "Useful for benchmarking specific code sections.");
@@ -1149,24 +1158,24 @@ PYBIND11_MODULE(mcts_py, m) {
     m.def("get_thread_state_pool",
           &get_thread_state_pool,
           py::arg("game_type"),
-          py::arg("pool_size") = 16,
+          py::arg("ring_size") = 512,
           py::return_value_policy::reference,
-          "Get or create the thread-local state pool\n\n"
+          "Get or create the thread-local state pool (lock-free + lazy)\n\n"
           "This is the recommended way to access state pools.\n"
-          "Each thread gets its own pool for lock-free operation.\n\n"
+          "Each thread gets its own pool.\n\n"
           "Args:\n"
           "    game_type: Type of game\n"
-          "    pool_size: Number of states (only used on first call per thread)\n\n"
+          "    ring_size: Ring buffer capacity (default: 512, only used on first call)\n\n"
           "Returns:\n"
           "    ThreadLocalStatePool*: Thread-local pool instance\n\n"
           "Example:\n"
           "    >>> import mcts_py\n"
-          "    >>> pool = mcts_py.get_thread_state_pool(GameType.GOMOKU, 16)\n"
-          "    >>> state = pool.acquire()\n"
+          "    >>> pool = mcts_py.get_thread_state_pool(GameType.GOMOKU, 512)\n"
+          "    >>> state = pool.acquire()  # Lazy alloc on first access\n"
           "    >>> # ... use state ...\n"
-          "    >>> pool.release(state)\n"
+          "    >>> pool.release(state)  # No-op, ring buffer reuses\n"
           "    >>> stats = pool.get_stats()\n"
-          "    >>> print(f'Peak usage: {stats.peak_usage}/{stats.pool_size}')");
+          "    >>> print(f'Allocated: {stats.slots_allocated}/{stats.ring_size}')");
 }
 
 } // namespace python

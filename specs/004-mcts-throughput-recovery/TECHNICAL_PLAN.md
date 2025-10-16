@@ -2019,6 +2019,565 @@ Improvement factor: 17,708 / 2,659 = 6.66×
 
 ---
 
+## 11. T019: Zero-Copy MCTS Architecture (NEXT PHASE)
+
+**Note**: This section documents the architectural refactor to address the fundamental state cloning bottleneck identified in T018. See `T018_FINDINGS_AND_PATH_FORWARD.md` for comprehensive analysis.
+
+### 11.1 Architectural Finding from T018
+
+**T018 State Pooling Outcomes**:
+- ✅ Solved memory leak (bounded growth via lock-free lazy ring buffer)
+- ✅ Solved illegal moves (proper ring sizing)
+- ❌ **Performance regression: 1,164 sims/sec** (56% slower than baseline 2,659)
+- ❌ **Architectural ceiling identified**: 418μs state cloning cannot be optimized away with pooling
+
+**Root Cause**:
+```
+Current Architecture:
+  Node contains full State (120KB)
+    → Clone required for each simulation (418μs)
+      → 223 allocations per clone (~2μs each = 446μs)
+        → 86.6% of execution time
+
+Pooling Attempt:
+  Pre-allocate states in pool
+    → copyFrom() reduces allocations to 0 ✅
+      → But still 418μs memcpy overhead ❌
+        → Sparse allocation hurts cache locality ❌
+          → 56% performance regression
+```
+
+**Conclusion**: State pooling is a **band-aid** on an **architectural problem**. Need zero-copy architecture.
+
+### 11.2 Zero-Copy Architecture Design
+
+**Core Principle**: Store only move sequences in tree, reconstruct states on-demand.
+
+#### 11.2.1 Tiny Node Structure (32 bytes)
+
+```cpp
+// cpp_extensions/mcts/tiny_node.hpp
+struct alignas(64) TinyNode {
+    // Move that led to this node (16 bits)
+    uint16_t move;
+
+    // Parent node index (32 bits, supports 4B nodes)
+    uint32_t parent_idx;
+
+    // First child index (32 bits, 0 = no children)
+    uint32_t first_child_idx;
+
+    // Sibling index (32 bits, 0 = no sibling)
+    uint32_t next_sibling_idx;
+
+    // Visit count (atomic, 32 bits)
+    std::atomic<uint32_t> visit_count;
+
+    // Total value (atomic, 32 bits scaled)
+    std::atomic<int32_t> total_value_scaled;
+
+    // Prior probability (16 bits scaled)
+    uint16_t prior_scaled;
+
+    // Virtual loss (8 bits, max 255)
+    std::atomic<uint8_t> virtual_loss;
+
+    // Node flags (8 bits: terminal, expanded, etc.)
+    uint8_t flags;
+
+    // Zobrist hash (64 bits, for transposition table)
+    uint64_t zobrist_hash;
+
+    // Total: 34 bytes, aligned to 64 bytes
+};
+
+static_assert(sizeof(TinyNode) <= 64, "TinyNode must fit in cache line");
+```
+
+**Impact**:
+- Memory per node: 120KB → 32 bytes (3,750× reduction)
+- Cache efficiency: 1,875 cache lines → 1 cache line
+- 10M nodes: 1.2GB → 320MB (tree memory)
+
+#### 11.2.2 make/unmake Pattern
+
+**API Design**:
+```cpp
+// cpp_extensions/utils/igamestate.h
+class IGameState {
+public:
+    // Fast in-place move application (~15ns)
+    // Returns opaque undo token (game-specific)
+    virtual uint64_t make_move(uint16_t move) = 0;
+
+    // Fast move reversal (~15ns)
+    // Restores state before make_move
+    virtual void unmake_move(uint16_t move, uint64_t undo_token) = 0;
+
+    // Zobrist hash for transposition tables
+    virtual uint64_t zobrist_hash() const = 0;
+};
+```
+
+**Undo Token Design**:
+
+Gomoku (minimal undo):
+```cpp
+uint64_t undo_token = (
+    (last_move_row << 8) |
+    (last_move_col << 0) |
+    (game_result << 16) |
+    (move_count << 24)
+);
+```
+
+Chess (complex undo):
+```cpp
+uint64_t undo_token = (
+    (captured_piece << 0) |      // 4 bits
+    (castling_rights << 4) |     // 4 bits
+    (en_passant_square << 8) |   // 8 bits
+    (halfmove_clock << 16) |     // 8 bits
+    (game_result << 24)          // 8 bits
+);
+```
+
+Go (moderate undo):
+```cpp
+uint64_t undo_token = (
+    (ko_position << 0) |         // 16 bits
+    (captured_stones_mask << 16) | // 32 bits
+    (passes << 48) |             // 8 bits
+    (game_result << 56)          // 8 bits
+);
+```
+
+**Usage Pattern**:
+```cpp
+// Thread-local state (one per worker)
+thread_local std::unique_ptr<IGameState> worker_state;
+
+// Traverse path in MCTS tree
+std::vector<uint64_t> undo_stack;
+for (TinyNode* node : path) {
+    uint64_t undo = worker_state->make_move(node->move);
+    undo_stack.push_back(undo);
+}
+
+// Neural network inference at leaf
+auto [policy, value] = infer(*worker_state);
+
+// Unwind path (LIFO order)
+for (int i = path.size() - 1; i >= 0; --i) {
+    worker_state->unmake_move(path[i]->move, undo_stack[i]);
+}
+```
+
+#### 11.2.3 Per-Thread Bump Arenas
+
+**Design**:
+```cpp
+// cpp_extensions/mcts/bump_arena.hpp
+class BumpArena {
+public:
+    static constexpr size_t BLOCK_SIZE = 65536;  // 64K nodes
+
+    TinyNode* allocate() {
+        if (offset_ >= BLOCK_SIZE) {
+            allocate_new_block();
+        }
+        return &current_block_[offset_++];
+    }
+
+    void reclaim_epoch() {
+        // Bulk-free all blocks allocated before epoch marker
+        blocks_.erase(blocks_.begin(), epoch_marker_);
+        epoch_marker_ = blocks_.begin();
+        offset_ = 0;
+    }
+
+private:
+    TinyNode* current_block_;
+    size_t offset_;
+    std::vector<std::unique_ptr<TinyNode[]>> blocks_;
+    std::vector<...>::iterator epoch_marker_;
+};
+
+// Thread-local bump arena per worker
+thread_local BumpArena node_arena;
+```
+
+**Impact**:
+- Allocation speed: O(1) pointer increment (~5ns)
+- No locking: Each thread has own arena
+- Bulk reclamation: O(1) epoch increment (vs O(N) free)
+
+#### 11.2.4 Epoch Reclamation (QSBR)
+
+**Quiescent-State-Based Reclamation**:
+```cpp
+class EpochManager {
+public:
+    void enter_epoch(size_t thread_id) {
+        thread_epochs_[thread_id].store(
+            global_epoch_.load(std::memory_order_acquire),
+            std::memory_order_release
+        );
+    }
+
+    void exit_epoch(size_t thread_id) {
+        thread_epochs_[thread_id].store(
+            QUIESCENT,
+            std::memory_order_release
+        );
+    }
+
+    void try_reclaim() {
+        // Advance global epoch
+        size_t new_epoch = global_epoch_.fetch_add(1, std::memory_order_acq_rel);
+
+        // Wait for all threads to reach quiescent state
+        for (size_t tid = 0; tid < num_threads_; ++tid) {
+            while (thread_epochs_[tid].load(std::memory_order_acquire) < new_epoch) {
+                std::this_thread::yield();
+            }
+        }
+
+        // Safe to reclaim all arenas now
+        for (auto& arena : thread_arenas_) {
+            arena.reclaim_epoch();
+        }
+    }
+
+private:
+    std::atomic<size_t> global_epoch_{0};
+    std::vector<std::atomic<size_t>> thread_epochs_;
+    static constexpr size_t QUIESCENT = SIZE_MAX;
+};
+```
+
+**Impact**:
+- Memory reclamation: Bulk-free entire blocks
+- Latency: O(1) with bounded waiting (all threads quiesce)
+- Safety: No use-after-free (wait for quiescence)
+
+#### 11.2.5 Transposition Tables (DAG)
+
+**Monte-Carlo Graph Search**:
+```cpp
+struct TranspositionEntry {
+    uint64_t zobrist_hash;
+    uint32_t node_idx;  // Index to canonical node
+    uint32_t visit_count;
+};
+
+class TranspositionTable {
+public:
+    uint32_t lookup_or_insert(uint64_t zobrist, uint32_t new_node_idx) {
+        size_t slot = zobrist % table_size_;
+
+        // Linear probing
+        for (size_t i = 0; i < MAX_PROBE; ++i) {
+            TranspositionEntry& entry = table_[(slot + i) % table_size_];
+
+            // Empty slot - insert new
+            if (entry.zobrist_hash == 0) {
+                entry.zobrist_hash = zobrist;
+                entry.node_idx = new_node_idx;
+                return new_node_idx;
+            }
+
+            // Found match - return canonical node
+            if (entry.zobrist_hash == zobrist) {
+                return entry.node_idx;
+            }
+        }
+
+        // Table full or max probes - evict LRU
+        return evict_and_insert(zobrist, new_node_idx);
+    }
+
+private:
+    std::vector<TranspositionEntry> table_;
+    size_t table_size_;
+    static constexpr size_t MAX_PROBE = 16;
+};
+```
+
+**Impact**:
+- Deduplication: Tree becomes DAG (positions shared)
+- Memory savings: 20-40% (typical for board games)
+- Visit count accuracy: Transpositions share statistics
+
+#### 11.2.6 Bounded SPSC Queues
+
+**Replace moodycamel with bounded SPSC**:
+```cpp
+template<typename T, size_t Capacity>
+class BoundedSPSCQueue {
+public:
+    bool try_enqueue(T&& item) {
+        size_t write_idx = write_idx_.load(std::memory_order_relaxed);
+        size_t next_write = (write_idx + 1) % Capacity;
+
+        // Check full
+        if (next_write == read_idx_.load(std::memory_order_acquire)) {
+            return false;  // Queue full
+        }
+
+        buffer_[write_idx] = std::move(item);
+        write_idx_.store(next_write, std::memory_order_release);
+        return true;
+    }
+
+    bool try_dequeue(T& item) {
+        size_t read_idx = read_idx_.load(std::memory_order_relaxed);
+
+        // Check empty
+        if (read_idx == write_idx_.load(std::memory_order_acquire)) {
+            return false;  // Queue empty
+        }
+
+        item = std::move(buffer_[read_idx]);
+        read_idx_.store((read_idx + 1) % Capacity, std::memory_order_release);
+        return true;
+    }
+
+private:
+    std::array<T, Capacity> buffer_;
+    std::atomic<size_t> write_idx_{0};
+    std::atomic<size_t> read_idx_{0};
+};
+```
+
+**Impact**:
+- No dynamic allocation (fixed-size ring buffer)
+- Cache-friendly (contiguous storage)
+- Lock-free (single producer, single consumer)
+
+### 11.3 Performance Analysis
+
+#### 11.3.1 State Reconstruction Cost
+
+**make/unmake Benchmark** (Gomoku):
+```
+Current (clone):
+  - memcpy(225 bytes) = ~50ns
+  - memcpy(200 bytes) = ~40ns
+  - Primitive copies = ~10ns
+  - Allocation overhead = 446μs (223 allocs × 2μs)
+  - Total: ~418μs per clone
+
+Zero-Copy (make/unmake):
+  - Place stone: board[row * 15 + col] = player (5ns)
+  - Update metadata: move_count++, last_move (5ns)
+  - Check win condition (if terminal): ~100ns
+  - Total: ~15ns per make_move
+
+Speedup: 418μs / 15ns = 27,867× faster
+```
+
+#### 11.3.2 Path Traversal Cost
+
+**Typical MCTS Path** (depth = 20 moves):
+```
+Current Architecture:
+  - Clone root state: 418μs
+  - Apply 20 moves: 20 × 10μs = 200μs
+  - Total: 618μs per simulation
+
+Zero-Copy Architecture:
+  - make 20 moves: 20 × 15ns = 300ns
+  - unmake 20 moves: 20 × 15ns = 300ns
+  - Total: 600ns per simulation
+
+Speedup: 618μs / 600ns = 1,030× faster
+```
+
+#### 11.3.3 Overall Throughput Projection
+
+**Baseline Breakdown** (2,659 sims/sec):
+```
+State cloning:       835.85 ms (86.6%)
+Expansion:            37.24 ms ( 3.8%)
+Selection:             3.58 ms ( 0.4%)
+Backup:                1.67 ms ( 0.2%)
+Overhead:             85.64 ms ( 8.7%)
+Total:               982.86 ms per 2,000 sims
+```
+
+**After Zero-Copy** (projected):
+```
+State reconstruction:   1.20 ms ( 1.2%)  ← 600ns × 2,000 sims
+Expansion:             37.24 ms (37.9%)
+Selection:              3.58 ms ( 3.6%)
+Backup:                 1.67 ms ( 1.7%)
+Overhead:              54.58 ms (55.6%)  ← Reduced (less GIL contention)
+Total:                 98.27 ms per 2,000 sims
+
+Throughput: 2,000 / 0.09827 = 20,351 sims/sec
+Improvement: 20,351 / 2,659 = 7.65× faster
+```
+
+**Conservative Estimate** (accounting for unknowns):
+```
+Assume 30% overhead from:
+  - Path reconstruction complexity
+  - Transposition table lookups
+  - Arena allocation overhead
+  - Epoch reclamation pauses
+
+Adjusted throughput: 20,351 × 0.7 = 14,246 sims/sec
+Improvement: 14,246 / 2,659 = 5.36× faster
+
+Range: 15,000-25,000 sims/sec (5-10× improvement)
+```
+
+### 11.4 Implementation Phases
+
+**Phase 5A: Core Architecture** (2-3 weeks):
+- T024a: Tiny Node Design & Specification (1 day)
+- T024b: make/unmake API Design (1 day)
+- T024c: Gomoku make/unmake Implementation (2 days)
+- T024d: Chess make/unmake Implementation (2 days)
+- T024e: Go make/unmake Implementation (2 days)
+- T024f: Tree Refactor (Tiny Nodes + Indices) (3 days)
+- T024g: SimRunner Integration (2 days)
+- T024h: Correctness Validation (1 day)
+
+**Phase 5B: Memory Management** (1 week):
+- T025a: Per-Thread Bump Arenas Design (1 day)
+- T025b: Epoch Reclamation Implementation (2 days)
+- T025c: Memory Validation & Leak Testing (1 day)
+
+**Phase 5C: Transposition Tables** (1 week):
+- T026a: Zobrist Hashing Implementation (1 day)
+- T026b: DAG Tree (MCGS) Implementation (2 days)
+- T026c: Transposition Table Validation (1 day)
+
+**Phase 5D: Queue Optimization** (3-5 days):
+- T027a: Bounded SPSC Queue Design (1 day)
+- T027b: Replace moodycamel Queue (2 days)
+- T027c: Queue Validation & Performance Testing (1 day)
+
+**Phase 5E: Final Validation** (3-5 days):
+- T028: Comprehensive Performance Benchmarking (2 days)
+- T029: Documentation & Architecture Guide (1 day)
+
+**Total Timeline**: 5-7 weeks
+
+### 11.5 Risk Analysis
+
+**Technical Risks**:
+
+1. **make/unmake Correctness** (MEDIUM)
+   - Risk: Undo token insufficient for complete state restoration
+   - Mitigation: Extensive unit tests, bit-exact equivalence validation
+   - Fallback: Add more bits to undo token (up to 128 bits if needed)
+
+2. **Memory Reclamation Complexity** (MEDIUM)
+   - Risk: Epoch reclamation bugs (use-after-free, memory leaks)
+   - Mitigation: Valgrind validation, TSan verification
+   - Fallback: Disable reclamation (leak slowly), fix in follow-up
+
+3. **Transposition Table Bugs** (LOW-MEDIUM)
+   - Risk: Zobrist hash collisions, incorrect canonical node
+   - Mitigation: Collision detection, extensive validation
+   - Fallback: Disable transpositions (tree mode), fix separately
+
+4. **Integration Complexity** (HIGH)
+   - Risk: Large refactor, many files changed, high regression potential
+   - Mitigation: Phased implementation, maintain old path for comparison
+   - Fallback: Rollback to T018 state pooling (functional, but slow)
+
+**Performance Risks**:
+
+1. **make/unmake Slower Than Expected** (LOW)
+   - Risk: Game logic complexity increases cost beyond 15ns
+   - Mitigation: Benchmark early, optimize hot paths
+   - Expected: Even at 100ns, still 4,180× faster than clone
+
+2. **Path Reconstruction Overhead** (MEDIUM)
+   - Risk: Deep trees (depth >50) increase reconstruction cost
+   - Mitigation: Limit tree depth, optimize make/unmake
+   - Expected: 50 × 15ns = 750ns (still <1% of time)
+
+3. **Transposition Table Overhead** (LOW)
+   - Risk: Hash lookups slow down node creation
+   - Mitigation: Fast hash function (Zobrist XOR), small probe count
+   - Expected: <50ns per lookup (negligible)
+
+**Schedule Risks**:
+
+1. **Longer Than 5-7 Weeks** (MEDIUM)
+   - Risk: Complex debugging, unforeseen integration issues
+   - Mitigation: Buffer time built into estimate
+   - Contingency: Defer optional components (transpositions, queue optimization)
+
+### 11.6 Success Metrics
+
+**Performance Targets**:
+
+| Metric | Current | T018 (Pooling) | T019 (Zero-Copy) | Target |
+|--------|---------|----------------|------------------|--------|
+| Throughput (sims/sec) | 2,659 | 1,164 (regression) | 15,000-25,000 | ≥8,000 |
+| State overhead (% time) | 86.6% | 88.2% | <2% | <5% |
+| Memory per node | 120KB | 120KB | 32 bytes | <1KB |
+| Tree memory (10M nodes) | 1.2GB | 1.2GB | 320MB | <1GB |
+| Path reconstruction (μs) | 418 | 418 | 0.6 | <10 |
+
+**Correctness Targets**:
+
+| Metric | Target |
+|--------|--------|
+| make/unmake equivalence | 100% bit-exact with clone() |
+| Transposition correctness | 100% win rate vs tree-only mode |
+| Memory leak | 0 bytes leaked over 24h |
+| TSan clean | 0 data races |
+| Win rate vs baseline | ≥99.5% (search quality) |
+
+### 11.7 Prior Art & References
+
+**Production Systems Using Zero-Copy MCTS**:
+
+1. **Stockfish** (Chess)
+   - make/unmake with 64-bit undo tokens
+   - Zobrist transposition tables
+   - 200M nodes/sec search speed
+   - Source: github.com/official-stockfish/Stockfish
+
+2. **KataGo** (Go)
+   - Zero-copy MCTS with thread-local reconstruction
+   - DAG tree with transposition tables
+   - 80k playouts/sec on GPU
+   - Source: github.com/lightvector/KataGo
+
+3. **Leela Zero** (Go/Chess)
+   - AlphaZero-style with make/unmake
+   - Per-thread node arenas
+   - Source: github.com/leela-zero/leela-zero
+
+4. **AlphaGo/AlphaZero** (Google DeepMind)
+   - Tiny nodes with move sequences
+   - Thread-local state reconstruction
+   - Reference: Silver et al. 2016, 2017 papers
+
+**Academic References**:
+
+1. **Epoch-Based Reclamation**:
+   - Fraser, K. (2004). "Practical lock-freedom"
+   - Hart et al. (2007). "Performance of memory reclamation for lockless synchronization"
+
+2. **Transposition Tables**:
+   - Breuker et al. (1994). "Replacement schemes for transposition tables"
+   - Chaslot et al. (2008). "Monte-Carlo Tree Search: A New Framework for Game AI"
+
+3. **MCTS Optimizations**:
+   - Browne et al. (2012). "A Survey of Monte Carlo Tree Search Methods"
+   - Coulom, R. (2006). "Efficient Selectivity and Backup Operators in Monte-Carlo Tree Search"
+
+---
+
 ## Appendix B: Profiling Metrics Reference
 
 ### B.1 Critical Counters
@@ -2057,10 +2616,16 @@ Improvement factor: 17,708 / 2,659 = 6.66×
 
 ---
 
-**END OF TECHNICAL PLAN v1.0**
+**END OF TECHNICAL PLAN v1.1**
+
+**Version History**:
+- v1.0: Initial technical plan (T018-T023: state pooling and incremental optimizations)
+- v1.1: Added T019 zero-copy architecture design (Section 11) based on T018 architectural findings
 
 **Next Steps**:
-1. Execute `/speckit.tasks` to generate TASKS.md breakdown
-2. Begin implementation with T018 (State Pooling)
-3. Validate with profiling campaign (100% capture required)
-4. Achieve ≥8,000 sims/sec target
+1. Complete T018 state pooling closure (validation and documentation)
+2. Archive T018 findings and performance results
+3. Review T019 technical design with stakeholders
+4. Begin T024a (Tiny Node Design) after T018 sign-off
+5. Follow 5-7 week phased implementation plan for T019
+6. Target achievement: 15,000-25,000 sims/sec (5-10× improvement)

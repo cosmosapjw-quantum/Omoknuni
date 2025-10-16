@@ -26,8 +26,9 @@ import argparse
 import json
 import time
 import sys
+import os
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass, asdict
 import statistics
 import numpy as np
@@ -96,9 +97,13 @@ class BenchmarkSummary:
 class MCTSThroughputBenchmark:
     """Comprehensive MCTS throughput benchmarking."""
 
-    def __init__(self, device: str = 'cuda' if TORCH_AVAILABLE and torch.cuda.is_available() else 'cpu'):
+    def __init__(self, device: str = 'cuda' if TORCH_AVAILABLE and torch.cuda.is_available() else 'cpu',
+                 enable_profiling: bool = False, seed: int = 42):
         self.device = device
+        self.enable_profiling = enable_profiling
+        self.seed = seed
         self.results: List[ThroughputResult] = []
+        self.cpp_profiler = None
 
         # Check which optimizations are enabled
         self.optimizations = {
@@ -106,15 +111,39 @@ class MCTSThroughputBenchmark:
             'T008f_fp16_mixed_precision': device == 'cuda',  # Only on CUDA
             'T007_dlpack_zero_copy': True,  # DLPack tensor bridge
             'T009_thread_local_arenas': True,  # Thread-local memory arenas
+            'T018_state_pooling': True,  # State pooling optimization
         }
 
-        print(f"Benchmark Configuration:")
-        print(f"  Device: {device}")
-        print(f"  Optimizations enabled:")
+        # Output to stderr if profiling (stdout reserved for JSON)
+        output_stream = sys.stderr if enable_profiling else sys.stdout
+
+        print(f"Benchmark Configuration:", file=output_stream)
+        print(f"  Device: {device}", file=output_stream)
+        print(f"  Seed: {seed}", file=output_stream)
+        print(f"  Profiling: {'enabled' if enable_profiling else 'disabled'}", file=output_stream)
+        print(f"  Optimizations enabled:", file=output_stream)
         for opt, enabled in self.optimizations.items():
             status = "✅" if enabled else "❌"
-            print(f"    {status} {opt}")
-        print()
+            print(f"    {status} {opt}", file=output_stream)
+        print(file=output_stream)
+
+        # Setup profiling if requested
+        if enable_profiling and ALPHAZERO_AVAILABLE:
+            try:
+                import mcts_py
+                import contextlib
+                import io
+
+                # Suppress C++ profiler stdout messages
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.cpp_profiler = mcts_py.EnhancedProfiler.instance()
+                    self.cpp_profiler.set_enabled(True)
+                    self.cpp_profiler.set_level(mcts_py.ProfileLevel.FULL)
+                    self.cpp_profiler.start_session(f"benchmark_{time.time():.0f}")
+                print("  ✅ C++ profiling enabled", file=output_stream)
+            except Exception as e:
+                print(f"  ⚠️  C++ profiling not available: {e}", file=output_stream)
+                self.cpp_profiler = None
 
     def run_throughput_benchmark(
         self,
@@ -128,7 +157,8 @@ class MCTSThroughputBenchmark:
         if not ALPHAZERO_AVAILABLE:
             return self._mock_benchmark(game, threads, simulations)
 
-        print(f"Running benchmark: {game}, {threads} threads, {simulations} sims...")
+        output_stream = sys.stderr if self.enable_profiling else sys.stdout
+        print(f"Running benchmark: {game}, {threads} threads, {simulations} sims...", file=output_stream)
 
         # Create game state
         if game == 'gomoku':
@@ -140,8 +170,8 @@ class MCTSThroughputBenchmark:
         else:
             raise ValueError(f"Unknown game: {game}")
 
-        # Create model using factory function
-        model = create_random_model(game, seed=42)
+        # Create model using factory function with configured seed
+        model = create_random_model(game, seed=self.seed)
         model = model.to(self.device)
         model.eval()
 
@@ -244,21 +274,34 @@ class MCTSThroughputBenchmark:
 
         self.results.append(result)
 
-        print(f"  Throughput: {throughput:.0f} sims/sec")
-        print(f"  Total time: {total_time:.2f} sec")
+        output_stream = sys.stderr if self.enable_profiling else sys.stdout
+        print(f"  Throughput: {throughput:.0f} sims/sec", file=output_stream)
+        print(f"  Total time: {total_time:.2f} sec", file=output_stream)
         if gpu_util is not None:
-            print(f"  GPU utilization: {gpu_util:.1f}%")
+            print(f"  GPU utilization: {gpu_util:.1f}%", file=output_stream)
         if cpu_util is not None:
-            print(f"  CPU utilization: {cpu_util:.1f}%")
-        print()
+            print(f"  CPU utilization: {cpu_util:.1f}%", file=output_stream)
+        print(file=output_stream)
 
-        # Cleanup
+        # Cleanup (but keep profiler active for later extraction)
         del mcts
         del model
         if TORCH_AVAILABLE and self.device == 'cuda':
             torch.cuda.empty_cache()
 
         return result
+
+    def stop_profiling(self):
+        """Stop profiling session before final export."""
+        if self.cpp_profiler:
+            try:
+                import contextlib
+                import io
+                # Suppress C++ profiler stdout messages
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.cpp_profiler.stop_session()
+            except Exception as e:
+                print(f"Warning: Failed to stop profiling session: {e}", file=sys.stderr)
 
     def _mock_benchmark(self, game: str, threads: int, simulations: int) -> ThroughputResult:
         """Mock benchmark when components are unavailable."""
@@ -289,8 +332,9 @@ class MCTSThroughputBenchmark:
         game: str = 'gomoku'
     ):
         """Benchmark thread scaling efficiency."""
-        print(f"Thread Scaling Benchmark ({game}):")
-        print("=" * 50)
+        output_stream = sys.stderr if self.enable_profiling else sys.stdout
+        print(f"Thread Scaling Benchmark ({game}):", file=output_stream)
+        print("=" * 50, file=output_stream)
 
         for threads in threads_list:
             self.run_throughput_benchmark(
@@ -350,6 +394,65 @@ class MCTSThroughputBenchmark:
             json.dump(asdict(summary), f, indent=2)
 
         print(f"Results saved to: {output_path}")
+
+    def get_profiling_data(self) -> Optional[Dict[str, Any]]:
+        """Extract C++ profiling metrics."""
+        if not self.cpp_profiler:
+            return None
+
+        try:
+            # Export to temporary file and read back
+            import tempfile
+            import contextlib
+            import io
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                temp_path = f.name
+
+            try:
+                # Suppress C++ profiler stdout messages
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.cpp_profiler.export_json(temp_path)
+            except Exception as e:
+                print(f"Warning: export_json failed ({e}), using empty profiling data", file=sys.stderr)
+                # Return minimal structure if export fails
+                return {
+                    'counters': {},
+                    'timings': {},
+                    'session_duration_ms': sum(r.total_time_sec for r in self.results) * 1000.0 if self.results else 0
+                }
+
+            with open(temp_path, 'r') as f:
+                profiling_data = json.load(f)
+
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
+
+            # Calculate session duration from accumulated results
+            if self.results:
+                total_duration_sec = sum(r.total_time_sec for r in self.results)
+                profiling_data['session_duration_ms'] = total_duration_sec * 1000.0
+
+            # Ensure profiling_data has the expected structure
+            if 'counters' not in profiling_data:
+                profiling_data['counters'] = {}
+            if 'timings' not in profiling_data:
+                profiling_data['timings'] = {}
+
+            return profiling_data
+
+        except Exception as e:
+            print(f"Warning: Failed to extract profiling data: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            # Return minimal structure
+            return {
+                'counters': {},
+                'timings': {},
+                'session_duration_ms': sum(r.total_time_sec for r in self.results) * 1000.0 if self.results else 0
+            }
 
     def print_summary(self):
         """Print benchmark summary."""
@@ -442,6 +545,23 @@ def main():
         default='results/benchmarks/throughput_latest.json',
         help="Output file for results"
     )
+    parser.add_argument(
+        '--seed',
+        type=int,
+        default=42,
+        help="Random seed for reproducibility (default: 42)"
+    )
+    parser.add_argument(
+        '--iterations',
+        type=int,
+        default=1,
+        help="Number of iterations to run (default: 1)"
+    )
+    parser.add_argument(
+        '--enable-profiling',
+        action='store_true',
+        help="Enable C++ profiling metrics collection"
+    )
 
     args = parser.parse_args()
 
@@ -453,15 +573,57 @@ def main():
         print()
 
     # Create benchmark
-    benchmark = MCTSThroughputBenchmark(device=args.device)
-
-    # Run thread scaling benchmark
-    benchmark.run_thread_scaling_benchmark(
-        threads_list=args.threads,
-        simulations=args.simulations,
-        game=args.game
+    benchmark = MCTSThroughputBenchmark(
+        device=args.device,
+        enable_profiling=args.enable_profiling,
+        seed=args.seed
     )
 
+    # Run multiple iterations if requested
+    all_throughputs = []
+    for iteration in range(args.iterations):
+        if args.iterations > 1:
+            print(f"\n{'='*70}")
+            print(f"ITERATION {iteration + 1}/{args.iterations}")
+            print(f"{'='*70}\n")
+
+        # Run thread scaling benchmark
+        benchmark.run_thread_scaling_benchmark(
+            threads_list=args.threads,
+            simulations=args.simulations,
+            game=args.game
+        )
+
+        # Collect throughput from this iteration
+        if benchmark.results:
+            all_throughputs.append(benchmark.results[-1].throughput_sims_per_sec)
+
+    # Compute mean throughput across iterations
+    mean_throughput = statistics.mean(all_throughputs) if all_throughputs else 0
+
+    # If profiling enabled, output JSON to stdout
+    if args.enable_profiling:
+        # Stop profiling session before extraction
+        benchmark.stop_profiling()
+
+        # Get profiling data
+        cpp_profiling = benchmark.get_profiling_data()
+
+        # Build output structure
+        output = {
+            'mean_throughput_sims_per_sec': mean_throughput,
+            'iterations': args.iterations,
+            'simulations_per_iteration': args.simulations,
+            'threads': args.threads[0] if args.threads else 8,
+            'all_throughputs': all_throughputs,
+            'cpp_profiling': cpp_profiling if cpp_profiling else {}
+        }
+
+        # Output to stdout as JSON
+        print(json.dumps(output, indent=2))
+        return 0
+
+    # Normal mode: print summary and save
     # Compare with baseline if provided
     if args.compare_baseline:
         comparison = benchmark.compare_with_baseline(args.compare_baseline)

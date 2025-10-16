@@ -33,12 +33,19 @@ def run_profiling_benchmark():
         print(f"❌ Benchmark failed:\n{result.stderr}")
         sys.exit(1)
 
-    # Parse JSON output
+    # Parse JSON output (skip C++ profiler messages)
     try:
-        data = json.loads(result.stdout)
+        # Find JSON start (first '{')
+        stdout = result.stdout
+        json_start = stdout.find('{')
+        if json_start == -1:
+            raise ValueError("No JSON found in output")
+
+        json_str = stdout[json_start:]
+        data = json.loads(json_str)
         return data
-    except json.JSONDecodeError:
-        print(f"❌ Failed to parse benchmark output:\n{result.stdout}")
+    except (json.JSONDecodeError, ValueError) as e:
+        print(f"❌ Failed to parse benchmark output: {e}\n{result.stdout}")
         sys.exit(1)
 
 def validate_results(data):

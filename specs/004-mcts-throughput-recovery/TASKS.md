@@ -2111,11 +2111,561 @@ make -j$(nproc)
 
 ---
 
-**END OF TASKS.md v1.0**
+## 7. Phase 5: T019 Zero-Copy MCTS Architecture (NEXT PHASE)
+
+**Note**: T019 replaces the original T019 (OpenMP investigation) based on findings from T018 architectural analysis (see `T018_FINDINGS_AND_PATH_FORWARD.md`). The zero-copy architecture addresses the fundamental 418μs state cloning bottleneck identified in profiling.
+
+### 7.1 T019 Overview
+
+**Summary**: Architectural refactor to eliminate state cloning overhead through tiny nodes (32 bytes) with thread-local state reconstruction (make/unmake pattern).
+
+**Rationale**:
+- T018 state pooling achieved memory leak fix and correctness ✅
+- T018 state pooling CANNOT achieve performance target (56% regression vs baseline)
+- Root cause: 418μs state cloning is architectural - cannot be optimized away with pooling
+- Proven pattern: Stockfish, KataGo, Leela Zero, AlphaZero all use make/unmake
+- Expected impact: 15,000-25,000 sims/sec (5-10× improvement over current 2,659)
+
+**Authority**: See `T018_FINDINGS_AND_PATH_FORWARD.md` sections 6-8 for comprehensive analysis.
+
+**Timeline**: 5-7 weeks (phased implementation)
+
+**Risk**: MEDIUM (large refactor, but proven pattern with extensive prior art)
+
+### 7.2 T019 Task Dependency Graph
+
+```
+Phase 5A: Core Architecture (Weeks 1-3)
+┌──────────────────────────────────────────────────────────┐
+│ T024a: Tiny Node Design & Specification                 │
+│ Effort: 1 day | Can parallelize: NO                     │
+└────────────┬─────────────────────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────────────────────┐
+│ T024b: make/unmake API Design                           │
+│ Effort: 1 day | Can parallelize: NO                     │
+└────────────┬─────────────────────────────────────────────┘
+             │
+             ├──────────┬──────────┬──────────────────────┐
+             ▼          ▼          ▼                      │
+     ┌──────────┐ ┌──────────┐ ┌──────────┐              │
+     │ T024c:   │ │ T024d:   │ │ T024e:   │              │
+     │ Gomoku   │ │ Chess    │ │ Go       │              │
+     │ make/    │ │ make/    │ │ make/    │              │
+     │ unmake   │ │ unmake   │ │ unmake   │              │
+     └─────┬────┘ └─────┬────┘ └─────┬────┘              │
+           │            │            │                    │
+           └────────────┴────────────┴──────────────────┐ │
+                                                        │ │
+                                                        ▼ ▼
+             ┌──────────────────────────────────────────────┐
+             │ T024f: Tree Refactor (Tiny Nodes + Indices)  │
+             │ Effort: 3 days | Can parallelize: NO         │
+             └────────────┬─────────────────────────────────┘
+                          │
+                          ▼
+             ┌──────────────────────────────────────────────┐
+             │ T024g: SimRunner Integration                 │
+             │ Effort: 2 days | Can parallelize: NO         │
+             └────────────┬─────────────────────────────────┘
+                          │
+                          ▼
+             ┌──────────────────────────────────────────────┐
+             │ T024h: Correctness Validation                │
+             │ Effort: 1 day | Can parallelize: NO          │
+             └──────────────────────────────────────────────┘
+
+Phase 5B: Memory Management (Weeks 4-5)
+┌──────────────────────────────────────────────────────────┐
+│ T025a: Per-Thread Bump Arenas Design                    │
+│ Effort: 1 day | Can parallelize: YES                    │
+└────────────┬─────────────────────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────────────────────┐
+│ T025b: Epoch Reclamation Implementation (QSBR)          │
+│ Effort: 2 days | Can parallelize: NO                    │
+└────────────┬─────────────────────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────────────────────┐
+│ T025c: Memory Validation & Leak Testing                 │
+│ Effort: 1 day | Can parallelize: NO                     │
+└──────────────────────────────────────────────────────────┘
+
+Phase 5C: Transposition Tables (Week 6)
+┌──────────────────────────────────────────────────────────┐
+│ T026a: Zobrist Hashing Implementation                   │
+│ Effort: 1 day | Can parallelize: YES                    │
+└────────────┬─────────────────────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────────────────────┐
+│ T026b: DAG Tree (MCGS) Implementation                   │
+│ Effort: 2 days | Can parallelize: NO                    │
+└────────────┬─────────────────────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────────────────────┐
+│ T026c: Transposition Table Validation                   │
+│ Effort: 1 day | Can parallelize: NO                     │
+└──────────────────────────────────────────────────────────┘
+
+Phase 5D: Queue Optimization (Week 7)
+┌──────────────────────────────────────────────────────────┐
+│ T027a: Bounded SPSC Queue Design                        │
+│ Effort: 1 day | Can parallelize: YES                    │
+└────────────┬─────────────────────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────────────────────┐
+│ T027b: Replace moodycamel Queue                         │
+│ Effort: 2 days | Can parallelize: NO                    │
+└────────────┬─────────────────────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────────────────────┐
+│ T027c: Queue Validation & Performance Testing           │
+│ Effort: 1 day | Can parallelize: NO                     │
+└──────────────────────────────────────────────────────────┘
+
+Phase 5E: Final Validation (Week 8)
+┌──────────────────────────────────────────────────────────┐
+│ T028: Comprehensive Performance Benchmarking            │
+│ Effort: 2 days | Can parallelize: NO                    │
+└────────────┬─────────────────────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────────────────────┐
+│ T029: Documentation & Architecture Guide                │
+│ Effort: 1 day | Can parallelize: YES                    │
+└──────────────────────────────────────────────────────────┘
+```
+
+### 7.3 T019 Task Summary Table
+
+| Task ID | Description | Effort | Dependencies | Parallelizable | Priority |
+|---------|-------------|--------|--------------|----------------|----------|
+| **T024a** | Tiny Node Design & Specification | 1d | T018i | NO | 🔴 CRITICAL |
+| **T024b** | make/unmake API Design | 1d | T024a | NO | 🔴 CRITICAL |
+| **T024c** | Gomoku make/unmake Implementation | 2d | T024b | YES | 🔴 CRITICAL |
+| **T024d** | Chess make/unmake Implementation | 2d | T024b | YES | 🔴 CRITICAL |
+| **T024e** | Go make/unmake Implementation | 2d | T024b | YES | 🔴 CRITICAL |
+| **T024f** | Tree Refactor (Tiny Nodes) | 3d | T024c,d,e | NO | 🔴 CRITICAL |
+| **T024g** | SimRunner Integration | 2d | T024f | NO | 🔴 CRITICAL |
+| **T024h** | Correctness Validation | 1d | T024g | NO | 🔴 CRITICAL |
+| **T025a** | Per-Thread Bump Arenas Design | 1d | T024h | YES | 🟠 HIGH |
+| **T025b** | Epoch Reclamation (QSBR) | 2d | T025a | NO | 🟠 HIGH |
+| **T025c** | Memory Validation | 1d | T025b | NO | 🟠 HIGH |
+| **T026a** | Zobrist Hashing | 1d | T024h | YES | 🟡 MEDIUM |
+| **T026b** | DAG Tree (MCGS) | 2d | T026a | NO | 🟡 MEDIUM |
+| **T026c** | Transposition Validation | 1d | T026b | NO | 🟡 MEDIUM |
+| **T027a** | Bounded SPSC Queue Design | 1d | T024h | YES | 🟢 LOW |
+| **T027b** | Replace moodycamel Queue | 2d | T027a | NO | 🟢 LOW |
+| **T027c** | Queue Validation | 1d | T027b | NO | 🟢 LOW |
+| **T028** | Comprehensive Benchmarking | 2d | T024h,T025c,T026c,T027c | NO | ✅ VALIDATION |
+| **T029** | Documentation & Architecture Guide | 1d | T028 | YES | ✅ VALIDATION |
+
+### 7.4 T019 Estimated Timeline
+
+**Phase 5A: Core Architecture** (Weeks 1-3):
+- **T024a-b**: Node and API design (2 days)
+- **T024c-d-e**: make/unmake implementations (2 days with parallelization)
+- **T024f**: Tree refactor (3 days)
+- **T024g**: SimRunner integration (2 days)
+- **T024h**: Correctness validation (1 day)
+- **Subtotal**: 10 days (2 weeks)
+
+**Phase 5B: Memory Management** (Weeks 4-5):
+- **T025a**: Bump arenas design (1 day)
+- **T025b**: Epoch reclamation (2 days)
+- **T025c**: Memory validation (1 day)
+- **Subtotal**: 4 days (1 week)
+
+**Phase 5C: Transposition Tables** (Week 6):
+- **T026a**: Zobrist hashing (1 day)
+- **T026b**: DAG tree (2 days)
+- **T026c**: Transposition validation (1 day)
+- **Subtotal**: 4 days (1 week)
+
+**Phase 5D: Queue Optimization** (Week 7):
+- **T027a**: SPSC queue design (1 day)
+- **T027b**: Replace moodycamel (2 days)
+- **T027c**: Queue validation (1 day)
+- **Subtotal**: 4 days (1 week)
+
+**Phase 5E: Final Validation** (Week 8):
+- **T028**: Comprehensive benchmarking (2 days)
+- **T029**: Documentation (1 day)
+- **Subtotal**: 3 days
+
+**Total Timeline**: 25 days (5 weeks minimum, 7 weeks with buffer)
+
+---
+
+### T024a: Tiny Node Design & Specification
+
+**Summary**: Design tiny 32-byte MCTS node structure to replace 120KB nodes containing full game states.
+
+**Rationale**:
+- Current nodes: 120KB each (contain full GomokuState)
+- Target nodes: 32 bytes (only move, stats, zobrist, children)
+- Memory reduction: 3,750× per node
+- Cache efficiency: 2 cache lines vs 1,875 cache lines
+- Enables elimination of state cloning bottleneck
+
+**Affected Files**:
+- `cpp_extensions/mcts/tiny_node.hpp` (new design document)
+- `docs/architecture/zero_copy_mcts.md` (new architecture guide)
+
+**Dependencies**: T018i (state pooling complete, findings documented)
+
+**Can Parallelize**: NO (foundational design decision)
+
+**Estimated Effort**: 1 day
+
+**Step-by-Step Implementation**:
+
+1. **Design TinyNode structure**:
+   ```cpp
+   // cpp_extensions/mcts/tiny_node.hpp
+   #pragma once
+   #include <cstdint>
+   #include <atomic>
+
+   namespace mcts {
+
+   // Tiny MCTS node: 32 bytes (fits in 1 cache line on most architectures)
+   struct alignas(64) TinyNode {
+       // Move that led to this node (16 bits)
+       uint16_t move;
+
+       // Parent node index (32 bits, supports 4B nodes)
+       uint32_t parent_idx;
+
+       // First child index (32 bits, 0 = no children)
+       uint32_t first_child_idx;
+
+       // Sibling index (32 bits, 0 = no sibling)
+       uint32_t next_sibling_idx;
+
+       // Visit count (atomic, 32 bits)
+       std::atomic<uint32_t> visit_count;
+
+       // Total value (atomic, 32 bits as int32 × 1e6 for precision)
+       std::atomic<int32_t> total_value_scaled;
+
+       // Prior probability (16 bits, scaled 0-65535)
+       uint16_t prior_scaled;
+
+       // Virtual loss (8 bits, max 255)
+       std::atomic<uint8_t> virtual_loss;
+
+       // Node flags (8 bits: terminal, expanded, etc.)
+       uint8_t flags;
+
+       // Zobrist hash (64 bits, for transposition table)
+       uint64_t zobrist_hash;
+
+       // Total: 2 + 4 + 4 + 4 + 4 + 4 + 2 + 1 + 1 + 8 = 34 bytes
+       // Aligned to 64 bytes for cache efficiency
+   };
+
+   static_assert(sizeof(TinyNode) <= 64, "TinyNode must fit in cache line");
+
+   } // namespace mcts
+   ```
+
+2. **Document zero-copy architecture**:
+   ```markdown
+   # Zero-Copy MCTS Architecture
+
+   ## Overview
+
+   The zero-copy architecture eliminates state cloning by storing only move sequences
+   in tree nodes. Game states are reconstructed on-demand by thread-local workers
+   applying moves from root to leaf (make) and unwinding (unmake).
+
+   ## Key Components
+
+   1. **Tiny Nodes (32 bytes)**: Store move, statistics, zobrist, children
+   2. **Thread-Local State**: Each worker maintains 1-2 game states
+   3. **make/unmake Pattern**: Apply/undo moves in-place
+   4. **Bump Arenas**: O(1) node allocation per thread
+   5. **Transposition Tables**: DAG structure for position deduplication
+
+   ## Performance Impact
+
+   - **State Cloning**: 418μs → 15ns (make/unmake)
+   - **Memory per Node**: 120KB → 32 bytes (3,750× reduction)
+   - **Cache Efficiency**: 1,875 cache lines → 1 cache line
+   - **Expected Throughput**: 15,000-25,000 sims/sec (5-10× improvement)
+
+   ## Prior Art
+
+   - **Stockfish**: make/unmake for chess, 200M nodes/sec
+   - **KataGo**: Zero-copy Go MCTS, 80k playouts/sec
+   - **Leela Zero**: AlphaZero-style with make/unmake
+   - **AlphaGo/AlphaZero**: Original implementation uses tiny nodes
+   ```
+
+3. **Design node pool allocation strategy**:
+   ```cpp
+   // Per-thread bump arena for node allocation
+   class NodeArena {
+   public:
+       static constexpr size_t BLOCK_SIZE = 65536;  // 64K nodes per block
+
+       TinyNode* allocate() {
+           if (offset_ >= BLOCK_SIZE) {
+               allocate_new_block();
+           }
+           return &current_block_[offset_++];
+       }
+
+   private:
+       TinyNode* current_block_;
+       size_t offset_;
+       std::vector<std::unique_ptr<TinyNode[]>> blocks_;
+   };
+   ```
+
+**Acceptance Criteria**:
+
+✅ **AC1**: TinyNode structure designed and documented (≤64 bytes)
+✅ **AC2**: All essential MCTS fields included (move, stats, zobrist, children)
+✅ **AC3**: Atomic fields for visit_count, total_value, virtual_loss
+✅ **AC4**: Architecture guide written with performance analysis
+✅ **AC5**: Prior art documented (Stockfish, KataGo, Leela, AlphaZero)
+✅ **AC6**: Allocation strategy designed (bump arenas)
+
+**Test Commands**:
+```bash
+# Verify structure size
+g++ -std=c++17 -c cpp_extensions/mcts/tiny_node.hpp -o /tmp/tiny_node.o
+python -c "
+import ctypes
+import struct
+# Verify TinyNode <= 64 bytes
+"
+
+# Verify documentation exists
+test -f docs/architecture/zero_copy_mcts.md || exit 1
+grep -q "Zero-Copy MCTS Architecture" docs/architecture/zero_copy_mcts.md
+```
+
+**Definition of Done**:
+- [ ] TinyNode structure designed (≤64 bytes)
+- [ ] Architecture guide written
+- [ ] Performance analysis documented
+- [ ] Prior art referenced
+- [ ] Allocation strategy designed
+- [ ] Code compiles without errors
+
+---
+
+### T024b: make/unmake API Design
+
+**Summary**: Design make_move/unmake_move API for IGameState to enable in-place move application/reversal.
+
+**Rationale**:
+- Replace state.clone() + state.apply_move() with state.make_move() + state.unmake_move()
+- make_move: Apply move in-place, save undo information (~15ns)
+- unmake_move: Restore previous state from undo info (~15ns)
+- Total: 30ns vs 418μs (13,933× faster)
+
+**Affected Files**:
+- `cpp_extensions/utils/igamestate.h` (API design)
+- `docs/api/make_unmake_pattern.md` (new documentation)
+
+**Dependencies**: T024a (tiny node design)
+
+**Can Parallelize**: NO (foundational API design)
+
+**Estimated Effort**: 1 day
+
+**Step-by-Step Implementation**:
+
+1. **Add make/unmake API to IGameState**:
+   ```cpp
+   // cpp_extensions/utils/igamestate.h
+   class IGameState {
+   public:
+       // Existing (slow - 418μs)
+       virtual std::unique_ptr<IGameState> clone() const = 0;
+       virtual void apply_move(uint16_t move) = 0;
+
+       // NEW: Fast in-place move application
+       // Returns opaque undo token (game-specific)
+       virtual uint64_t make_move(uint16_t move) = 0;
+
+       // NEW: Fast move reversal (restores state before make_move)
+       // Takes undo token returned by make_move
+       virtual void unmake_move(uint16_t move, uint64_t undo_token) = 0;
+
+       // Utility: Zobrist hash for transposition tables
+       virtual uint64_t zobrist_hash() const = 0;
+   };
+   ```
+
+2. **Document make/unmake pattern**:
+   ```markdown
+   # make/unmake Pattern for Zero-Copy MCTS
+
+   ## API Contract
+
+   ### make_move(move) → undo_token
+   - Applies move to current state **in-place**
+   - Returns opaque undo token (game-specific, typically 64 bits)
+   - Modifies board state, player turn, game result, etc.
+   - Target performance: ≤15ns
+
+   ### unmake_move(move, undo_token)
+   - Reverses move applied by make_move
+   - Restores exact state before make_move
+   - Uses undo_token to restore modified fields
+   - Target performance: ≤15ns
+
+   ## Undo Token Design
+
+   Game-specific undo information encoded in 64 bits:
+
+   **Gomoku** (minimal undo):
+   ```
+   uint64_t undo_token = (
+       (last_move_row << 8) |
+       (last_move_col << 0) |
+       (game_result << 16) |
+       (move_count << 24)
+   );
+   ```
+
+   **Chess** (complex undo):
+   ```
+   uint64_t undo_token = (
+       (captured_piece << 0) |      // 4 bits
+       (castling_rights << 4) |     // 4 bits
+       (en_passant_square << 8) |   // 8 bits
+       (halfmove_clock << 16) |     // 8 bits
+       (game_result << 24)          // 8 bits
+   );
+   ```
+
+   **Go** (moderate undo):
+   ```
+   uint64_t undo_token = (
+       (ko_position << 0) |         // 16 bits
+       (captured_stones_mask << 16) | // 32 bits (bitboard)
+       (passes << 48) |             // 8 bits
+       (game_result << 56)          // 8 bits
+   );
+   ```
+
+   ## Thread Safety
+
+   - make/unmake are **NOT thread-safe** (modify state in-place)
+   - Each thread MUST maintain its own IGameState instance
+   - Recommended: thread_local IGameState per worker
+
+   ## Usage Pattern
+
+   ```cpp
+   // Thread-local state (one per worker)
+   thread_local std::unique_ptr<IGameState> worker_state;
+
+   // Traverse path in MCTS tree
+   std::vector<uint64_t> undo_stack;
+   for (TinyNode* node : path) {
+       uint64_t undo = worker_state->make_move(node->move);
+       undo_stack.push_back(undo);
+   }
+
+   // Neural network inference at leaf
+   auto [policy, value] = infer(*worker_state);
+
+   // Unwind path (LIFO order)
+   for (int i = path.size() - 1; i >= 0; --i) {
+       worker_state->unmake_move(path[i]->move, undo_stack[i]);
+   }
+   ```
+   ```
+
+3. **Design performance validation approach**:
+   ```cpp
+   // Performance test harness
+   void benchmark_make_unmake(IGameState& state, uint16_t move) {
+       auto start = std::chrono::steady_clock::now();
+
+       // Repeat 1M times
+       for (int i = 0; i < 1000000; ++i) {
+           uint64_t undo = state.make_move(move);
+           state.unmake_move(move, undo);
+       }
+
+       auto end = std::chrono::steady_clock::now();
+       auto elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+           end - start
+       ).count();
+
+       double ns_per_op = elapsed_ns / 2.0e6;  // make + unmake
+       std::cout << "make/unmake: " << ns_per_op << " ns/op\\n";
+
+       // Target: <15ns per operation
+       assert(ns_per_op < 15.0);
+   }
+   ```
+
+**Acceptance Criteria**:
+
+✅ **AC1**: make_move/unmake_move methods added to IGameState interface
+✅ **AC2**: Undo token design documented for Gomoku/Chess/Go
+✅ **AC3**: Thread safety requirements documented
+✅ **AC4**: Usage pattern documented with code examples
+✅ **AC5**: Performance targets specified (≤15ns per operation)
+✅ **AC6**: API documentation complete in docs/api/make_unmake_pattern.md
+
+**Test Commands**:
+```bash
+# Verify interface compiles
+g++ -std=c++17 -c cpp_extensions/utils/igamestate.h -o /tmp/igamestate.o
+
+# Verify documentation exists
+test -f docs/api/make_unmake_pattern.md || exit 1
+grep -q "make_move" docs/api/make_unmake_pattern.md
+grep -q "unmake_move" docs/api/make_unmake_pattern.md
+grep -q "15ns" docs/api/make_unmake_pattern.md
+```
+
+**Definition of Done**:
+- [ ] make_move/unmake_move API added to IGameState
+- [ ] Undo token design documented for all games
+- [ ] Thread safety requirements documented
+- [ ] Usage pattern documented
+- [ ] Performance targets specified
+- [ ] Code compiles without errors
+
+---
+
+**Note**: Tasks T024c-T029 follow similar structure. Full task breakdown available in `T018_FINDINGS_AND_PATH_FORWARD.md` section 7 (Implementation Plan). Due to length constraints, detailed specifications for remaining tasks (T024c-T029) should be added incrementally as implementation progresses.
+
+**Critical Next Steps After T018 Closure**:
+1. Complete T018 state pooling validation and documentation
+2. Archive T018 findings and performance results
+3. Begin T024a (Tiny Node Design) as first task of T019 phase
+4. Follow phased approach: Core → Memory → Transpositions → Queues → Validation
+
+---
+
+**END OF TASKS.md v1.1**
+
+**Version History**:
+- v1.0: Initial task breakdown (T018-T023: state pooling and incremental optimizations)
+- v1.1: Added T019 zero-copy architecture tasks (T024-T029) based on T018 architectural findings
 
 **Next Steps**:
-1. Begin implementation with T018a (IGameState::copyFrom() API Design)
-2. Follow dependency order strictly
-3. Validate each task with acceptance criteria before proceeding
-4. Archive profiling sessions with git commits
-5. Achieve ≥8,000 sims/sec target
+1. Complete T018 closure (state pooling validation and documentation)
+2. Review T019 task breakdown with stakeholders
+3. Begin T024a (Tiny Node Design) after T018 sign-off
+4. Follow 5-7 week phased implementation plan
+5. Target achievement: 15,000-25,000 sims/sec (5-10× improvement)
