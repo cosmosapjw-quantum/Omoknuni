@@ -2787,8 +2787,8 @@ This approach:
 | ID | Task | Duration | Status | Dependencies |
 |----|------|----------|--------|--------------|
 | **T024f-1** | TinyNode Storage Layer | 3-4h | ✅ COMPLETE (2025-10-17) | T024a-e |
-| **T024f-2** | Sibling-Linked Children | 3-4h | 🟡 READY | T024f-1 |
-| **T024f-3** | Path Traversal Methods | 4h | ⬜ PENDING | T024f-2 |
+| **T024f-2** | Sibling-Linked Children | 3-4h | ✅ COMPLETE (2025-10-17) | T024f-1 |
+| **T024f-3** | Path Traversal Methods | 4h | 🟡 READY | T024f-2 |
 | **T024f-4** | Zobrist Hash Integration | 2-3h | ⬜ PENDING | T024f-3 |
 | **T024f-5** | Adapter Layer | 2-3h | ⬜ PENDING | T024f-4 |
 | **T024f-6** | SimRunner Integration | 4-5h | ⬜ PENDING | T024f-5 |
@@ -2829,6 +2829,51 @@ This approach:
 - ✅ Thread safety (basic)
 
 **Next**: Proceed to T024f-2 (Sibling-Linked Children)
+
+---
+
+### T024f-2: Sibling-Linked Children ✅ (2025-10-17)
+**Duration**: ~3 hours (as estimated)
+**Commit**: a9be1f4
+
+**Implementation**:
+- Implemented add_child() for single child addition with O(1) prepend
+- Implemented expand_node() for bulk child addition (numpy arrays)
+- Created for_each_child() template for efficient iteration
+- Added get_child_count() (O(n) iteration) and get_children() (convenience)
+
+**Sibling-Linked List**:
+- Children form singly-linked list: parent.first_child → child1.next_sibling → child2 → ... → 0
+- O(1) addition (prepend to front)
+- O(n) iteration where n = num_children (typically <100)
+- No dynamic allocation - uses node pool
+
+**Testing**:
+- 10 new comprehensive tests (31 total, 100% pass rate)
+- Single/multiple child addition
+- Numpy array expansion
+- Nested expansion (grandchildren)
+- Child iteration and ordering
+- Tree validation with children
+
+**Critical Bug Fix**:
+- Segfault in expand_node due to NoGil() accessing numpy buffers
+- Solution: Access numpy WITH GIL, then py::gil_scoped_release for C++ ops
+- Pattern now correct for numpy → C++ data transfer
+
+**Files**:
+- `cpp_extensions/mcts/tiny_node_tree.{hpp,cpp}` (updated - child methods)
+- `cpp_extensions/mcts/python_bindings.cpp` (updated - child bindings with GIL fix)
+- `tests/unit/test_tiny_node_tree.py` (updated - 10 new tests)
+
+**Acceptance Criteria Met**:
+- ✅ Add single child
+- ✅ Add multiple children (expand)
+- ✅ Iterate children correctly
+- ✅ Child count calculation
+- ✅ Validate tree structure
+
+**Next**: Proceed to T024f-3 (Path Traversal Methods)
 
 ---
 
