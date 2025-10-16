@@ -4,6 +4,9 @@
 #include "tiny_node_tree.hpp"
 #include <cstring>
 #include <stdexcept>
+#include <algorithm>  // For std::reverse
+#include <limits>     // For std::numeric_limits
+#include <cmath>      // For std::sqrt
 
 #ifdef _WIN32
 #include <malloc.h>
@@ -289,6 +292,150 @@ std::vector<int32_t> TinyNodeTree::get_children(int32_t parent_idx) const {
     });
 
     return children;
+}
+
+// ====== Path Traversal (T024f-3) ======
+
+std::vector<int32_t> TinyNodeTree::get_path_to_node(int32_t node_idx) const {
+    if (!is_valid_index(node_idx)) {
+        return {};  // Empty path for invalid node
+    }
+
+    // Collect path by walking up to root
+    std::vector<int32_t> path;
+    int32_t current = node_idx;
+
+    while (current >= 0 && is_valid_index(current)) {
+        path.push_back(current);
+
+        const TinyNode* node = get_node(current);
+
+        // Stop at root (parent_idx points to self)
+        if (node->is_root() || node->parent_idx == static_cast<uint32_t>(current)) {
+            break;
+        }
+
+        current = static_cast<int32_t>(node->parent_idx);
+    }
+
+    // Reverse to get root → node order
+    std::reverse(path.begin(), path.end());
+    return path;
+}
+
+int32_t TinyNodeTree::select_best_child(int32_t parent_idx, float c_puct) const {
+    if (!is_valid_index(parent_idx)) {
+        return -1;
+    }
+
+    const TinyNode* parent = get_node(parent_idx);
+
+    // Check if parent has children
+    if (parent->first_child_idx == 0) {
+        return -1;  // No children
+    }
+
+    // Get parent visit count for PUCT formula
+    uint32_t parent_n = parent->visit_count.load(std::memory_order_relaxed);
+    float sqrt_parent_n = std::sqrt(static_cast<float>(parent_n));
+
+    // Find best child using PUCT formula
+    int32_t best_child = -1;
+    float best_score = -std::numeric_limits<float>::infinity();
+
+    for_each_child(parent_idx, [&](int32_t child_idx) {
+        const TinyNode* child = get_node(child_idx);
+
+        // Get child statistics (atomic loads)
+        uint32_t child_n = child->visit_count.load(std::memory_order_relaxed);
+        int32_t child_w_scaled = child->total_value_scaled.load(std::memory_order_relaxed);
+        uint8_t child_vl = child->virtual_loss.load(std::memory_order_relaxed);
+
+        // Q-value: mean value (handle division by zero)
+        float q_value = 0.0f;
+        if (child_n > 0) {
+            float child_w = static_cast<float>(child_w_scaled) / TinyNode::VALUE_SCALE;
+            q_value = child_w / static_cast<float>(child_n);
+        }
+
+        // Prior probability (scaled)
+        float prior = child->get_prior();
+
+        // PUCT formula: Q + c_puct * P * sqrt(N_parent) / (1 + N_child + VL_child)
+        float exploration = c_puct * prior * sqrt_parent_n / (1.0f + static_cast<float>(child_n) + static_cast<float>(child_vl));
+        float puct_score = q_value + exploration;
+
+        if (puct_score > best_score) {
+            best_score = puct_score;
+            best_child = child_idx;
+        }
+    });
+
+    return best_child;
+}
+
+void TinyNodeTree::apply_virtual_loss(int32_t node_idx, uint8_t magnitude) {
+    if (!is_valid_index(node_idx)) {
+        return;
+    }
+
+    TinyNode* node = &nodes_[node_idx];
+
+    // Atomic increment (thread-safe)
+    uint8_t old_vl = node->virtual_loss.load(std::memory_order_relaxed);
+    uint8_t new_vl = old_vl + magnitude;
+
+    // Handle overflow (cap at 255)
+    if (new_vl < old_vl) {
+        new_vl = 255;
+    }
+
+    node->virtual_loss.store(new_vl, std::memory_order_relaxed);
+}
+
+void TinyNodeTree::remove_virtual_loss(int32_t node_idx, uint8_t magnitude) {
+    if (!is_valid_index(node_idx)) {
+        return;
+    }
+
+    TinyNode* node = &nodes_[node_idx];
+
+    // Atomic decrement (thread-safe)
+    uint8_t old_vl = node->virtual_loss.load(std::memory_order_relaxed);
+    uint8_t new_vl = (old_vl >= magnitude) ? (old_vl - magnitude) : 0;
+
+    node->virtual_loss.store(new_vl, std::memory_order_relaxed);
+}
+
+void TinyNodeTree::backup_value(const std::vector<int32_t>& path, float leaf_value) {
+    if (path.empty()) {
+        return;
+    }
+
+    // Backup from leaf to root, flipping value sign at each level
+    // Negamax framework: child's value = -parent's value
+    float value = leaf_value;
+
+    // Iterate from leaf to root (reverse order)
+    for (auto it = path.rbegin(); it != path.rend(); ++it) {
+        int32_t node_idx = *it;
+
+        if (!is_valid_index(node_idx)) {
+            continue;
+        }
+
+        TinyNode* node = &nodes_[node_idx];
+
+        // Atomic increment visit count
+        node->visit_count.fetch_add(1, std::memory_order_relaxed);
+
+        // Atomic add to total value (scaled to int32)
+        int32_t value_scaled = static_cast<int32_t>(value * TinyNode::VALUE_SCALE);
+        node->total_value_scaled.fetch_add(value_scaled, std::memory_order_relaxed);
+
+        // Flip value sign for next level (negamax)
+        value = -value;
+    }
 }
 
 } // namespace mcts

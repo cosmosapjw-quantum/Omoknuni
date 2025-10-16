@@ -1367,7 +1367,63 @@ PYBIND11_MODULE(mcts_py, m) {
              "Args:\n"
              "    parent_idx: Parent node index\n\n"
              "Returns:\n"
-             "    list[int]: List of child indices");
+             "    list[int]: List of child indices")
+        // Path traversal (T024f-3)
+        .def("get_path_to_node", &TinyNodeTree::get_path_to_node,
+             py::arg("node_idx"),
+             "Collect path from root to a node\n\n"
+             "Args:\n"
+             "    node_idx: Target node index\n\n"
+             "Returns:\n"
+             "    list[int]: Path from root to node [root, ..., node]")
+        .def("select_best_child", &TinyNodeTree::select_best_child,
+             py::arg("parent_idx"),
+             py::arg("c_puct") = 1.0f,
+             "Select best child using PUCT formula\n\n"
+             "PUCT = Q + c_puct * P * sqrt(N_parent) / (1 + N_child + VL)\n\n"
+             "Args:\n"
+             "    parent_idx: Parent node index\n"
+             "    c_puct: Exploration constant (default 1.0)\n\n"
+             "Returns:\n"
+             "    int: Index of best child, or -1 if no children")
+        .def("apply_virtual_loss", &TinyNodeTree::apply_virtual_loss,
+             py::arg("node_idx"),
+             py::arg("magnitude") = 1,
+             NoGil(),
+             "Apply virtual loss to a node (thread-safe)\n\n"
+             "Args:\n"
+             "    node_idx: Node index\n"
+             "    magnitude: Virtual loss magnitude (default 1)")
+        .def("remove_virtual_loss", &TinyNodeTree::remove_virtual_loss,
+             py::arg("node_idx"),
+             py::arg("magnitude") = 1,
+             NoGil(),
+             "Remove virtual loss from a node (thread-safe)\n\n"
+             "Args:\n"
+             "    node_idx: Node index\n"
+             "    magnitude: Virtual loss magnitude (default 1)")
+        .def("backup_value",
+             [](TinyNodeTree& tree, py::list path, float leaf_value) {
+                 // Convert Python list to C++ vector
+                 std::vector<int32_t> cpp_path;
+                 for (auto item : path) {
+                     cpp_path.push_back(item.cast<int32_t>());
+                 }
+
+                 // Release GIL for backup
+                 {
+                     py::gil_scoped_release release;
+                     tree.backup_value(cpp_path, leaf_value);
+                 }
+             },
+             py::arg("path"),
+             py::arg("leaf_value"),
+             "Backup value from leaf to root\n\n"
+             "Propagates value up the tree with sign flipping (negamax).\n"
+             "Thread-safe using atomic operations.\n\n"
+             "Args:\n"
+             "    path: Path from root to leaf (list of node indices)\n"
+             "    leaf_value: Value at the leaf node");
 }
 
 } // namespace python

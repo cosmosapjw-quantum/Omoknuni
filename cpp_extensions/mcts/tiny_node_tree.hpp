@@ -253,6 +253,74 @@ public:
      */
     std::vector<int32_t> get_children(int32_t parent_idx) const;
 
+    // ====== Path Traversal (T024f-3) ======
+
+    /**
+     * @brief Collect path from root to a node
+     *
+     * Returns the sequence of node indices from root to target node.
+     * Useful for reconstructing game state via make/unmake.
+     *
+     * @param node_idx Target node index
+     * @return Vector of node indices [root, ..., node_idx]
+     */
+    std::vector<int32_t> get_path_to_node(int32_t node_idx) const;
+
+    /**
+     * @brief Select best child using PUCT formula
+     *
+     * PUCT = Q + c_puct * P * sqrt(N_parent) / (1 + N_child + VL_child)
+     * where:
+     * - Q = W/N (mean value)
+     * - P = prior probability
+     * - N = visit count
+     * - VL = virtual loss
+     *
+     * @param parent_idx Parent node to select from
+     * @param c_puct Exploration constant (typically 1.0-2.0)
+     * @return Index of best child, or -1 if no children
+     */
+    int32_t select_best_child(int32_t parent_idx, float c_puct) const;
+
+    /**
+     * @brief Apply virtual loss to a node
+     *
+     * Thread-safe increment of virtual loss counter.
+     * Used during parallel MCTS to prevent multiple threads
+     * from exploring the same path.
+     *
+     * @param node_idx Node to apply virtual loss to
+     * @param magnitude Virtual loss magnitude (default 1.0)
+     */
+    void apply_virtual_loss(int32_t node_idx, uint8_t magnitude = 1);
+
+    /**
+     * @brief Remove virtual loss from a node
+     *
+     * Thread-safe decrement of virtual loss counter.
+     * Called after backup completes.
+     *
+     * @param node_idx Node to remove virtual loss from
+     * @param magnitude Virtual loss magnitude (default 1.0)
+     */
+    void remove_virtual_loss(int32_t node_idx, uint8_t magnitude = 1);
+
+    /**
+     * @brief Backup value from leaf to root
+     *
+     * Propagates value up the tree, updating visit counts and total values.
+     * Thread-safe using atomic operations.
+     *
+     * Value sign flips at each level (negamax framework):
+     * - If leaf has value +0.8 for player A
+     * - Parent gets -0.8 (from player B's perspective)
+     * - Grandparent gets +0.8 (back to player A)
+     *
+     * @param path Path from root to leaf (from get_path_to_node)
+     * @param leaf_value Value at the leaf node (from neural network)
+     */
+    void backup_value(const std::vector<int32_t>& path, float leaf_value);
+
 private:
     // Maximum capacity
     std::size_t max_nodes_;

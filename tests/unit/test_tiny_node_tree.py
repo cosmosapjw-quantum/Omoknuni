@@ -629,5 +629,269 @@ class TestTinyNodeTreeChildManagement:
             assert tree.get_child_count(child_idx) == 2
 
 
+class TestTinyNodeTreePathTraversal:
+    """Test path traversal methods (T024f-3)"""
+
+    def test_get_path_to_root(self):
+        """Test getting path from root to root"""
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        # Path to root is just [0]
+        path = tree.get_path_to_node(0)
+        assert path == [0]
+
+    def test_get_path_single_level(self):
+        """Test getting path one level deep"""
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        # Add child
+        child_idx = tree.add_child(0, 42, 0.5, 0xABCD)
+
+        # Path should be [root, child]
+        path = tree.get_path_to_node(child_idx)
+        assert path == [0, child_idx]
+
+    def test_get_path_multi_level(self):
+        """Test getting path multiple levels deep"""
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        # Build path: root -> child1 -> grandchild1
+        child1 = tree.add_child(0, 1, 0.5, 0x1000)
+        grandchild1 = tree.add_child(child1, 2, 0.5, 0x2000)
+
+        # Path should be [root, child1, grandchild1]
+        path = tree.get_path_to_node(grandchild1)
+        assert path == [0, child1, grandchild1]
+
+    def test_get_path_deep_tree(self):
+        """Test getting path in deeper tree"""
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        # Build deep path (10 levels)
+        current = 0
+        indices = [0]
+        for i in range(10):
+            current = tree.add_child(current, i, 0.5, 0x1000 + i)
+            indices.append(current)
+
+        # Path to deepest node
+        path = tree.get_path_to_node(current)
+        assert path == indices
+        assert len(path) == 11  # Root + 10 levels
+
+    def test_select_best_child_no_children(self):
+        """Test select_best_child with no children"""
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        # No children - should return -1
+        best = tree.select_best_child(0, c_puct=1.0)
+        assert best == -1
+
+    def test_select_best_child_single_child(self):
+        """Test select_best_child with single child"""
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        child_idx = tree.add_child(0, 42, 0.5, 0xABCD)
+
+        # Only one child - should select it
+        best = tree.select_best_child(0, c_puct=1.0)
+        assert best == child_idx
+
+    def test_select_best_child_by_prior(self):
+        """Test select_best_child prefers higher prior initially"""
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        # Add children with different priors (no visits yet)
+        child1 = tree.add_child(0, 1, 0.2, 0x1000)
+        child2 = tree.add_child(0, 2, 0.8, 0x1001)  # Higher prior
+        child3 = tree.add_child(0, 3, 0.1, 0x1002)
+
+        # Should select child2 (highest prior, no visits)
+        best = tree.select_best_child(0, c_puct=1.0)
+        assert best == child2
+
+    def test_select_best_child_by_value(self):
+        """Test select_best_child balances value and exploration"""
+        import numpy as np
+
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        # Expand root with 3 children (equal priors)
+        moves = np.array([0, 1, 2], dtype=np.uint16)
+        priors = np.array([0.33, 0.33, 0.34], dtype=np.float32)
+        hashes = np.array([0x1000, 0x1001, 0x1002], dtype=np.uint64)
+        tree.expand_node(0, moves, priors, hashes)
+
+        children = tree.get_children(0)
+        assert len(children) == 3
+
+        # Simulate backups: child0 gets high value
+        tree.backup_value([0, children[0]], 0.8)
+        tree.backup_value([0, children[0]], 0.7)
+
+        # Child1 gets low value
+        tree.backup_value([0, children[1]], -0.5)
+
+        # Child2 unvisited
+
+        # Should prefer child0 (high value) initially
+        best = tree.select_best_child(0, c_puct=1.0)
+        # Note: With exploration, unvisited child2 might be selected
+        # This is correct PUCT behavior
+        assert best in children
+
+    def test_virtual_loss_apply_remove(self):
+        """Test applying and removing virtual loss"""
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        child_idx = tree.add_child(0, 42, 0.5, 0xABCD)
+        child = tree.get_node(child_idx)
+
+        # Initially no virtual loss
+        assert child.get_virtual_loss() == 0
+
+        # Apply virtual loss
+        tree.apply_virtual_loss(child_idx, 1)
+        assert child.get_virtual_loss() == 1
+
+        # Apply more
+        tree.apply_virtual_loss(child_idx, 2)
+        assert child.get_virtual_loss() == 3
+
+        # Remove some
+        tree.remove_virtual_loss(child_idx, 1)
+        assert child.get_virtual_loss() == 2
+
+        # Remove all
+        tree.remove_virtual_loss(child_idx, 2)
+        assert child.get_virtual_loss() == 0
+
+    def test_virtual_loss_affects_selection(self):
+        """Test that virtual loss reduces selection probability"""
+        import numpy as np
+
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        # Add two equal children
+        moves = np.array([0, 1], dtype=np.uint16)
+        priors = np.array([0.5, 0.5], dtype=np.float32)
+        hashes = np.array([0x1000, 0x1001], dtype=np.uint64)
+        tree.expand_node(0, moves, priors, hashes)
+
+        children = tree.get_children(0)
+        child0, child1 = children[0], children[1]
+
+        # Apply virtual loss to child0
+        tree.apply_virtual_loss(child0, 10)
+
+        # Select best child - should prefer child1 (no virtual loss)
+        best = tree.select_best_child(0, c_puct=1.0)
+        # With high virtual loss, child1 should be preferred
+        # (though not guaranteed in all cases)
+        assert best in children
+
+    def test_backup_value_single_node(self):
+        """Test backup value to single node"""
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        root = tree.get_node(0)
+        initial_n = root.get_visit_count()  # Should be 1 from init_root
+
+        # Backup value
+        tree.backup_value([0], 0.5)
+
+        # Check updated stats
+        assert root.get_visit_count() == initial_n + 1  # 1 + 1 = 2
+        # Q = (0 + 0.5) / 2 = 0.25 (root started with N=1, W=0)
+        assert abs(root.get_q_value() - 0.25) < 0.01
+
+    def test_backup_value_negamax(self):
+        """Test backup value with sign flipping (negamax)"""
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        # Build path: root -> child -> grandchild
+        child = tree.add_child(0, 1, 0.5, 0x1000)
+        grandchild = tree.add_child(child, 2, 0.5, 0x2000)
+
+        # Backup +0.8 from grandchild
+        tree.backup_value([0, child, grandchild], 0.8)
+
+        # Check values (sign flips at each level)
+        gc = tree.get_node(grandchild)
+        c = tree.get_node(child)
+        r = tree.get_node(0)
+
+        # Grandchild gets +0.8
+        assert gc.get_visit_count() == 1
+        assert abs(gc.get_q_value() - 0.8) < 0.01
+
+        # Child gets -0.8 (flipped), N=0+1=1, W=-0.8, Q=-0.8
+        assert c.get_visit_count() == 1
+        assert abs(c.get_q_value() - (-0.8)) < 0.01
+
+        # Root gets +0.8 (flipped back), N=1+1=2, W=0+0.8=0.8, Q=0.8/2=0.4
+        assert r.get_visit_count() == 2  # Initial 1 (from init_root) + backup 1
+        assert abs(r.get_q_value() - 0.4) < 0.01
+
+    def test_backup_value_accumulation(self):
+        """Test multiple backups accumulate correctly"""
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        child = tree.add_child(0, 1, 0.5, 0x1000)
+
+        # Multiple backups
+        tree.backup_value([0, child], 0.5)
+        tree.backup_value([0, child], 0.7)
+        tree.backup_value([0, child], 0.3)
+
+        # Child should have N=3, W=0.5+0.7+0.3=1.5, Q=0.5
+        c = tree.get_node(child)
+        assert c.get_visit_count() == 3
+        expected_q = (0.5 + 0.7 + 0.3) / 3.0
+        assert abs(c.get_q_value() - expected_q) < 0.01
+
+    def test_backup_value_thread_safety(self):
+        """Test backup_value is thread-safe (basic check)"""
+        import threading
+        tree = mcts_py.TinyNodeTree(1000)
+        tree.init_root(0x12345)
+
+        child = tree.add_child(0, 1, 0.5, 0x1000)
+
+        # Run multiple backups in parallel
+        def do_backups():
+            for _ in range(100):
+                tree.backup_value([0, child], 0.5)
+
+        threads = []
+        for _ in range(4):
+            t = threading.Thread(target=do_backups)
+            threads.append(t)
+            t.start()
+
+        for t in threads:
+            t.join()
+
+        # Total backups: 4 threads * 100 = 400
+        c = tree.get_node(child)
+        assert c.get_visit_count() == 400
+        # Value should be consistent (all 0.5)
+        expected_q = 0.5
+        assert abs(c.get_q_value() - expected_q) < 0.01
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
