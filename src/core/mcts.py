@@ -807,14 +807,9 @@ class AlphaZeroMCTS(MCTSEngine):
                         tensor = np.array(features, dtype=np.float32).reshape(num_planes, board_size, board_size)
                         positions.append(tensor)
 
-                    if is_dlpack_bridge:
-                        # DLPackInferenceBridge: Convert to batch tensor
-                        batch_tensor = np.stack(positions, axis=0)
-                        results = self.inference_fn.batch_inference([batch_tensor])
-                        return results
-                    else:
-                        # Standard GPUInferenceWorker: Pass tensors directly
-                        policies, values = self.inference_fn.batch_inference(positions)
+                    # All inference workers expect tensors, not states (T018g optimization)
+                    # DLPackInferenceBridge and GPUInferenceWorker both accept tensors
+                    policies, values = self.inference_fn.batch_inference(positions)
 
                     # Convert to expected format
                     # T029: Return numpy arrays directly (pybind11 converts to std::vector<float>)
@@ -842,24 +837,20 @@ class AlphaZeroMCTS(MCTSEngine):
             def legacy_batch_callback(features_list: List[List[float]],
                                      board_sizes: List[int],
                                      num_planes_list: List[int]) -> List[Tuple[List[float], float]]:
-                """Legacy per-state inference - for test compatibility only (T018g adapted)."""
-                try:
-                    # ⚠️ SLOW: Need to reconstruct states from features for legacy path
-                    # This is inefficient but needed for backward compatibility
-                    # In practice, fast_batch_callback should always be used
-                    action_space = 225  # Default for Gomoku 15x15
-                    if board_sizes and board_sizes[0] > 0:
-                        action_space = board_sizes[0] * board_sizes[0]
+                """Legacy per-state inference - INCOMPATIBLE with feature extraction.
 
-                    uniform_policy = np.ones(action_space, dtype=np.float32) / action_space
-                    return [(uniform_policy, 0.0) for _ in range(len(features_list))]
+                ⚠️  WARNING: The legacy callback path (per-state futures) is incompatible
+                with the T018g feature extraction optimization. This path cannot properly
+                mask illegal moves without game state objects.
 
-                except Exception as e:
-                    self.logger.error(f"Legacy batch inference failed: {e}")
-                    # Fallback
-                    action_space = 225
-                    uniform_policy = np.ones(action_space, dtype=np.float32) / action_space
-                    return [(uniform_policy, 0.0) for _ in range(len(features_list))]
+                This function raises an error to prevent silent failures. Use GPUInferenceWorker
+                or DLPackInferenceBridge for production (fast_batch_callback path).
+                """
+                raise RuntimeError(
+                    "Legacy per-state inference is incompatible with feature extraction optimization (T018g). "
+                    "Use GPUInferenceWorker or DLPackInferenceBridge for batch inference. "
+                    "The legacy path cannot mask illegal moves without game state objects."
+                )
 
             self.logger.warning(
                 f"Using legacy per-state inference (slow path, testing only) - "
