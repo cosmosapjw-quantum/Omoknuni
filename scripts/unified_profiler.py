@@ -111,8 +111,13 @@ class UnifiedProfiler:
         print(f"MCTS WORKLOAD ({self.args.simulations} simulations)")
         print("="*60)
 
+        # DEBUG: Print runner_type and its attributes
+        print(f"🔍 DEBUG: args.runner_type = '{self.args.runner_type}' (type: {type(self.args.runner_type)})")
+        print(f"🔍 DEBUG: hasattr(args, 'runner_type') = {hasattr(self.args, 'runner_type')}")
+
         # Create game state using C++ binding
         state = alphazero_py.GomokuState(board_size=15)
+        action_space_size = state.get_action_space_size()
         print(f"✅ Created Gomoku game state (15×15)")
 
         # Create MCTS components
@@ -122,9 +127,24 @@ class UnifiedProfiler:
         vl_manager = mcts_py.create_test_virtual_loss_manager(self.tree)
         print(f"✅ Created MCTS components (100k node capacity)")
 
+        print(f"🔍 DEBUG: Checking runner_type...")
+        print(f"🔍 DEBUG: runner_type == 'simulation': {self.args.runner_type == 'simulation'}")
+        print(f"🔍 DEBUG: runner_type == 'continuous': {self.args.runner_type == 'continuous'}")
+
+        if self.args.runner_type == "simulation":
+            print(f"🔍 DEBUG: Taking SIMULATION runner path")
+            self._run_simulation_runner(state, action_space_size, selector, backup, vl_manager)
+        elif self.args.runner_type == "continuous":
+            print(f"🔍 DEBUG: Taking CONTINUOUS runner path")
+            self._run_continuous_runner(state, action_space_size, selector, backup, vl_manager)
+        else:
+            raise ValueError(f"Unknown runner_type: {self.args.runner_type}")
+
+    def _run_simulation_runner(self, state, action_space_size, selector, backup, vl_manager):
+        """Run profiling with SimulationRunner (baseline, clone-based)"""
         # Create simulation runner
         runner = mcts_py.SimulationRunner(self.tree, selector, backup, vl_manager)
-        print(f"✅ Created SimulationRunner")
+        print(f"✅ Created SimulationRunner (baseline, clone-based)")
 
         # Create inference callback
         # NOTE: Using uniform random policy for profiling is CORRECT because:
@@ -146,7 +166,7 @@ class UnifiedProfiler:
 
         # Run simulations
         print(f"\n🔥 Running {self.args.simulations} simulations...")
-        print(f"   Note: Single-threaded runner (use ContinuousSimulationRunner for parallel)")
+        print(f"   Note: Single-threaded runner (use --runner-type continuous for parallel)")
 
         # Get root node index
         root = self.tree.get_root_index()
@@ -172,6 +192,79 @@ class UnifiedProfiler:
             import traceback
             traceback.print_exc()
 
+    def _run_continuous_runner(self, state, action_space_size, selector, backup, vl_manager):
+        """Run profiling with ContinuousSimulationRunner (T024f-6, make/unmake)"""
+        import time
+        import numpy as np
+
+        # Create CONTINUOUS simulation runner (THIS IS THE KEY!)
+        runner = mcts_py.ContinuousSimulationRunner(self.tree, selector, backup, vl_manager)
+        print(f"✅ Created ContinuousSimulationRunner (T024f-6, make/unmake pattern)")
+        print(f"   Expected improvements:")
+        print(f"   - State cloning: 2× per sim → 1× per sim (50% reduction)")
+        print(f"   - Time per sim: 836μs → 418μs (1.77× speedup)")
+        print(f"   - Throughput: 1,650 → 4,700 sims/sec")
+
+        # Create async inference queue
+        queue = mcts_py.AsyncInferenceQueue()
+        print(f"✅ Created AsyncInferenceQueue (ring buffer, lock-free)")
+
+        # Create batch inference callback
+        def batch_inference_fn(features_batch, board_sizes, num_planes_list):
+            """Batch inference with pre-extracted features"""
+            results = []
+            for _ in features_batch:
+                # Uniform policy for profiling (focus on MCTS overhead)
+                policy = np.ones(action_space_size, dtype=np.float32) / action_space_size
+                value = 0.0
+                results.append((policy.tolist(), value))
+            return results
+
+        callback = mcts_py.PyBatchInferenceCallback(batch_inference_fn)
+        coordinator = mcts_py.BatchInferenceCoordinator()
+        print(f"✅ Created BatchInferenceCoordinator")
+
+        # Start coordinator
+        coordinator.start(queue, callback, self.args.batch_size, 5.0)  # timeout=5ms
+        print(f"✅ Coordinator started (batch_size={self.args.batch_size}, timeout=5ms)")
+
+        try:
+            # Get root node (tree already has root from create_test_tree)
+            root_idx = self.tree.get_root_index()
+            print(f"✅ Using root node (index={root_idx})")
+
+            # Run continuous simulations (THIS USES MAKE/UNMAKE!)
+            print(f"\n🔥 Running {self.args.simulations} simulations with make/unmake pattern...")
+            print(f"   Thread count: {self.args.threads} (OpenMP)")
+            print(f"   Batch size: {self.args.batch_size}")
+
+            start = time.perf_counter()
+            completed = runner.run_continuous(state, root_idx, queue, self.args.simulations)
+            elapsed = time.perf_counter() - start
+
+            # Store metrics
+            self.tree_node_count = self.tree.get_node_count()
+            self.root_visits = self.tree.get_visit_count(root_idx)
+            self.wall_clock_time = elapsed
+            self.throughput = completed / elapsed if elapsed > 0 else 0
+            self.time_per_sim_us = (elapsed / completed) * 1e6 if completed > 0 else 0
+
+            print(f"✅ Completed {completed}/{self.args.simulations} simulations")
+            print(f"   Wall-clock: {elapsed:.3f}s")
+            print(f"   Throughput: {self.throughput:.1f} sims/sec")
+            print(f"   Time per sim: {self.time_per_sim_us:.1f} μs")
+            print(f"   Tree nodes: {self.tree_node_count}")
+            print(f"   Root visits: {self.root_visits}")
+
+        except Exception as e:
+            print(f"⚠️  Error during simulation: {e}")
+            print("    Profiling data still captured up to this point")
+            import traceback
+            traceback.print_exc()
+        finally:
+            coordinator.stop()
+            print(f"✅ Coordinator stopped")
+
     def export_cpp_results(self):
         """Export C++ profiling results"""
         print("\n" + "="*60)
@@ -188,12 +281,24 @@ class UnifiedProfiler:
         self.cpp_profiler.export_chrome_trace(str(chrome_path))
         self.cpp_profiler.export_markdown(str(markdown_path))
 
-        # Add tree node count to the JSON export (it's a Python-side metric)
+        # Add tree node count and ContinuousRunner metrics to JSON (Python-side metrics)
         if hasattr(self, 'tree_node_count'):
             import json
             with open(json_path, 'r') as f:
                 data = json.load(f)
+
+            # Add gauges
+            if 'gauges' not in data:
+                data['gauges'] = {}
             data['gauges']['tree_node_count'] = self.tree_node_count
+
+            # Add ContinuousRunner-specific metrics
+            if hasattr(self, 'throughput'):
+                data['gauges']['throughput_sims_per_sec'] = self.throughput
+                data['gauges']['time_per_sim_us'] = self.time_per_sim_us
+                data['gauges']['wall_clock_time_sec'] = self.wall_clock_time
+                data['gauges']['root_visits'] = self.root_visits
+
             with open(json_path, 'w') as f:
                 json.dump(data, f, indent=2)
 
@@ -239,7 +344,15 @@ class UnifiedProfiler:
             state_clone_count = cpp_metrics.get('state_clone_count', {}).get('total', 0)
             if state_clone_count > 0:
                 print(f"🔴 State Cloning: {state_clone_count} clones")
-                print(f"   Expected: 1× per simulation, Actual: {state_clone_count / max(1, self.args.simulations):.1f}×")
+                clones_per_sim = state_clone_count / max(1, self.args.simulations)
+                if self.args.runner_type == "continuous":
+                    print(f"   Expected: 1× per simulation, Actual: {clones_per_sim:.1f}×")
+                    if clones_per_sim <= 1.1:  # Within 10% of target
+                        print(f"   ✅ Target achieved (≤1.1× per sim)")
+                    else:
+                        print(f"   ⚠️  Higher than expected - investigate")
+                else:
+                    print(f"   Baseline (SimulationRunner): {clones_per_sim:.1f}× per simulation")
 
             # OpenMP
             omp_success = cpp_metrics.get('feature_extraction_omp', {}).get('total', 0)
@@ -258,6 +371,27 @@ class UnifiedProfiler:
             cas_retries = cpp_metrics.get('cas_retry_count', {}).get('total', 0)
             if cas_retries > 100:
                 print(f"⚠️  CAS Contention: {cas_retries} retries")
+
+            # Performance comparison (ContinuousRunner only)
+            if self.args.runner_type == "continuous" and hasattr(self, 'throughput'):
+                print("\n--- Performance vs Baseline ---")
+                baseline_throughput = 1650  # sims/sec (SimulationRunner)
+                improvement = self.throughput / baseline_throughput
+                target_throughput = 4700  # Expected from T024f-6
+                target_progress = (self.throughput / target_throughput) * 100
+
+                print(f"Baseline (SimulationRunner):  {baseline_throughput} sims/sec")
+                print(f"Current (ContinuousRunner):   {self.throughput:.1f} sims/sec")
+                print(f"Improvement:                  {improvement:.2f}× speedup")
+                print(f"Target (T024f-6):             {target_throughput} sims/sec")
+                print(f"Progress to target:           {target_progress:.1f}%")
+
+                if improvement >= 1.77:
+                    print(f"Status: ✅ Target achieved ({improvement:.2f}× ≥ 1.77×)")
+                else:
+                    gap = 1.77 - improvement
+                    print(f"Status: ⚠️  Below target ({improvement:.2f}× < 1.77×)")
+                    print(f"Gap:    {gap:.2f}× additional improvement needed")
 
         print("\n" + "="*60)
 
@@ -345,6 +479,14 @@ def main():
         type=str,
         default="profiling_results",
         help="Output directory for profiling results"
+    )
+
+    parser.add_argument(
+        "--runner-type",
+        type=str,
+        choices=["simulation", "continuous"],
+        default="simulation",
+        help="Runner type: 'simulation' (baseline, clone-based) or 'continuous' (T024f-6, make/unmake)"
     )
 
     args = parser.parse_args()

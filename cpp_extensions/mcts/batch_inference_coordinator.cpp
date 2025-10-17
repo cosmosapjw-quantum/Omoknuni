@@ -1,12 +1,24 @@
 /**
  * @file batch_inference_coordinator.cpp
  * @brief Implementation of background batching coordinator
+ *
+ * PROFILING UPGRADE 2025-10-17:
+ * Added comprehensive instrumentation to eliminate "unknown" time bottleneck
+ * This coordinator runs in a SEPARATE THREAD - crucial to instrument!
  */
 
 #include "batch_inference_coordinator.hpp"
+#include "profiling/enhanced_profiler.hpp"
 #include <algorithm>
 #include <stdexcept>
 #include <iostream>
+#include <chrono>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+using namespace mcts::profiling;
 
 namespace {
 
@@ -90,9 +102,16 @@ void BatchInferenceCoordinator::stop() {
 void BatchInferenceCoordinator::coordinator_loop() {
     static int batch_counter = 0;  // DEBUG: Track batch number
     while (running_.load(std::memory_order_acquire)) {
+        // === PROFILING UPGRADE: Instrument entire loop iteration ===
+        PROFILE_SCOPE(ProfileMetric::CoordinatorLoopIteration);
+
         // Phase 1: Collect batch from queue
         // This blocks up to timeout_ms, returns early if batch_size reached
-        std::vector<InferenceRequest> batch = queue_->collect_batch(batch_size_, timeout_ms_);
+        std::vector<InferenceRequest> batch;
+        {
+            PROFILE_SCOPE(ProfileMetric::CoordinatorCollectBatch);
+            batch = queue_->collect_batch(batch_size_, timeout_ms_);
+        }
 
         // DEBUG: Log batch collection (only first 10 batches to avoid spam)
         if (batch_counter < 10 && !batch.empty()) {
@@ -104,23 +123,84 @@ void BatchInferenceCoordinator::coordinator_loop() {
 
         // Check if batch is empty (timeout with no requests)
         if (batch.empty()) {
+            PROFILE_COUNTER(ProfileMetric::CoordinatorCollectBatchEmpty, 1);
+            PROFILE_SCOPE(ProfileMetric::CoordinatorIdleTime);
             continue;  // No work to do, loop again
         }
 
-        // Phase 2: Extract pre-computed features from batch (T018g optimization)
-        // Features were already extracted in C++ before queue submission
+        // Track batch processing
+        PROFILE_COUNTER(ProfileMetric::CoordinatorBatchCount, 1);
+
+        // Phase 2: Extract features from batch with OpenMP parallelization (T019)
+        // Use OpenMP to parallelize feature extraction across the batch
+        // Expected: 5-10× speedup with 8 threads on batch of 64
         std::vector<std::vector<float>> features_batch;
         std::vector<int> board_sizes;
         std::vector<int> num_planes_list;
 
-        features_batch.reserve(batch.size());
-        board_sizes.reserve(batch.size());
-        num_planes_list.reserve(batch.size());
+        {
+            PROFILE_SCOPE(ProfileMetric::CoordinatorFeatureExtraction);
 
-        for (const auto& request : batch) {
-            features_batch.push_back(request.features);
-            board_sizes.push_back(request.board_size);
-            num_planes_list.push_back(request.num_feature_planes);
+            // Allocate feature buffers
+            {
+                PROFILE_SCOPE(ProfileMetric::CoordinatorFeatureAllocation);
+                features_batch.resize(batch.size());
+                board_sizes.reserve(batch.size());
+                num_planes_list.reserve(batch.size());
+            }
+
+            // Collect metadata (serial, fast)
+            for (const auto& request : batch) {
+                board_sizes.push_back(request.board_size);
+                num_planes_list.push_back(request.num_feature_planes);
+            }
+
+            // T019: Extract features in parallel using OpenMP
+            // Only parallelize if batch size > 8 to avoid threading overhead
+            int batch_size_int = static_cast<int>(batch.size());
+            bool should_parallelize = (batch_size_int > 8);
+
+            #ifdef _OPENMP
+            if (should_parallelize) {
+                PROFILE_SCOPE(ProfileMetric::CoordinatorFeatureExtractionOMP);
+
+                int omp_threads = 0;
+                #pragma omp parallel
+                {
+                    #pragma omp single
+                    {
+                        omp_threads = omp_get_num_threads();
+                    }
+
+                    // Distribute work with static scheduling
+                    #pragma omp for schedule(static)
+                    for (int i = 0; i < batch_size_int; ++i) {
+                        int num_planes = batch[i].num_feature_planes;
+                        int board_size = batch[i].board_size;
+                        size_t features_size = num_planes * board_size * board_size;
+
+                        features_batch[i].resize(features_size);
+                        batch[i].state->extract_features_to_buffer(features_batch[i].data());
+                    }
+                }
+
+                // Track OpenMP thread count
+                PROFILE_GAUGE(ProfileMetric::CoordinatorOMPThreadCount, omp_threads);
+            } else {
+            #endif
+                PROFILE_SCOPE(ProfileMetric::CoordinatorFeatureExtractionSerial);
+                // Serial extraction (batch_size <= 8 or OpenMP disabled)
+                for (int i = 0; i < batch_size_int; ++i) {
+                    int num_planes = batch[i].num_feature_planes;
+                    int board_size = batch[i].board_size;
+                    size_t features_size = num_planes * board_size * board_size;
+
+                    features_batch[i].resize(features_size);
+                    batch[i].state->extract_features_to_buffer(features_batch[i].data());
+                }
+            #ifdef _OPENMP
+            }
+            #endif
         }
 
         // Phase 3: Call Python for GPU inference (GIL ACQUIRED ONCE)
@@ -128,17 +208,23 @@ void BatchInferenceCoordinator::coordinator_loop() {
         // Uses pre-extracted features (no state cloning overhead!)
         std::vector<std::pair<std::vector<float>, float>> inference_results;
         bool had_error = false;
-        try {
-            // Call virtual method (PyBatchInferenceCallback overrides this)
-            inference_results = callback_->batch_inference_features(
-                features_batch, board_sizes, num_planes_list
-            );
-        } catch (const std::exception& e) {
-            had_error = true;
-            std::cerr << "Batch inference failed: " << e.what() << std::endl;
+        {
+            PROFILE_SCOPE(ProfileMetric::CoordinatorPythonCallback);
+            try {
+                // Call virtual method (PyBatchInferenceCallback overrides this)
+                inference_results = callback_->batch_inference_features(
+                    features_batch, board_sizes, num_planes_list
+                );
+            } catch (const std::exception& e) {
+                had_error = true;
+                std::cerr << "Batch inference failed: " << e.what() << std::endl;
+            }
         }
 
+        // Phase 4: Submit results to queue
         if (!had_error && inference_results.size() == batch.size()) {
+            PROFILE_SCOPE(ProfileMetric::CoordinatorResultSubmit);
+
             std::vector<InferenceResult> results;
             results.reserve(batch.size());
             for (size_t i = 0; i < batch.size(); ++i) {
@@ -153,13 +239,21 @@ void BatchInferenceCoordinator::coordinator_loop() {
         }
 
         // Fallback path: either inference threw or result size mismatched
-        if (!had_error && inference_results.size() != batch.size()) {
-            std::cerr << "Batch inference returned mismatched result count (" << inference_results.size()
-                      << " vs " << batch.size() << "), using uniform fallback\n";
-        }
+        {
+            PROFILE_SCOPE(ProfileMetric::CoordinatorFallbackPath);
 
-        auto fallback_results = build_fallback_results(batch);
-        queue_->submit_results(fallback_results);
+            if (!had_error && inference_results.size() != batch.size()) {
+                std::cerr << "Batch inference returned mismatched result count (" << inference_results.size()
+                          << " vs " << batch.size() << "), using uniform fallback\n";
+            }
+
+            auto fallback_results = build_fallback_results(batch);
+
+            {
+                PROFILE_SCOPE(ProfileMetric::CoordinatorResultSubmit);
+                queue_->submit_results(fallback_results);
+            }
+        }
     }
 }
 

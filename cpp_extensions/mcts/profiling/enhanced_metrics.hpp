@@ -61,6 +61,13 @@ enum class ProfileMetric : uint16_t {
     SelectionCacheMisses,
     SelectionAVX2Operations,
     SelectionBranchMispredictions,
+    // T024f-6: Make/Unmake pattern metrics
+    SelectionMakeMove,           // Time for make_move() calls during selection
+    SelectionUnmakeMove,         // Time for unmake_move() calls during unwind
+    SelectionMakeMoveCount,      // Counter: number of make_move calls
+    SelectionUnmakeMoveCount,    // Counter: number of unmake_move calls
+    SelectionThreadLocalInit,    // Time for thread-local state initialization
+    SelectionActualStateClone,   // Time for actual state.clone() calls (should be rare)
 
     // Expansion Phase (20-39)
     ExpansionTotal = 20,
@@ -273,8 +280,89 @@ enum class ProfileMetric : uint16_t {
     PythonObjectDestruction,
     DLPackCapsuleCreation,
 
+    // === PROFILING FRAMEWORK UPGRADE (295-340) ===
+    // Added 2025-10-17 to eliminate 81-98% "unknown" time
+    // See: PROFILING_FRAMEWORK_UPGRADE_SPEC.md
+
+    // Coordinator Thread Metrics (295-310) - CRITICAL (separate thread, ZERO previous instrumentation)
+    CoordinatorLoopTotal = 295,          // Total time in coordinator_loop() - CRITICAL
+    CoordinatorLoopIteration,            // Single loop iteration time
+    CoordinatorCollectBatch,             // Time blocked in queue.collect_batch()
+    CoordinatorCollectBatchEmpty,        // Iterations where batch was empty
+    CoordinatorFeatureExtraction,        // Time extracting features (total)
+    CoordinatorFeatureExtractionOMP,     // Time in OpenMP parallel region
+    CoordinatorFeatureExtractionSerial,  // Time in serial extraction fallback
+    CoordinatorFeatureAllocation,        // Time allocating/resizing feature vectors
+    CoordinatorPythonCallback,           // Time in callback->batch_inference_features() - CRITICAL
+    CoordinatorGILWait,                  // Time waiting for GIL (if measurable)
+    CoordinatorResultSubmit,             // Time submitting results to queue
+    CoordinatorIdleTime,                 // Time when no requests available
+    CoordinatorFallbackPath,             // Time in fallback result generation
+    CoordinatorOMPThreadCount,           // Number of threads used by OpenMP
+    CoordinatorOMPOverhead,              // OpenMP parallelization overhead
+    CoordinatorBatchCount,               // Counter: Number of batches processed
+
+    // ContinuousRunner Main Loop (311-330) - CRITICAL (main execution, minimal previous instrumentation)
+    RunContinuousLoopTotal = 311,        // Total loop iteration time - CRITICAL
+    RunContinuousLoopIteration,          // Single loop iteration
+    RunContinuousPhase1,                 // Phase 1: Select to leaf and submit
+    RunContinuousPhase2,                 // Phase 2: Process completed results
+    RunContinuousQueueClone,             // State cloning for queue submission - CRITICAL SUSPECTED BOTTLENECK
+    RunContinuousQueueSubmit,            // Queue.submit_request() call time
+    RunContinuousPendingBuffer,          // Pending buffer management time
+    RunContinuousBackoffLoop,            // Time in backoff/wait loops when queue full
+    RunContinuousSleepYield,             // Time sleeping/yielding - CRITICAL (idle time)
+    RunContinuousThreadLocalInit,        // Thread-local state initialization
+    RunContinuousStateRestore,           // Time restoring state to root via unwind
+    RunContinuousSubmitReady,            // Time preparing submission
+    RunContinuousQueueFullWait,          // Time waiting when queue is full
+    RunContinuousTerminalBackup,         // Time backing up terminal nodes
+    RunContinuousExpansionConflict,      // Time handling expansion conflicts
+    RunContinuousLoopIdleCount,          // Counter: Iterations with no work done
+    RunContinuousLoopWorkCount,          // Counter: Iterations with work done
+
+    // Root Expansion (331-335) - HIGH (synchronous wait, minimal previous instrumentation)
+    RootExpansionTotal = 331,            // Total root expansion time
+    RootExpansionWaitInference,          // Synchronous wait for inference result
+    RootExpansionClone,                  // Root state cloning
+    RootExpansionDirichlet,              // Dirichlet noise generation
+    RootExpansionAtomicRace,             // Time handling atomic flag races
+
+    // Node Expansion Details (336-342) - MEDIUM (called frequently, minimal breakdown)
+    NodeExpansionPolicyMask = 336,       // Policy masking/normalization time
+    NodeExpansionPolicyNormalize,        // Policy normalization specifically
+    NodeExpansionChildAlloc,             // Child node allocation time
+    NodeExpansionChildInit,              // Child initialization loop time
+    NodeExpansionAtomicFlag,             // Atomic flag operations time
+    NodeExpansionFlagCheck,              // Time checking if already expanded
+    NodeExpansionLegalMoves,             // Time getting legal moves
+
+    // Batch Result Processing Phases (343-350) - HIGH (called frequently, NO phase breakdown)
+    BatchResultsTotal = 343,             // Total process_completed_results() time
+    BatchResultsCollect,                 // Phase 1: Collect ready results from buffer
+    BatchResultsExpand,                  // Phase 2: Expand all nodes
+    BatchResultsBackupPrep,              // Phase 3: Prepare batched backup data
+    BatchResultsAtomicUpdate,            // Phase 4: Apply atomic tree updates
+    BatchResultsClearFlags,              // Phase 5: Clear expanding flags
+    BatchResultsReturnStates,            // Phase 6: Return states to pool
+    BatchResultsPathReversal,            // Time reversing paths for backup
+
+    // State Management Detail (351-355) - CRITICAL (suspected primary bottleneck)
+    StateCloneForQueue = 351,            // State cloning specifically for queue submission
+    StateCloneForRoot,                   // State cloning specifically for root expansion
+    StateCloneForPool,                   // State cloning for pool allocation
+    StateUnwindPath,                     // Time unwinding path (make/unmake)
+    StateThreadLocalClone,               // One-time thread-local state initialization clone
+
+    // Async Coordination Detail (356-360) - MEDIUM (async overhead tracking)
+    AsyncSubmissionOverhead = 356,       // Overhead of async submission vs direct call
+    AsyncResultWaitTime,                 // Time waiting for async results
+    AsyncQueueLatency,                   // Request submission to result ready latency
+    AsyncCoordinatorLatency,             // Coordinator processing latency (batch collection to result submit)
+    AsyncPipelineBubbles,                // Pipeline stalls/bubbles (idle time in pipeline)
+
     // Sentinel
-    MetricCount = 295
+    MetricCount = 361
 };
 
 /**
@@ -305,6 +393,20 @@ constexpr MetricMetadata get_metric_metadata(ProfileMetric metric) {
             return {"selection_busy_skip", "Nodes skipped due to busy edges", MetricType::Counter, MetricCategory::Selection, "count", false};
         case ProfileMetric::SelectionDepth:
             return {"selection_depth", "Selection depth reached", MetricType::Gauge, MetricCategory::Selection, "levels", false};
+
+        // T024f-6: Make/unmake pattern metrics
+        case ProfileMetric::SelectionMakeMove:
+            return {"selection_make_move", "make_move() call time", MetricType::Timer, MetricCategory::Selection, "ns", false};
+        case ProfileMetric::SelectionUnmakeMove:
+            return {"selection_unmake_move", "unmake_move() call time", MetricType::Timer, MetricCategory::Selection, "ns", false};
+        case ProfileMetric::SelectionMakeMoveCount:
+            return {"selection_make_move_count", "Number of make_move calls", MetricType::Counter, MetricCategory::Selection, "count", false};
+        case ProfileMetric::SelectionUnmakeMoveCount:
+            return {"selection_unmake_move_count", "Number of unmake_move calls", MetricType::Counter, MetricCategory::Selection, "count", false};
+        case ProfileMetric::SelectionThreadLocalInit:
+            return {"selection_thread_local_init", "Thread-local state initialization", MetricType::Timer, MetricCategory::Selection, "ns", false};
+        case ProfileMetric::SelectionActualStateClone:
+            return {"selection_actual_state_clone", "Actual state.clone() calls", MetricType::Timer, MetricCategory::Selection, "ns", false};
 
         // Expansion metrics
         case ProfileMetric::ExpansionTotal:
@@ -465,6 +567,147 @@ constexpr MetricMetadata get_metric_metadata(ProfileMetric metric) {
             return {"py_object_destruction", "Python object destruction count", MetricType::Counter, MetricCategory::GPU, "count", false};
         case ProfileMetric::DLPackCapsuleCreation:
             return {"dlpack_capsule_creation", "DLPack capsule creation time", MetricType::Timer, MetricCategory::GPU, "ns", false};
+
+        // === PROFILING FRAMEWORK UPGRADE METADATA (295-360) ===
+        // Coordinator Thread Metrics
+        case ProfileMetric::CoordinatorLoopTotal:
+            return {"coordinator_loop_total", "Coordinator thread loop total time", MetricType::Timer, MetricCategory::Thread, "ns", false};
+        case ProfileMetric::CoordinatorLoopIteration:
+            return {"coordinator_loop_iteration", "Single coordinator loop iteration", MetricType::Timer, MetricCategory::Thread, "ns", false};
+        case ProfileMetric::CoordinatorCollectBatch:
+            return {"coordinator_collect_batch", "Coordinator batch collection time", MetricType::Timer, MetricCategory::Queue, "ns", false};
+        case ProfileMetric::CoordinatorCollectBatchEmpty:
+            return {"coordinator_batch_empty", "Empty batch iterations", MetricType::Counter, MetricCategory::Queue, "count", false};
+        case ProfileMetric::CoordinatorFeatureExtraction:
+            return {"coordinator_feature_extraction", "Feature extraction total time", MetricType::Timer, MetricCategory::GPU, "ns", false};
+        case ProfileMetric::CoordinatorFeatureExtractionOMP:
+            return {"coordinator_feature_omp", "OpenMP feature extraction time", MetricType::Timer, MetricCategory::GPU, "ns", false};
+        case ProfileMetric::CoordinatorFeatureExtractionSerial:
+            return {"coordinator_feature_serial", "Serial feature extraction time", MetricType::Timer, MetricCategory::GPU, "ns", false};
+        case ProfileMetric::CoordinatorFeatureAllocation:
+            return {"coordinator_feature_alloc", "Feature buffer allocation time", MetricType::Timer, MetricCategory::Memory, "ns", false};
+        case ProfileMetric::CoordinatorPythonCallback:
+            return {"coordinator_python_callback", "Python inference callback time", MetricType::Timer, MetricCategory::GPU, "ns", false};
+        case ProfileMetric::CoordinatorGILWait:
+            return {"coordinator_gil_wait", "GIL wait time", MetricType::Timer, MetricCategory::GPU, "ns", false};
+        case ProfileMetric::CoordinatorResultSubmit:
+            return {"coordinator_result_submit", "Result submission time", MetricType::Timer, MetricCategory::Queue, "ns", false};
+        case ProfileMetric::CoordinatorIdleTime:
+            return {"coordinator_idle_time", "Coordinator idle time", MetricType::Timer, MetricCategory::Thread, "ns", false};
+        case ProfileMetric::CoordinatorFallbackPath:
+            return {"coordinator_fallback", "Fallback result generation time", MetricType::Timer, MetricCategory::GPU, "ns", false};
+        case ProfileMetric::CoordinatorOMPThreadCount:
+            return {"coordinator_omp_threads", "OpenMP thread count", MetricType::Gauge, MetricCategory::Thread, "count", false};
+        case ProfileMetric::CoordinatorOMPOverhead:
+            return {"coordinator_omp_overhead", "OpenMP overhead time", MetricType::Timer, MetricCategory::Thread, "ns", false};
+        case ProfileMetric::CoordinatorBatchCount:
+            return {"coordinator_batch_count", "Batches processed", MetricType::Counter, MetricCategory::Queue, "count", false};
+
+        // ContinuousRunner Main Loop
+        case ProfileMetric::RunContinuousLoopTotal:
+            return {"run_continuous_loop_total", "Main loop total time", MetricType::Timer, MetricCategory::Pipeline, "ns", false};
+        case ProfileMetric::RunContinuousLoopIteration:
+            return {"run_continuous_loop_iter", "Single loop iteration time", MetricType::Timer, MetricCategory::Pipeline, "ns", false};
+        case ProfileMetric::RunContinuousPhase1:
+            return {"run_continuous_phase1", "Phase 1: Select and submit", MetricType::Timer, MetricCategory::Pipeline, "ns", false};
+        case ProfileMetric::RunContinuousPhase2:
+            return {"run_continuous_phase2", "Phase 2: Process results", MetricType::Timer, MetricCategory::Pipeline, "ns", false};
+        case ProfileMetric::RunContinuousQueueClone:
+            return {"run_continuous_queue_clone", "State cloning for queue", MetricType::Timer, MetricCategory::Memory, "ns", false};
+        case ProfileMetric::RunContinuousQueueSubmit:
+            return {"run_continuous_queue_submit", "Queue submission time", MetricType::Timer, MetricCategory::Queue, "ns", false};
+        case ProfileMetric::RunContinuousPendingBuffer:
+            return {"run_continuous_pending_buffer", "Pending buffer management", MetricType::Timer, MetricCategory::Memory, "ns", false};
+        case ProfileMetric::RunContinuousBackoffLoop:
+            return {"run_continuous_backoff", "Backoff loop time", MetricType::Timer, MetricCategory::Thread, "ns", false};
+        case ProfileMetric::RunContinuousSleepYield:
+            return {"run_continuous_sleep", "Sleep/yield time", MetricType::Timer, MetricCategory::Thread, "ns", false};
+        case ProfileMetric::RunContinuousThreadLocalInit:
+            return {"run_continuous_tls_init", "Thread-local init time", MetricType::Timer, MetricCategory::Thread, "ns", false};
+        case ProfileMetric::RunContinuousStateRestore:
+            return {"run_continuous_state_restore", "State restore time", MetricType::Timer, MetricCategory::Memory, "ns", false};
+        case ProfileMetric::RunContinuousSubmitReady:
+            return {"run_continuous_submit_ready", "Submission prep time", MetricType::Timer, MetricCategory::Queue, "ns", false};
+        case ProfileMetric::RunContinuousQueueFullWait:
+            return {"run_continuous_queue_full", "Queue full wait time", MetricType::Timer, MetricCategory::Thread, "ns", false};
+        case ProfileMetric::RunContinuousTerminalBackup:
+            return {"run_continuous_terminal_backup", "Terminal node backup time", MetricType::Timer, MetricCategory::Backup, "ns", false};
+        case ProfileMetric::RunContinuousExpansionConflict:
+            return {"run_continuous_expansion_conflict", "Expansion conflict handling", MetricType::Timer, MetricCategory::Expansion, "ns", false};
+        case ProfileMetric::RunContinuousLoopIdleCount:
+            return {"run_continuous_idle_count", "Idle iterations", MetricType::Counter, MetricCategory::Thread, "count", false};
+        case ProfileMetric::RunContinuousLoopWorkCount:
+            return {"run_continuous_work_count", "Work iterations", MetricType::Counter, MetricCategory::Pipeline, "count", false};
+
+        // Root Expansion
+        case ProfileMetric::RootExpansionTotal:
+            return {"root_expansion_total", "Root expansion total time", MetricType::Timer, MetricCategory::Expansion, "ns", false};
+        case ProfileMetric::RootExpansionWaitInference:
+            return {"root_expansion_wait", "Root inference wait time", MetricType::Timer, MetricCategory::Thread, "ns", false};
+        case ProfileMetric::RootExpansionClone:
+            return {"root_expansion_clone", "Root state cloning", MetricType::Timer, MetricCategory::Memory, "ns", false};
+        case ProfileMetric::RootExpansionDirichlet:
+            return {"root_expansion_dirichlet", "Dirichlet noise generation", MetricType::Timer, MetricCategory::Expansion, "ns", false};
+        case ProfileMetric::RootExpansionAtomicRace:
+            return {"root_expansion_atomic_race", "Atomic flag race handling", MetricType::Timer, MetricCategory::Synchronization, "ns", false};
+
+        // Node Expansion Details
+        case ProfileMetric::NodeExpansionPolicyMask:
+            return {"node_expansion_policy_mask", "Policy masking time", MetricType::Timer, MetricCategory::Expansion, "ns", false};
+        case ProfileMetric::NodeExpansionPolicyNormalize:
+            return {"node_expansion_policy_norm", "Policy normalization time", MetricType::Timer, MetricCategory::Expansion, "ns", false};
+        case ProfileMetric::NodeExpansionChildAlloc:
+            return {"node_expansion_child_alloc", "Child allocation time", MetricType::Timer, MetricCategory::Memory, "ns", false};
+        case ProfileMetric::NodeExpansionChildInit:
+            return {"node_expansion_child_init", "Child initialization time", MetricType::Timer, MetricCategory::Expansion, "ns", false};
+        case ProfileMetric::NodeExpansionAtomicFlag:
+            return {"node_expansion_atomic_flag", "Atomic flag operations", MetricType::Timer, MetricCategory::Synchronization, "ns", false};
+        case ProfileMetric::NodeExpansionFlagCheck:
+            return {"node_expansion_flag_check", "Expanded flag check time", MetricType::Timer, MetricCategory::Expansion, "ns", false};
+        case ProfileMetric::NodeExpansionLegalMoves:
+            return {"node_expansion_legal_moves", "Legal moves generation", MetricType::Timer, MetricCategory::Expansion, "ns", false};
+
+        // Batch Result Processing
+        case ProfileMetric::BatchResultsTotal:
+            return {"batch_results_total", "Batch processing total time", MetricType::Timer, MetricCategory::Pipeline, "ns", false};
+        case ProfileMetric::BatchResultsCollect:
+            return {"batch_results_collect", "Phase 1: Collect results", MetricType::Timer, MetricCategory::Queue, "ns", false};
+        case ProfileMetric::BatchResultsExpand:
+            return {"batch_results_expand", "Phase 2: Expand nodes", MetricType::Timer, MetricCategory::Expansion, "ns", false};
+        case ProfileMetric::BatchResultsBackupPrep:
+            return {"batch_results_backup_prep", "Phase 3: Backup prep", MetricType::Timer, MetricCategory::Backup, "ns", false};
+        case ProfileMetric::BatchResultsAtomicUpdate:
+            return {"batch_results_atomic_update", "Phase 4: Atomic updates", MetricType::Timer, MetricCategory::Backup, "ns", false};
+        case ProfileMetric::BatchResultsClearFlags:
+            return {"batch_results_clear_flags", "Phase 5: Clear flags", MetricType::Timer, MetricCategory::Expansion, "ns", false};
+        case ProfileMetric::BatchResultsReturnStates:
+            return {"batch_results_return_states", "Phase 6: Return states", MetricType::Timer, MetricCategory::Memory, "ns", false};
+        case ProfileMetric::BatchResultsPathReversal:
+            return {"batch_results_path_reverse", "Path reversal time", MetricType::Timer, MetricCategory::Backup, "ns", false};
+
+        // State Management Detail
+        case ProfileMetric::StateCloneForQueue:
+            return {"state_clone_for_queue", "State clone for queue", MetricType::Timer, MetricCategory::Memory, "ns", false};
+        case ProfileMetric::StateCloneForRoot:
+            return {"state_clone_for_root", "State clone for root", MetricType::Timer, MetricCategory::Memory, "ns", false};
+        case ProfileMetric::StateCloneForPool:
+            return {"state_clone_for_pool", "State clone for pool", MetricType::Timer, MetricCategory::Memory, "ns", false};
+        case ProfileMetric::StateUnwindPath:
+            return {"state_unwind_path", "Path unwinding time", MetricType::Timer, MetricCategory::Memory, "ns", false};
+        case ProfileMetric::StateThreadLocalClone:
+            return {"state_tls_clone", "Thread-local init clone", MetricType::Timer, MetricCategory::Memory, "ns", false};
+
+        // Async Coordination
+        case ProfileMetric::AsyncSubmissionOverhead:
+            return {"async_submission_overhead", "Async submission overhead", MetricType::Timer, MetricCategory::Queue, "ns", false};
+        case ProfileMetric::AsyncResultWaitTime:
+            return {"async_result_wait", "Async result wait time", MetricType::Timer, MetricCategory::Thread, "ns", false};
+        case ProfileMetric::AsyncQueueLatency:
+            return {"async_queue_latency", "Request-to-result latency", MetricType::Timer, MetricCategory::Queue, "ns", false};
+        case ProfileMetric::AsyncCoordinatorLatency:
+            return {"async_coordinator_latency", "Coordinator processing latency", MetricType::Timer, MetricCategory::Thread, "ns", false};
+        case ProfileMetric::AsyncPipelineBubbles:
+            return {"async_pipeline_bubbles", "Pipeline bubble time", MetricType::Timer, MetricCategory::Pipeline, "ns", false};
 
         default:
             return {"unknown", "Unknown metric", MetricType::Counter, MetricCategory::Selection, "?", false};

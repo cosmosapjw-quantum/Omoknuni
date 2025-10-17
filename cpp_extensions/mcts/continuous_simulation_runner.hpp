@@ -24,6 +24,7 @@
 
 #include "simulation_runner.hpp"
 #include "async_inference_queue.hpp"
+#include "profiling/enhanced_profiler.hpp"
 #include <array>
 #include <atomic>
 #include <unordered_map>
@@ -304,7 +305,12 @@ private:
         // Initialize state on first use (clone root once per thread)
         void ensure_initialized(const IGameState& root) {
             if (!initialized) {
-                state = root.clone();
+                // T024f-6: Track thread-local initialization (should happen once per thread)
+                PROFILE_SCOPE(profiling::ProfileMetric::SelectionThreadLocalInit);
+                {
+                    PROFILE_SCOPE(profiling::ProfileMetric::SelectionActualStateClone);  // This IS a real clone
+                    state = root.clone();
+                }
                 undo_tokens.reserve(256);  // Typical max MCTS depth
                 initialized = true;
             }

@@ -193,6 +193,7 @@ class ProfilingCampaign:
                     self.batch_size = batch_size
                     self.output = str(output)
                     self.validate = False  # Skip validation for speed in campaigns
+                    self.runner_type = "continuous"  # Use T024f-6 make/unmake + T019 OpenMP batch extraction
 
             mock_args = MockArgs(simulations, num_threads, batch_size, trial_dir)
 

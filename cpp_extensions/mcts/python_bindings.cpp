@@ -358,24 +358,8 @@ PYBIND11_MODULE(mcts_py, m) {
              "Construct batch callback with Python callable");
 
     // AsyncInferenceQueue - Non-blocking inference queue for async MCTS
-    py::class_<InferenceRequest>(m, "InferenceRequest",
-            "Inference request with pre-extracted features (T018g optimization)")
-        .def(py::init<>())
-        .def_readwrite("request_id", &InferenceRequest::request_id)
-        .def_readwrite("node_index", &InferenceRequest::node_index)
-        .def_readwrite("features", &InferenceRequest::features,
-                       "Pre-extracted feature tensor (C×H×W flattened)")
-        .def_readwrite("action_space_size", &InferenceRequest::action_space_size,
-                       "Action space size for fallback policy")
-        .def_readwrite("board_size", &InferenceRequest::board_size,
-                       "Board size for tensor reshaping")
-        .def_readwrite("num_feature_planes", &InferenceRequest::num_feature_planes,
-                       "Number of feature planes")
-        .def("__repr__", [](const InferenceRequest& req) {
-            return "<InferenceRequest id=" + std::to_string(req.request_id) +
-                   " node=" + std::to_string(req.node_index) +
-                   " features=" + std::to_string(req.features.size()) + ">";
-        });
+    // T019: InferenceRequest not exposed to Python (contains unique_ptr state)
+    // Python code doesn't need to access InferenceRequest directly
 
     py::class_<InferenceResult>(m, "InferenceResult")
         .def(py::init<>())
@@ -396,21 +380,17 @@ PYBIND11_MODULE(mcts_py, m) {
         .def("submit_request",
              [](AsyncInferenceQueue& queue, IGameState* state,
                 NodeIndex node_index, std::vector<NodeIndex> path) -> uint64_t {
-                 // T018g OPTIMIZATION: Extract features in C++ (zero-clone submission)
+                 // T019: Clone state for batch extraction with OpenMP
+                 // Batch coordinator will extract features from all states in parallel
+                 std::unique_ptr<IGameState> cloned_state = state->clone();
+
                  int board_size = state->getBoardSize();
                  int num_feature_planes = state->get_num_feature_planes();
                  int action_space_size = state->getActionSpaceSize();
 
-                 // Pre-allocate features buffer
-                 size_t features_size = num_feature_planes * board_size * board_size;
-                 std::vector<float> features(features_size);
-
-                 // Extract features to buffer (zero-allocation, ~10μs)
-                 state->extract_features_to_buffer(features.data());
-
-                 // Submit pre-extracted features (no clone needed!)
+                 // Submit state for batch extraction (OpenMP parallelization in coordinator)
                  return queue.submit_request(
-                     std::move(features),
+                     std::move(cloned_state),
                      action_space_size,
                      board_size,
                      num_feature_planes,
@@ -419,9 +399,9 @@ PYBIND11_MODULE(mcts_py, m) {
                  );
              },
              py::arg("state"), py::arg("node_index"), py::arg("path"),
-             "Submit inference request with pre-extracted features (non-blocking)\n\n"
+             "Submit inference request with game state (T019 batch extraction)\n\n"
              "Args:\n"
-             "    state: Game state to evaluate (ownership transferred)\n"
+             "    state: Game state to evaluate (will be cloned)\n"
              "    node_index: Tree node to expand\n"
              "    path: Path from root to node\n\n"
              "Returns:\n"

@@ -24,7 +24,7 @@ AsyncInferenceQueue::~AsyncInferenceQueue() {
     // Cleanup (no mutexes to destroy in lock-free implementation)
 }
 
-uint64_t AsyncInferenceQueue::submit_request(std::vector<float> features,
+uint64_t AsyncInferenceQueue::submit_request(std::unique_ptr<IGameState> state,
                                                int action_space_size,
                                                int board_size,
                                                int num_feature_planes,
@@ -36,49 +36,34 @@ uint64_t AsyncInferenceQueue::submit_request(std::vector<float> features,
     // Generate unique request ID
     uint64_t request_id = next_request_id_.fetch_add(1, std::memory_order_relaxed);
 
-    // Wait-free enqueue with retry on full (T006b: lock-free queue)
-    // OPTIMIZATION (T018g): Pre-extracted features eliminate state cloning overhead
-    int retry_count = 0;
-    while (true) {
-        // Create request for this attempt
-        InferenceRequest request;
-        request.request_id = request_id;
-        request.features = features;  // Copy features (amortized O(1) with move semantics)
-        request.action_space_size = action_space_size;
-        request.board_size = board_size;
-        request.num_feature_planes = num_feature_planes;
-        request.node_index = node_index;
-        request.path = path;
+    // Create request with game state
+    // T019: Submit game state for batch feature extraction with OpenMP
+    InferenceRequest request;
+    request.request_id = request_id;
+    request.state = std::move(state);  // T019: Transfer ownership of game state
+    request.action_space_size = action_space_size;
+    request.board_size = board_size;
+    request.num_feature_planes = num_feature_planes;
+    request.node_index = node_index;
+    request.path = std::move(path);  // Move path as well
 
-        // Try to enqueue (wait-free, no locks)
-        {
-            PROFILE_SCOPE(ProfileMetric::QueueSubmitEnqueue);
-            if (pending_requests_.try_enqueue(std::move(request))) {
-                PROFILE_COUNTER(ProfileMetric::CAS_SuccessCount, 1);
-                break;  // Success
-            }
+    // Try to enqueue (wait-free, no locks)
+    // Note: With unique_ptr state, we can only try once (no retry possible)
+    // Queue has 4096 capacity, so full queue should be extremely rare
+    {
+        PROFILE_SCOPE(ProfileMetric::QueueSubmitEnqueue);
+        if (!pending_requests_.try_enqueue(std::move(request))) {
+            // Queue full - this should be extremely rare with 4096 capacity
+            // If it happens, it means 4096+ requests are pending, which indicates
+            // a serious bottleneck in the inference coordinator
+            PROFILE_COUNTER(ProfileMetric::CAS_FailureCount, 1);
+            throw std::runtime_error("AsyncInferenceQueue: Queue full (4096+ pending requests). "
+                                   "Inference coordinator cannot keep up with submission rate.");
         }
-
-        // Queue full - yield and retry (rare with 4096 capacity)
-        PROFILE_COUNTER(ProfileMetric::CAS_FailureCount, 1);
-        PROFILE_COUNTER(ProfileMetric::QueueSubmitRetries, 1);
-        retry_count++;
-
-        if (retry_count > 10000) {
-            // Emergency: queue saturated for extended period
-            // This should never happen in practice
-            break;
-        }
-
-        {
-            PROFILE_SCOPE(ProfileMetric::ThreadYieldCount);
-            std::this_thread::yield();
-        }
+        PROFILE_COUNTER(ProfileMetric::CAS_SuccessCount, 1);
     }
 
-    // Track retry statistics
-    PROFILE_GAUGE(ProfileMetric::CAS_MaxRetriesPerOp, retry_count);
-
+    // Successfully enqueued
     pending_count_.fetch_add(1, std::memory_order_relaxed);
 
     // T028: Notify all waiting threads (not just one) for optimal thread wakeup

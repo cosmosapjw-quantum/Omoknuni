@@ -460,22 +460,43 @@ DLManagedTensor* create_batch_tensor_from_states(
         // Track if parallel execution should happen
         #ifdef _OPENMP
         bool should_parallelize = (batch_size > 8);
+        // Reset to 1 before parallel region to detect if it actually ran
+        omp_threads = 1;
         #endif
 
-        #pragma omp parallel for schedule(static) if(batch_size > 8)
-        for (int i = 0; i < batch_size; ++i) {
-            PROFILE_SCOPE(ProfileMetric::FeatureExtractionPerState);
-
-            float* state_buffer = data + (i * state_size);
-            states[i]->extract_features_to_buffer(state_buffer);
-        }
-
-        // Get actual thread count AFTER parallel region
+        // T019: Use parallel region with manual loop to detect thread count
         #ifdef _OPENMP
         if (should_parallelize) {
-            omp_threads = omp_get_max_threads();  // Max threads that would be used
+            #pragma omp parallel
+            {
+                // Get actual thread count FROM INSIDE parallel region (CRITICAL FIX)
+                #pragma omp single
+                {
+                    omp_threads = omp_get_num_threads();  // Actual threads used (NOT max available)
+                }
+
+                // Distribute work manually with static scheduling
+                #pragma omp for schedule(static)
+                for (int i = 0; i < batch_size; ++i) {
+                    // T019: REMOVED PROFILE_SCOPE from inside loop - prevents parallelization
+                    // Profile the entire batch instead (see line 458 above)
+                    float* state_buffer = data + (i * state_size);
+                    states[i]->extract_features_to_buffer(state_buffer);
+                }
+            }
+        } else {
+        #endif
+            // Serial execution (batch_size <= 8 or OpenMP disabled)
+            for (int i = 0; i < batch_size; ++i) {
+                float* state_buffer = data + (i * state_size);
+                states[i]->extract_features_to_buffer(state_buffer);
+            }
+        #ifdef _OPENMP
         }
         #endif
+
+        // Thread count now correctly set from inside parallel region
+        // No need for additional checks here
     }
 
     // Verify OpenMP actually parallelized (CRITICAL CHECK from review.txt)

@@ -105,14 +105,26 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
     // Each thread maintains one state, modified via make_move() and restored via unmake_move()
     // This eliminates copyFrom() cloning (418μs → ~15ns per move)
     static thread_local ThreadLocalState tls;
-    tls.ensure_initialized(root_state);  // Clone once per thread (amortized cost)
+    {
+        PROFILE_SCOPE(ProfileMetric::RunContinuousThreadLocalInit);
+        {
+            PROFILE_SCOPE(ProfileMetric::StateThreadLocalClone);
+            tls.ensure_initialized(root_state);  // Clone once per thread (amortized cost)
+        }
+    }
 
     // Continuous loop until quota reached
     while (completed < num_simulations) {
+        // === PROFILING UPGRADE: Instrument main loop iteration ===
+        PROFILE_SCOPE(ProfileMetric::RunContinuousLoopIteration);
+
         bool waiting_for_leaf = false;
 
         // Phase 1: Select to leaf and submit inference (NON-BLOCKING)
         if (submitted < num_simulations) {
+            PROFILE_SCOPE(ProfileMetric::RunContinuousPhase1);
+            PROFILE_COUNTER(ProfileMetric::RunContinuousLoopWorkCount, 1);
+
             // T024f-6: Use thread-local state with make/unmake (ZERO cloning)
             // State is already at root from previous unwind (or initial clone)
             tls.undo_tokens.clear();
@@ -121,18 +133,24 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
             path_buffer_.clear();
 
             // Select to leaf using make_move pattern (collects undo tokens)
+            // NOTE: select_leaf_with_make_unmake is already fully instrumented
             NodeIndex leaf = select_leaf_with_make_unmake(
                 root_index, *tls.state, path_buffer_, tls.undo_tokens);
 
             // Check if terminal
             if (tls.state->isTerminal()) {
+                PROFILE_SCOPE(ProfileMetric::RunContinuousTerminalBackup);
+
                 // Terminal node - backup immediately, no inference needed
                 float value = get_terminal_value(*tls.state);
                 std::reverse(path_buffer_.begin(), path_buffer_.end());
                 backup_value(path_buffer_, value);
 
                 // T024f-6: Restore state to root via unmake_move
-                unwind_path(*tls.state, path_buffer_, tls.undo_tokens);
+                {
+                    PROFILE_SCOPE(ProfileMetric::RunContinuousStateRestore);
+                    unwind_path(*tls.state, path_buffer_, tls.undo_tokens);
+                }
 
                 completed++;
                 submitted++;
@@ -142,98 +160,132 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
             // Ensure only one in-flight expansion per node
             bool submission_ready = true;
             if (!tree_.atomic_try_mark_expanding(leaf)) {
+                PROFILE_SCOPE(ProfileMetric::RunContinuousExpansionConflict);
+
                 // Track expansion conflicts (busy-edge prevented duplicate expansion)
                 Instrumentation::instance().increment_counter(InstrumentationMetric::ExpansionConflict);
                 release_virtual_loss(path_buffer_);
 
                 // T024f-6: Restore state to root before continuing
-                unwind_path(*tls.state, path_buffer_, tls.undo_tokens);
+                {
+                    PROFILE_SCOPE(ProfileMetric::RunContinuousStateRestore);
+                    unwind_path(*tls.state, path_buffer_, tls.undo_tokens);
+                }
 
                 waiting_for_leaf = true;
                 submission_ready = false;
             }
 
             alphazero::core::IGameState* pending_state = nullptr;
-            std::vector<float> features;
+            std::unique_ptr<IGameState> queue_state;  // T019: State for batch extraction
             int action_space_size = 0;
             int board_size = 0;
             int num_feature_planes = 0;
 
             if (submission_ready) {
-                // T024f-6: Copy thread-local state to pending (1 copyFrom instead of 2)
-                // This state persists until expansion completes (async inference)
-                pending_state = state_pool->acquire();
-                pending_state->copyFrom(*tls.state);
+                PROFILE_SCOPE(ProfileMetric::RunContinuousSubmitReady);
 
-                // Extract features in C++ (eliminates queue clone)
+                // === CRITICAL BOTTLENECK SUSPECT: State cloning for queue ===
+                // This clone is necessary for async batch extraction in coordinator thread
+                // Expected cost: ~418μs per clone (from previous profiling)
+                // This is likely the PRIMARY bottleneck causing 9× slowdown!
+                {
+                    PROFILE_SCOPE(ProfileMetric::RunContinuousQueueClone);
+                    {
+                        PROFILE_SCOPE(ProfileMetric::StateCloneForQueue);
+                        queue_state = tls.state->clone();
+                    }
+                }
+
+                // Get metadata for inference
                 board_size = tls.state->getBoardSize();
                 num_feature_planes = tls.state->get_num_feature_planes();
                 action_space_size = tls.state->getActionSpaceSize();
 
-                // Pre-allocate features buffer
-                size_t features_size = num_feature_planes * board_size * board_size;
-                features.resize(features_size);
-
-                // Extract features to buffer (zero-allocation, ~10μs)
-                tls.state->extract_features_to_buffer(features.data());
-
                 // T024f-6: Restore thread-local state to root (ready for next simulation)
-                unwind_path(*tls.state, path_buffer_, tls.undo_tokens);
+                {
+                    PROFILE_SCOPE(ProfileMetric::RunContinuousStateRestore);
+                    unwind_path(*tls.state, path_buffer_, tls.undo_tokens);
+                }
             }
 
             if (submission_ready) {
                 constexpr std::size_t kMaxInFlight = 4096;
                 std::size_t backoff_loops = 0;
                 size_t pending = pending_count_.load(std::memory_order_relaxed);
-                while (queue.pending_count() >= kMaxInFlight || pending >= kMaxInFlight) {
-                    waiting_for_leaf = true;
-                    int flushed = process_completed_results(queue);
-                    if (flushed == 0) {
-                        std::this_thread::sleep_for(std::chrono::microseconds(100));
+
+                // Backoff loop when queue is full
+                if (queue.pending_count() >= kMaxInFlight || pending >= kMaxInFlight) {
+                    PROFILE_SCOPE(ProfileMetric::RunContinuousBackoffLoop);
+
+                    while (queue.pending_count() >= kMaxInFlight || pending >= kMaxInFlight) {
+                        PROFILE_SCOPE(ProfileMetric::RunContinuousQueueFullWait);
+
+                        waiting_for_leaf = true;
+                        int flushed = process_completed_results(queue);
+                        if (flushed == 0) {
+                            std::this_thread::sleep_for(std::chrono::microseconds(100));
+                        }
+                        if (++backoff_loops > 1024) {
+                            break;  // Prevent unbounded waiting
+                        }
+                        pending = pending_count_.load(std::memory_order_relaxed);
                     }
-                    if (++backoff_loops > 1024) {
-                        break;  // Prevent unbounded waiting
-                    }
-                    pending = pending_count_.load(std::memory_order_relaxed);
                 }
 
-                // Submit request with pre-extracted features (NON-BLOCKING, zero-clone!)
-                uint64_t request_id = queue.submit_request(
-                    std::move(features),
-                    action_space_size,
-                    board_size,
-                    num_feature_planes,
-                    leaf,
-                    path_buffer_
-                );
+                // T019: Submit request with game state (batch extraction with OpenMP in coordinator)
+                uint64_t request_id;
+                {
+                    PROFILE_SCOPE(ProfileMetric::RunContinuousQueueSubmit);
+                    request_id = queue.submit_request(
+                        std::move(queue_state),
+                        action_space_size,
+                        board_size,
+                        num_feature_planes,
+                        leaf,
+                        path_buffer_
+                    );
+                }
 
                 // Track pending expansion using ring buffer (O(1) direct indexing)
-                size_t slot_index = request_id % PENDING_BUFFER_CAPACITY;
-                PendingSlot& slot = pending_buffer_[slot_index];
+                {
+                    PROFILE_SCOPE(ProfileMetric::RunContinuousPendingBuffer);
 
-                // Store request data
-                slot.request_id = request_id;
-                slot.data.leaf_node = leaf;
-                slot.data.path = path_buffer_;  // Copy path
-                slot.data.state = pending_state;  // Pool-managed state (NON-owning)
+                    size_t slot_index = request_id % PENDING_BUFFER_CAPACITY;
+                    PendingSlot& slot = pending_buffer_[slot_index];
 
-                // Mark slot as occupied (release to ensure data is visible)
-                slot.occupied.store(true, std::memory_order_release);
-                pending_count_.fetch_add(1, std::memory_order_relaxed);
+                    // Store request data
+                    slot.request_id = request_id;
+                    slot.data.leaf_node = leaf;
+                    slot.data.path = path_buffer_;  // Copy path
+                    slot.data.state = pending_state;  // Pool-managed state (NON-owning)
+
+                    // Mark slot as occupied (release to ensure data is visible)
+                    slot.occupied.store(true, std::memory_order_release);
+                    pending_count_.fetch_add(1, std::memory_order_relaxed);
+                }
 
                 submitted++;
             }
         }
 
         // Phase 2: Process completed results (NON-BLOCKING)
-        int processed = process_completed_results(queue);
+        int processed;
+        {
+            PROFILE_SCOPE(ProfileMetric::RunContinuousPhase2);
+            processed = process_completed_results(queue);
+        }
         completed += processed;
 
         // Yield briefly if no results available to avoid busy-waiting
         // Reduced sleep duration to improve batch accumulation
         if (processed == 0) {
+            PROFILE_COUNTER(ProfileMetric::RunContinuousLoopIdleCount, 1);
+
             bool all_submitted = submitted >= num_simulations;
             if (all_submitted || waiting_for_leaf) {
+                PROFILE_SCOPE(ProfileMetric::RunContinuousSleepYield);
+
                 auto sleep_duration = waiting_for_leaf ? std::chrono::microseconds(10)  // Reduced from 50μs
                                                        : std::chrono::microseconds(20);  // Reduced from 100μs
                 std::this_thread::sleep_for(sleep_duration);
@@ -259,6 +311,7 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
 
 int ContinuousSimulationRunner::process_completed_results(AsyncInferenceQueue& queue) {
     ScopedMetric metric(InstrumentationMetric::QueueProcessResults);
+    PROFILE_SCOPE(ProfileMetric::BatchResultsTotal);
 
     // T014: Batched Result Processing
     // Phase 1: Collect all ready results (no tree modifications yet)
@@ -267,30 +320,34 @@ int ContinuousSimulationRunner::process_completed_results(AsyncInferenceQueue& q
     ready_results.clear();
     ready_results.reserve(32);  // Typical batch size
 
-    for (size_t i = 0; i < PENDING_BUFFER_CAPACITY; ++i) {
-        PendingSlot& slot = pending_buffer_[i];
+    {
+        PROFILE_SCOPE(ProfileMetric::BatchResultsCollect);
 
-        // Check if slot is occupied
-        if (!slot.occupied.load(std::memory_order_acquire)) {
-            continue;
+        for (size_t i = 0; i < PENDING_BUFFER_CAPACITY; ++i) {
+            PendingSlot& slot = pending_buffer_[i];
+
+            // Check if slot is occupied
+            if (!slot.occupied.load(std::memory_order_acquire)) {
+                continue;
+            }
+
+            // Try to get result for this specific request
+            auto result_opt = queue.try_get_result(slot.request_id);
+            if (!result_opt.has_value()) {
+                continue;  // Result not ready yet
+            }
+
+            // Collect result without modifying tree yet (batching optimization)
+            ReadyResult ready;
+            ready.pending = std::move(slot.data);
+            ready.result = std::move(result_opt.value());
+            ready.slot_index = i;
+            ready_results.push_back(std::move(ready));
+
+            // Mark slot as free early (safe since we've moved data out)
+            slot.occupied.store(false, std::memory_order_release);
+            pending_count_.fetch_sub(1, std::memory_order_relaxed);
         }
-
-        // Try to get result for this specific request
-        auto result_opt = queue.try_get_result(slot.request_id);
-        if (!result_opt.has_value()) {
-            continue;  // Result not ready yet
-        }
-
-        // Collect result without modifying tree yet (batching optimization)
-        ReadyResult ready;
-        ready.pending = std::move(slot.data);
-        ready.result = std::move(result_opt.value());
-        ready.slot_index = i;
-        ready_results.push_back(std::move(ready));
-
-        // Mark slot as free early (safe since we've moved data out)
-        slot.occupied.store(false, std::memory_order_release);
-        pending_count_.fetch_sub(1, std::memory_order_relaxed);
     }
 
     // No results ready - early return
@@ -300,16 +357,20 @@ int ContinuousSimulationRunner::process_completed_results(AsyncInferenceQueue& q
 
     // Phase 2: Batch node expansions
     // Expand all nodes before backup to ensure consistent tree state
-    for (auto& ready : ready_results) {
-        if (ready.pending.state) {
-            ready.expansion_succeeded = expand_node_with_result(
-                ready.pending.leaf_node,
-                *ready.pending.state,
-                ready.result.policy,
-                ready.result.value
-            );
-        } else {
-            ready.expansion_succeeded = false;
+    {
+        PROFILE_SCOPE(ProfileMetric::BatchResultsExpand);
+
+        for (auto& ready : ready_results) {
+            if (ready.pending.state) {
+                ready.expansion_succeeded = expand_node_with_result(
+                    ready.pending.leaf_node,
+                    *ready.pending.state,
+                    ready.result.policy,
+                    ready.result.value
+                );
+            } else {
+                ready.expansion_succeeded = false;
+            }
         }
     }
 
@@ -320,26 +381,34 @@ int ContinuousSimulationRunner::process_completed_results(AsyncInferenceQueue& q
     node_updates.clear();
     node_updates.reserve(128);  // Typical tree depth × batch size
 
-    for (auto& ready : ready_results) {
-        // Reverse path for backup (leaf-to-root becomes root-to-leaf)
-        std::vector<NodeIndex> path = ready.pending.path;
-        std::reverse(path.begin(), path.end());
+    {
+        PROFILE_SCOPE(ProfileMetric::BatchResultsBackupPrep);
 
-        // Accumulate updates for each node in the path
-        // This is the key optimization: instead of N separate atomic operations
-        // per path, we do 1 atomic operation per unique node across all paths
-        float current_value = ready.result.value;
+        for (auto& ready : ready_results) {
+            // Reverse path for backup (leaf-to-root becomes root-to-leaf)
+            std::vector<NodeIndex> path = ready.pending.path;
 
-        for (size_t i = 0; i < path.size(); ++i) {
-            NodeIndex node = path[i];
+            {
+                PROFILE_SCOPE(ProfileMetric::BatchResultsPathReversal);
+                std::reverse(path.begin(), path.end());
+            }
 
-            // Apply sign flipping: each level up the tree negates the value
-            float value_for_node = (i % 2 == 0) ? current_value : -current_value;
+            // Accumulate updates for each node in the path
+            // This is the key optimization: instead of N separate atomic operations
+            // per path, we do 1 atomic operation per unique node across all paths
+            float current_value = ready.result.value;
 
-            // Accumulate updates (will be applied atomically in Phase 4)
-            auto& update = node_updates[node];
-            update.visit_increment += 1.0f;
-            update.value_increment += value_for_node;
+            for (size_t i = 0; i < path.size(); ++i) {
+                NodeIndex node = path[i];
+
+                // Apply sign flipping: each level up the tree negates the value
+                float value_for_node = (i % 2 == 0) ? current_value : -current_value;
+
+                // Accumulate updates (will be applied atomically in Phase 4)
+                auto& update = node_updates[node];
+                update.visit_increment += 1.0f;
+                update.value_increment += value_for_node;
+            }
         }
     }
 
@@ -349,26 +418,38 @@ int ContinuousSimulationRunner::process_completed_results(AsyncInferenceQueue& q
     //   Before: 32 × 10 × 2 = 640 atomic operations
     //   After:  ~160 unique nodes × 2 = 320 atomic operations
     //   Result: 2× reduction + less contention
-    for (const auto& [node_index, update] : node_updates) {
-        backup_.update_node_atomic(node_index, update.value_increment, update.visit_increment);
+    {
+        PROFILE_SCOPE(ProfileMetric::BatchResultsAtomicUpdate);
+
+        for (const auto& [node_index, update] : node_updates) {
+            backup_.update_node_atomic(node_index, update.value_increment, update.visit_increment);
+        }
     }
 
     // Phase 5: Batch clear expanding flags
     // Clear all flags after backups complete to ensure consistency
-    for (auto& ready : ready_results) {
-        tree_.clear_expanding_flag(ready.pending.leaf_node);
+    {
+        PROFILE_SCOPE(ProfileMetric::BatchResultsClearFlags);
+
+        for (auto& ready : ready_results) {
+            tree_.clear_expanding_flag(ready.pending.leaf_node);
+        }
     }
 
     // Phase 6: Return pool states to ThreadLocalStatePool (T018g optimization)
     // CRITICAL: Must return states after expansion to avoid use-after-free
     // This eliminates 418μs clone overhead per simulation (3.7× throughput gain)
-    for (auto& ready : ready_results) {
-        if (ready.pending.state) {
-            // Get thread-local pool and return state
-            // Note: game_type is consistent within a runner instance
-            GameType game_type = detect_game_type(*ready.pending.state);
-            ThreadLocalStatePool* pool = get_thread_state_pool(game_type);
-            pool->release(ready.pending.state);
+    {
+        PROFILE_SCOPE(ProfileMetric::BatchResultsReturnStates);
+
+        for (auto& ready : ready_results) {
+            if (ready.pending.state) {
+                // Get thread-local pool and return state
+                // Note: game_type is consistent within a runner instance
+                GameType game_type = detect_game_type(*ready.pending.state);
+                ThreadLocalStatePool* pool = get_thread_state_pool(game_type);
+                pool->release(ready.pending.state);
+            }
         }
     }
 
@@ -381,18 +462,27 @@ bool ContinuousSimulationRunner::expand_node_with_result(
     const std::vector<float>& policy,
     float value) {
 
+    // === PROFILING UPGRADE: Instrument node expansion phases ===
+
     // ✅ CRITICAL FIX: Check if already expanded (but don't claim yet)
     // We'll claim after allocating children to avoid race where threads see
     // expanded=true but num_children=0
-    NodeFlags flags = tree_.get_flags(leaf);
-    if (flags.is_expanded()) {
-        return false;  // Already expanded by another thread
+    {
+        PROFILE_SCOPE(ProfileMetric::NodeExpansionFlagCheck);
+        NodeFlags flags = tree_.get_flags(leaf);
+        if (flags.is_expanded()) {
+            return false;  // Already expanded by another thread
+        }
     }
 
     // Get legal moves
-    std::vector<int> legal_moves = state.getLegalMoves();
-    if (legal_moves.empty()) {
-        return false;
+    std::vector<int> legal_moves;
+    {
+        PROFILE_SCOPE(ProfileMetric::NodeExpansionLegalMoves);
+        legal_moves = state.getLegalMoves();
+        if (legal_moves.empty()) {
+            return false;
+        }
     }
 
     // Validate policy size
@@ -402,70 +492,90 @@ bool ContinuousSimulationRunner::expand_node_with_result(
     }
 
     // Mask and normalize policy
-    float policy_sum = 0.0f;
     thread_local std::vector<float> masked_policy_buffer;
-    masked_policy_buffer.resize(legal_moves.size());
+    {
+        PROFILE_SCOPE(ProfileMetric::NodeExpansionPolicyMask);
+
+        float policy_sum = 0.0f;
+        masked_policy_buffer.resize(legal_moves.size());
+        auto& masked_policy = masked_policy_buffer;
+
+        for (size_t i = 0; i < legal_moves.size(); ++i) {
+            int move = legal_moves[i];
+            if (move >= 0 && move < action_space_size) {
+                masked_policy[i] = policy[move];
+                policy_sum += policy[move];
+            } else {
+                masked_policy[i] = 0.0f;
+            }
+        }
+
+        // Normalize
+        {
+            PROFILE_SCOPE(ProfileMetric::NodeExpansionPolicyNormalize);
+            if (policy_sum > 0.0f) {
+                const float inv_sum = 1.0f / policy_sum;
+                for (float& p : masked_policy) {
+                    p *= inv_sum;
+                }
+            } else {
+                const float uniform_prob = 1.0f / static_cast<float>(legal_moves.size());
+                for (float& p : masked_policy) {
+                    p = uniform_prob;
+                }
+            }
+        }
+    }
+
     auto& masked_policy = masked_policy_buffer;
-
-    for (size_t i = 0; i < legal_moves.size(); ++i) {
-        int move = legal_moves[i];
-        if (move >= 0 && move < action_space_size) {
-            masked_policy[i] = policy[move];
-            policy_sum += policy[move];
-        } else {
-            masked_policy[i] = 0.0f;
-        }
-    }
-
-    // Normalize
-    if (policy_sum > 0.0f) {
-        const float inv_sum = 1.0f / policy_sum;
-        for (float& p : masked_policy) {
-            p *= inv_sum;
-        }
-    } else {
-        const float uniform_prob = 1.0f / static_cast<float>(legal_moves.size());
-        for (float& p : masked_policy) {
-            p = uniform_prob;
-        }
-    }
 
     // Allocate children
     uint16_t num_children = static_cast<uint16_t>(legal_moves.size());
-    NodeIndex first_child = tree_.allocate_nodes(num_children);
+    NodeIndex first_child;
+    {
+        PROFILE_SCOPE(ProfileMetric::NodeExpansionChildAlloc);
+        first_child = tree_.allocate_nodes(num_children);
 
-    if (first_child == NULL_NODE_INDEX) {
-        return false;  // Tree full
+        if (first_child == NULL_NODE_INDEX) {
+            return false;  // Tree full
+        }
     }
 
     // Initialize children
-    for (uint16_t i = 0; i < num_children; ++i) {
-        NodeIndex child_idx = first_child + i;
+    {
+        PROFILE_SCOPE(ProfileMetric::NodeExpansionChildInit);
 
-        tree_.set_prior_prob(child_idx, masked_policy[i]);
-        tree_.set_move(child_idx, static_cast<uint16_t>(legal_moves[i]));
-        tree_.set_parent_index(child_idx, leaf);
-        tree_.set_visit_count(child_idx, 0.0f);
-        tree_.set_total_value(child_idx, 0.0f);
-        tree_.set_virtual_loss(child_idx, 0.0f);
+        for (uint16_t i = 0; i < num_children; ++i) {
+            NodeIndex child_idx = first_child + i;
 
-        NodeFlags child_flags;
-        child_flags.set_current_player(state.getCurrentPlayer() == 1 ? 1 : 0);
-        tree_.set_flags(child_idx, child_flags);
+            tree_.set_prior_prob(child_idx, masked_policy[i]);
+            tree_.set_move(child_idx, static_cast<uint16_t>(legal_moves[i]));
+            tree_.set_parent_index(child_idx, leaf);
+            tree_.set_visit_count(child_idx, 0.0f);
+            tree_.set_total_value(child_idx, 0.0f);
+            tree_.set_virtual_loss(child_idx, 0.0f);
+
+            NodeFlags child_flags;
+            child_flags.set_current_player(state.getCurrentPlayer() == 1 ? 1 : 0);
+            tree_.set_flags(child_idx, child_flags);
+        }
+
+        // Update parent with children info
+        tree_.set_first_child_index(leaf, first_child);
+        tree_.set_num_children(leaf, num_children);
     }
-
-    // Update parent with children info
-    tree_.set_first_child_index(leaf, first_child);
-    tree_.set_num_children(leaf, num_children);
 
     // ✅ CRITICAL: Atomically set expanded flag AFTER children are ready
     // This ensures other threads see a fully initialized node
     // If another thread wins this race, we wasted some work but tree stays consistent
-    if (!tree_.atomic_try_set_expanded(leaf)) {
-        // Another thread set expanded flag - this is very rare but can happen
-        // Our allocated children will be orphaned, but tree remains valid
-        // This is acceptable vs. the alternative of exposing partially initialized nodes
-        return false;
+    {
+        PROFILE_SCOPE(ProfileMetric::NodeExpansionAtomicFlag);
+        if (!tree_.atomic_try_set_expanded(leaf)) {
+            // Another thread set expanded flag - this is very rare but can happen
+            // Our allocated children will be orphaned, but tree remains valid
+            // This is acceptable vs. the alternative of exposing partially initialized nodes
+            return false;
+        }
     }
 
     return true;
@@ -474,6 +584,9 @@ bool ContinuousSimulationRunner::expand_node_with_result(
 bool ContinuousSimulationRunner::ensure_root_expanded(IGameState& root_state,
                                                        NodeIndex root_index,
                                                        AsyncInferenceQueue& queue) {
+    // === PROFILING UPGRADE: Instrument root expansion ===
+    PROFILE_SCOPE(ProfileMetric::RootExpansionTotal);
+
     // Check if root is already expanded
     NodeFlags flags = tree_.get_flags(root_index);
     if (flags.is_expanded()) {
@@ -482,6 +595,8 @@ bool ContinuousSimulationRunner::ensure_root_expanded(IGameState& root_state,
 
     // Check if we can mark it for expansion atomically
     if (!tree_.atomic_try_mark_expanding(root_index)) {
+        PROFILE_SCOPE(ProfileMetric::RootExpansionAtomicRace);
+
         // Another thread is already expanding it, wait for completion
         while (!tree_.get_flags(root_index).is_expanded()) {
             std::this_thread::sleep_for(std::chrono::microseconds(100));
@@ -497,16 +612,19 @@ bool ContinuousSimulationRunner::ensure_root_expanded(IGameState& root_state,
         int num_feature_planes = root_state.get_num_feature_planes();
         int action_space_size = root_state.getActionSpaceSize();
 
-        // Pre-allocate features buffer
-        size_t features_size = num_feature_planes * board_size * board_size;
-        std::vector<float> features(features_size);
+        // T019: Clone root state for batch extraction with OpenMP
+        std::unique_ptr<IGameState> cloned_root;
+        {
+            PROFILE_SCOPE(ProfileMetric::RootExpansionClone);
+            {
+                PROFILE_SCOPE(ProfileMetric::StateCloneForRoot);
+                cloned_root = root_state.clone();
+            }
+        }
 
-        // Extract features to buffer (zero-allocation, ~10μs)
-        root_state.extract_features_to_buffer(features.data());
-
-        // Submit pre-extracted features (no clone!)
+        // Submit state for batch extraction (OpenMP parallelization in coordinator)
         uint64_t request_id = queue.submit_request(
-            std::move(features),
+            std::move(cloned_root),
             action_space_size,
             board_size,
             num_feature_planes,
@@ -516,19 +634,23 @@ bool ContinuousSimulationRunner::ensure_root_expanded(IGameState& root_state,
 
         // Wait for result (synchronous for root expansion only)
         std::optional<InferenceResult> result;
-        const auto start_time = std::chrono::steady_clock::now();
-        const auto timeout = std::chrono::seconds(5);  // 5 second timeout
+        {
+            PROFILE_SCOPE(ProfileMetric::RootExpansionWaitInference);
 
-        while (!result.has_value()) {
-            result = queue.try_get_result(request_id);
-            if (!result.has_value()) {
-                // Check timeout
-                auto elapsed = std::chrono::steady_clock::now() - start_time;
-                if (elapsed > timeout) {
-                    tree_.clear_expanding_flag(root_index);
-                    return false;  // Timeout
+            const auto start_time = std::chrono::steady_clock::now();
+            const auto timeout = std::chrono::seconds(5);  // 5 second timeout
+
+            while (!result.has_value()) {
+                result = queue.try_get_result(request_id);
+                if (!result.has_value()) {
+                    // Check timeout
+                    auto elapsed = std::chrono::steady_clock::now() - start_time;
+                    if (elapsed > timeout) {
+                        tree_.clear_expanding_flag(root_index);
+                        return false;  // Timeout
+                    }
+                    std::this_thread::sleep_for(std::chrono::microseconds(100));
                 }
-                std::this_thread::sleep_for(std::chrono::microseconds(100));
             }
         }
 
@@ -537,6 +659,8 @@ bool ContinuousSimulationRunner::ensure_root_expanded(IGameState& root_state,
         tree_.clear_expanding_flag(root_index);
 
         if (expanded) {
+            PROFILE_SCOPE(ProfileMetric::RootExpansionDirichlet);
+
             // Add Dirichlet noise for exploration (AlphaZero approach)
             // Use alpha=0.3 for Go-like games (can be made configurable later)
             add_dirichlet_noise(root_index, 0.3f);
@@ -680,7 +804,8 @@ NodeIndex ContinuousSimulationRunner::select_leaf_with_make_unmake(
         // The key difference: make_move returns undo token for O(1) restoration
         uint64_t undo_token;
         {
-            PROFILE_SCOPE(ProfileMetric::StateCloneTotal);  // Reuse profiling metric for comparison
+            PROFILE_SCOPE(ProfileMetric::SelectionMakeMove);
+            PROFILE_COUNTER(ProfileMetric::SelectionMakeMoveCount, 1);
             undo_token = current_state.make_move(move_index);
         }
 
@@ -745,7 +870,11 @@ void ContinuousSimulationRunner::unwind_path(
         #endif
 
         // Restore state via unmake_move (~15ns per call)
-        state.unmake_move(move, undo_token);
+        {
+            PROFILE_SCOPE(ProfileMetric::SelectionUnmakeMove);
+            PROFILE_COUNTER(ProfileMetric::SelectionUnmakeMoveCount, 1);
+            state.unmake_move(move, undo_token);
+        }
 
         // CRITICAL DEBUG VALIDATION: Verify state changed after unmake
         #ifndef NDEBUG
