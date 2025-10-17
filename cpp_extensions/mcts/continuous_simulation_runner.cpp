@@ -10,10 +10,11 @@
 #include "dlpack_bridge.hpp"
 #include "profiling/enhanced_profiler.hpp"
 #include "../utils/igamestate.h"
-#include <algorithm>
+#include <algorithm>  // for std::reverse, std::find
 #include <thread>
 #include <chrono>
 #include <random>
+#include <string>     // for std::to_string (debug assertions)
 
 using namespace mcts::profiling;
 
@@ -642,6 +643,32 @@ NodeIndex ContinuousSimulationRunner::select_leaf_with_make_unmake(
         // Get the move that led to this child
         uint16_t move_index = tree_.get_move(result.selected_child);
 
+        // CRITICAL DEBUG VALIDATION (T024f-6): Verify move is legal
+        // This catches state/tree desynchronization bugs immediately
+        #ifndef NDEBUG
+        {
+            std::vector<int> current_legal = current_state.getLegalMoves();
+            int current_player = current_state.getCurrentPlayer();
+            bool move_is_legal = std::find(current_legal.begin(), current_legal.end(),
+                                           static_cast<int>(move_index)) != current_legal.end();
+
+            if (!move_is_legal) {
+                std::string error_msg =
+                    "CRITICAL BUG in select_leaf_with_make_unmake: Tree contains illegal move!\n"
+                    "  Move index: " + std::to_string(move_index) + "\n"
+                    "  Current player: " + std::to_string(current_player) + "\n"
+                    "  Current depth: " + std::to_string(depth) + "\n"
+                    "  Parent node: " + std::to_string(current) + "\n"
+                    "  Child node: " + std::to_string(result.selected_child) + "\n"
+                    "  Legal moves count: " + std::to_string(current_legal.size()) + "\n"
+                    "  State hash: " + std::to_string(current_state.zobrist_hash()) + "\n"
+                    "This indicates state/tree desync - moves in tree were legal at expansion "
+                    "but are illegal now. Check make/unmake implementation!";
+                throw std::runtime_error(error_msg);
+            }
+        }
+        #endif
+
         // Apply virtual loss to the selected child
         {
             PROFILE_SCOPE(ProfileMetric::VirtualLossApply);
@@ -691,6 +718,18 @@ void ContinuousSimulationRunner::unwind_path(
         return;
     }
 
+    // CRITICAL DEBUG VALIDATION: Verify undo_tokens size matches path
+    #ifndef NDEBUG
+    if (undo_tokens.size() != path.size() - 1) {
+        throw std::runtime_error(
+            "CRITICAL BUG in unwind_path: Size mismatch!\n"
+            "  Path size: " + std::to_string(path.size()) + "\n"
+            "  Undo tokens size: " + std::to_string(undo_tokens.size()) + "\n"
+            "  Expected: " + std::to_string(path.size() - 1) + " undo tokens\n"
+            "This indicates incorrect undo token collection during selection!");
+    }
+    #endif
+
     // Iterate backwards from leaf to root (skip root at index 0)
     for (int i = static_cast<int>(path.size()) - 1; i > 0; --i) {
         // Get the move that led to this node
@@ -699,8 +738,36 @@ void ContinuousSimulationRunner::unwind_path(
         // Get corresponding undo token (undo_tokens is 0-indexed)
         uint64_t undo_token = undo_tokens[i - 1];
 
+        // CRITICAL DEBUG VALIDATION: Store state before unmake for verification
+        #ifndef NDEBUG
+        uint64_t hash_before_unmake = state.zobrist_hash();
+        int player_before_unmake = state.getCurrentPlayer();
+        #endif
+
         // Restore state via unmake_move (~15ns per call)
         state.unmake_move(move, undo_token);
+
+        // CRITICAL DEBUG VALIDATION: Verify state changed after unmake
+        #ifndef NDEBUG
+        uint64_t hash_after_unmake = state.zobrist_hash();
+        int player_after_unmake = state.getCurrentPlayer();
+
+        if (hash_after_unmake == hash_before_unmake) {
+            throw std::runtime_error(
+                "CRITICAL BUG in unwind_path: unmake_move did not change state!\n"
+                "  Move: " + std::to_string(move) + "\n"
+                "  Undo token: " + std::to_string(undo_token) + "\n"
+                "  Path index: " + std::to_string(i) + "\n"
+                "  Hash unchanged: " + std::to_string(hash_after_unmake) + "\n"
+                "This indicates unmake_move is not working correctly!");
+        }
+
+        // Player should flip after unmake (unless game state is weird)
+        if (player_after_unmake == player_before_unmake) {
+            // This might be OK for some games, just log warning
+            // Don't throw, but this is suspicious
+        }
+        #endif
     }
 
     // State is now restored to root position
