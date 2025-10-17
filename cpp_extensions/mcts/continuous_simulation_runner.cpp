@@ -8,11 +8,14 @@
 #include "thread_affinity.hpp"
 #include "state_pool.hpp"
 #include "dlpack_bridge.hpp"
+#include "profiling/enhanced_profiler.hpp"
 #include "../utils/igamestate.h"
 #include <algorithm>
 #include <thread>
 #include <chrono>
 #include <random>
+
+using namespace mcts::profiling;
 
 namespace mcts {
 
@@ -97,29 +100,39 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
         }
     };
 
+    // T024f-6: Thread-local persistent state (zero-copy MCTS)
+    // Each thread maintains one state, modified via make_move() and restored via unmake_move()
+    // This eliminates copyFrom() cloning (418μs → ~15ns per move)
+    static thread_local ThreadLocalState tls;
+    tls.ensure_initialized(root_state);  // Clone once per thread (amortized cost)
+
     // Continuous loop until quota reached
     while (completed < num_simulations) {
         bool waiting_for_leaf = false;
 
         // Phase 1: Select to leaf and submit inference (NON-BLOCKING)
         if (submitted < num_simulations) {
-            // Acquire state from pool (zero-allocation, O(1))
-            alphazero::core::IGameState* pooled_state = state_pool->acquire();
-            pooled_state->copyFrom(root_state);
+            // T024f-6: Use thread-local state with make/unmake (ZERO cloning)
+            // State is already at root from previous unwind (or initial clone)
+            tls.undo_tokens.clear();
 
             // Clear and reuse path buffer
             path_buffer_.clear();
 
-            // Select to leaf
-            NodeIndex leaf = select_leaf(root_index, *pooled_state, path_buffer_);
+            // Select to leaf using make_move pattern (collects undo tokens)
+            NodeIndex leaf = select_leaf_with_make_unmake(
+                root_index, *tls.state, path_buffer_, tls.undo_tokens);
 
             // Check if terminal
-            if (pooled_state->isTerminal()) {
+            if (tls.state->isTerminal()) {
                 // Terminal node - backup immediately, no inference needed
-                float value = get_terminal_value(*pooled_state);
+                float value = get_terminal_value(*tls.state);
                 std::reverse(path_buffer_.begin(), path_buffer_.end());
                 backup_value(path_buffer_, value);
-                state_pool->release(pooled_state);  // Return to pool
+
+                // T024f-6: Restore state to root via unmake_move
+                unwind_path(*tls.state, path_buffer_, tls.undo_tokens);
+
                 completed++;
                 submitted++;
                 continue;
@@ -131,7 +144,10 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
                 // Track expansion conflicts (busy-edge prevented duplicate expansion)
                 Instrumentation::instance().increment_counter(InstrumentationMetric::ExpansionConflict);
                 release_virtual_loss(path_buffer_);
-                state_pool->release(pooled_state);  // Return to pool
+
+                // T024f-6: Restore state to root before continuing
+                unwind_path(*tls.state, path_buffer_, tls.undo_tokens);
+
                 waiting_for_leaf = true;
                 submission_ready = false;
             }
@@ -143,25 +159,25 @@ int ContinuousSimulationRunner::run_continuous(IGameState& root_state,
             int num_feature_planes = 0;
 
             if (submission_ready) {
-                // Acquire pool state for pending expansion (long-lived, zero-allocation)
+                // T024f-6: Copy thread-local state to pending (1 copyFrom instead of 2)
+                // This state persists until expansion completes (async inference)
                 pending_state = state_pool->acquire();
-                pending_state->copyFrom(*pooled_state);
+                pending_state->copyFrom(*tls.state);
 
-                // T018g OPTIMIZATION: Extract features in C++ (eliminates queue clone!)
-                // This replaces 418μs clone with ~10μs feature extraction
-                board_size = pooled_state->getBoardSize();
-                num_feature_planes = pooled_state->get_num_feature_planes();
-                action_space_size = pooled_state->getActionSpaceSize();
+                // Extract features in C++ (eliminates queue clone)
+                board_size = tls.state->getBoardSize();
+                num_feature_planes = tls.state->get_num_feature_planes();
+                action_space_size = tls.state->getActionSpaceSize();
 
                 // Pre-allocate features buffer
                 size_t features_size = num_feature_planes * board_size * board_size;
                 features.resize(features_size);
 
                 // Extract features to buffer (zero-allocation, ~10μs)
-                pooled_state->extract_features_to_buffer(features.data());
+                tls.state->extract_features_to_buffer(features.data());
 
-                // Release pooled_state immediately (features extracted, no longer needed)
-                state_pool->release(pooled_state);
+                // T024f-6: Restore thread-local state to root (ready for next simulation)
+                unwind_path(*tls.state, path_buffer_, tls.undo_tokens);
             }
 
             if (submission_ready) {
@@ -576,6 +592,119 @@ void ContinuousSimulationRunner::add_dirichlet_noise(NodeIndex root_index, float
         float mixed_prior = (1.0f - epsilon) * original_prior + epsilon * noise[i];
         tree_.set_prior_prob(child, mixed_prior);
     }
+}
+
+// T024f-6: Zero-Copy MCTS Implementation
+// Replace state pooling (copyFrom) with make/unmake pattern
+
+NodeIndex ContinuousSimulationRunner::select_leaf_with_make_unmake(
+    NodeIndex root,
+    IGameState& current_state,
+    std::vector<NodeIndex>& path,
+    std::vector<uint64_t>& undo_tokens) {
+
+    ScopedMetric metric(InstrumentationMetric::Selection);
+    PROFILE_SCOPE(ProfileMetric::SelectionTreeTraversal);
+
+    // Clear path and undo tokens, start from root
+    path.clear();
+    path.push_back(root);
+    undo_tokens.clear();
+
+    NodeIndex current = root;
+    int depth = 0;
+
+    // Traverse tree using PUCT until reaching a leaf (unexpanded or terminal)
+    while (true) {
+        // Check if current node is terminal
+        if (current_state.isTerminal()) {
+            break;  // Reached terminal node
+        }
+
+        // Check if current node is expanded
+        NodeFlags flags = tree_.get_flags(current);
+        if (!flags.is_expanded()) {
+            break;  // Reached unexpanded leaf
+        }
+
+        // Node is expanded - select best child using PUCT
+        SelectionResult result;
+        {
+            PROFILE_SCOPE(ProfileMetric::SelectionPUCT);
+            result = selector_.select_child(tree_, current);
+        }
+
+        if (!result.valid || result.selected_child == NULL_NODE_INDEX) {
+            // No valid child found (shouldn't happen if expanded)
+            break;
+        }
+
+        // Get the move that led to this child
+        uint16_t move_index = tree_.get_move(result.selected_child);
+
+        // Apply virtual loss to the selected child
+        {
+            PROFILE_SCOPE(ProfileMetric::VirtualLossApply);
+            virtual_loss_.apply_virtual_loss(result.selected_child);
+        }
+
+        // T024f-6: Apply move via make_move (returns undo token, ~15ns)
+        // This replaces makeMove() which internally calls apply_move_inplace
+        // The key difference: make_move returns undo token for O(1) restoration
+        uint64_t undo_token;
+        {
+            PROFILE_SCOPE(ProfileMetric::StateCloneTotal);  // Reuse profiling metric for comparison
+            undo_token = current_state.make_move(move_index);
+        }
+
+        // Store undo token for later unwinding
+        undo_tokens.push_back(undo_token);
+
+        // Move to the selected child
+        current = result.selected_child;
+        path.push_back(current);
+        depth++;
+    }
+
+    // Track selection depth
+    PROFILE_GAUGE(ProfileMetric::SelectionDepth, depth);
+
+    return current;
+}
+
+void ContinuousSimulationRunner::unwind_path(
+    IGameState& state,
+    const std::vector<NodeIndex>& path,
+    const std::vector<uint64_t>& undo_tokens) {
+
+    PROFILE_SCOPE(ProfileMetric::StateCloneTotal);  // Reuse for comparison with old approach
+
+    // Unwind moves in reverse order
+    // path has N elements (root + N-1 moves)
+    // undo_tokens has N-1 elements (one per move, excluding root)
+    //
+    // Example: path = [root, child1, child2], undo_tokens = [token1, token2]
+    // Unwind: unmake(move2, token2), unmake(move1, token1)
+
+    if (path.size() <= 1) {
+        // No moves to unwind (already at root or empty path)
+        return;
+    }
+
+    // Iterate backwards from leaf to root (skip root at index 0)
+    for (int i = static_cast<int>(path.size()) - 1; i > 0; --i) {
+        // Get the move that led to this node
+        uint16_t move = tree_.get_move(path[i]);
+
+        // Get corresponding undo token (undo_tokens is 0-indexed)
+        uint64_t undo_token = undo_tokens[i - 1];
+
+        // Restore state via unmake_move (~15ns per call)
+        state.unmake_move(move, undo_token);
+    }
+
+    // State is now restored to root position
+    // Ready for next simulation (zero cloning needed!)
 }
 
 } // namespace mcts

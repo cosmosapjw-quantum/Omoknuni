@@ -234,6 +234,38 @@ private:
     void add_dirichlet_noise(NodeIndex root_index, float alpha);
 
     /**
+     * @brief Select to leaf using make_move pattern (T024f-6)
+     *
+     * Enhanced version of select_leaf that uses make_move() instead of makeMove(),
+     * collecting undo tokens for efficient state restoration via unmake_move().
+     * This eliminates the need for state cloning (418μs → ~15ns per move).
+     *
+     * @param root Root node index to start selection
+     * @param current_state Game state (modified via make_move, 0 allocations)
+     * @param path Output vector of node indices from root to leaf
+     * @param undo_tokens Output vector of undo tokens for each move (parallel to path)
+     * @return Index of selected leaf node
+     */
+    NodeIndex select_leaf_with_make_unmake(NodeIndex root,
+                                             IGameState& current_state,
+                                             std::vector<NodeIndex>& path,
+                                             std::vector<uint64_t>& undo_tokens);
+
+    /**
+     * @brief Restore state to root via unmake_move (T024f-6)
+     *
+     * Unwinds the path by calling unmake_move() in reverse order,
+     * restoring the state to the root position. Each unmake takes ~15ns.
+     *
+     * @param state Game state at leaf (will be restored to root)
+     * @param path Node indices from root to leaf (from select_leaf)
+     * @param undo_tokens Undo tokens collected during selection
+     */
+    void unwind_path(IGameState& state,
+                     const std::vector<NodeIndex>& path,
+                     const std::vector<uint64_t>& undo_tokens);
+
+    /**
      * @brief Fixed-size ring buffer for pending expansions
      *
      * Replaces std::unordered_map with O(1) direct indexing using
@@ -255,6 +287,29 @@ private:
 
     std::array<PendingSlot, PENDING_BUFFER_CAPACITY> pending_buffer_;
     std::atomic<size_t> pending_count_{0};  // Track number of pending items
+
+    /**
+     * @brief Thread-local state for zero-copy MCTS (T024f-6)
+     *
+     * Each worker thread maintains a persistent game state that is reused
+     * across simulations. State is modified via make_move() during selection
+     * and restored via unmake_move() after backup, eliminating the need for
+     * expensive state cloning (418μs → ~15ns per move).
+     */
+    struct ThreadLocalState {
+        std::unique_ptr<IGameState> state;      // Persistent state (initialized once)
+        std::vector<uint64_t> undo_tokens;      // Undo tokens for current path
+        bool initialized = false;                // Initialization flag
+
+        // Initialize state on first use (clone root once per thread)
+        void ensure_initialized(const IGameState& root) {
+            if (!initialized) {
+                state = root.clone();
+                undo_tokens.reserve(256);  // Typical max MCTS depth
+                initialized = true;
+            }
+        }
+    };
 };
 
 } // namespace mcts
