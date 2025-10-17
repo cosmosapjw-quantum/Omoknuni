@@ -111,10 +111,6 @@ class UnifiedProfiler:
         print(f"MCTS WORKLOAD ({self.args.simulations} simulations)")
         print("="*60)
 
-        # DEBUG: Print runner_type and its attributes
-        print(f"🔍 DEBUG: args.runner_type = '{self.args.runner_type}' (type: {type(self.args.runner_type)})")
-        print(f"🔍 DEBUG: hasattr(args, 'runner_type') = {hasattr(self.args, 'runner_type')}")
-
         # Create game state using C++ binding
         state = alphazero_py.GomokuState(board_size=15)
         action_space_size = state.get_action_space_size()
@@ -127,15 +123,9 @@ class UnifiedProfiler:
         vl_manager = mcts_py.create_test_virtual_loss_manager(self.tree)
         print(f"✅ Created MCTS components (100k node capacity)")
 
-        print(f"🔍 DEBUG: Checking runner_type...")
-        print(f"🔍 DEBUG: runner_type == 'simulation': {self.args.runner_type == 'simulation'}")
-        print(f"🔍 DEBUG: runner_type == 'continuous': {self.args.runner_type == 'continuous'}")
-
         if self.args.runner_type == "simulation":
-            print(f"🔍 DEBUG: Taking SIMULATION runner path")
             self._run_simulation_runner(state, action_space_size, selector, backup, vl_manager)
         elif self.args.runner_type == "continuous":
-            print(f"🔍 DEBUG: Taking CONTINUOUS runner path")
             self._run_continuous_runner(state, action_space_size, selector, backup, vl_manager)
         else:
             raise ValueError(f"Unknown runner_type: {self.args.runner_type}")
