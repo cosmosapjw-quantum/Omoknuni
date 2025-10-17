@@ -1399,8 +1399,12 @@ void GomokuState::unmake_move(uint16_t move, uint64_t undo_token) {
 
     // Restore cached values (avoid expensive recomputation)
     cached_winner_.store(prev_cached_winner, std::memory_order_relaxed);
-    hash_dirty_.store(prev_hash_dirty, std::memory_order_relaxed);
     winner_check_dirty_.store(prev_winner_dirty, std::memory_order_relaxed);
+
+    // CRITICAL FIX (T024f-6): Always invalidate hash after unmake
+    // The cached hash value is for the POST-move state, not the PRE-move state
+    // We must force recomputation to get the correct hash for the restored state
+    hash_dirty_.store(true, std::memory_order_relaxed);
 
     // Mark other caches as dirty (conservative approach)
     valid_moves_dirty_.store(true, std::memory_order_release);
