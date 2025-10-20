@@ -18,22 +18,19 @@ This is a high-performance AlphaZero-style reinforcement learning engine targeti
 - **CPU**: Shared-tree MCTS with 2-4 threads using Structure-of-Arrays memory layout (optimal efficiency)
 - **GPU**: Asynchronous micro-batched neural network inference (batch size 64, 0.5-1.0ms timeout)
 - **Target Hardware**: AMD Ryzen 9 5900X (12C/24T, dual-CCD) + NVIDIA RTX 3060 Ti (8GB VRAM, Ampere)
-- **Current Performance**: 2,659 sims/sec (measured mean, profiling campaign profiling_suite_20251016_124134, 560 trials, 100% capture)
+- **Current Performance**: 120.4 sims/sec (measured mean, profiling campaign profiling_suite_20251017_191046, 560 trials, 100% capture)
 - **Performance Goals**: ≥8,000 sims/sec, 80% GPU utilization, <1GB tree memory, 200-300 games/hour self-play
-- **Bottleneck** (PROFILING-VALIDATED 2025-10-16): State cloning (86.6% of time) due to 223 allocations per clone
-- **Spec 004 Status**: Profiling complete ✅, Ready for Priority #1 fix (state pooling) 🔴
-- **Validation Results (2025-10-16 - 560-TRIAL PROFILING CAMPAIGN)**:
-  - 🔴 **PRIMARY BOTTLENECK**: State cloning = 86.6% of execution time (418μs per clone vs 20μs target)
-  - 🔴 **ROOT CAUSE**: 223 allocations per clone (~2μs each = 446μs allocation overhead)
-  - ⚠️ **OpenMP**: NOT ACTIVE (0/560 trials) - explains flat thread scaling
-  - ⚠️ **Thread efficiency**: 12.7% @ 8 threads (vs target ≥60%)
-  - ✅ **GPU utilization**: ~70% (not the bottleneck - only 2.1% of time)
-  - ✅ **FP16**: Working correctly (1.72× speedup validated)
+- **Bottleneck** (PROFILING-VALIDATED 2025-10-18): Coordinator blocking (99.6% of time) with three sub-issues:
+  1. **State Cloning** (86.6% contribution): 418μs per clone due to 223 allocations
+  2. **Python Tensor Creation** (37ms per batch): Multiple memory copies C++→Python→GPU
+  3. **Broken OpenMP** (0% success rate): Feature extraction runs serially
+- **Optimization Plan**: [MCTS_OPTIMIZATION_MASTER_PLAN.md](MCTS_OPTIMIZATION_MASTER_PLAN.md) 🔴 **ACTIVE**
 - **Optimization Priorities** (profiling-grounded):
-  1. **State pooling (T018)**: Expected 3.7× gain → 9,838 sims/sec ✅ **Exceeds 8k target ALONE**
-  2. **Fix OpenMP (T019)**: Optional 1.5-2.0× additional → 14,757-19,676 sims/sec
-  3. **Reduce allocations (T020)**: Optional 1.2-1.5× additional → 17,708-29,514 sims/sec
-- **Full Analysis**: [FINAL_PROFILING_ANALYSIS_20251016.md](FINAL_PROFILING_ANALYSIS_20251016.md)
+  1. **Phase 1: Eliminate State Cloning**: Expected 10-25× gain → 1,500-3,000 sims/sec
+  2. **Phase 2: Fix Tensor + OpenMP**: Expected 58-75× total gain → 7,000-9,000 sims/sec ✅ **TARGET**
+  3. **Phase 3: Parallel Coordinators** (optional): Expected 100-166× gain → 12,000-20,000 sims/sec 🎯
+- **Full Analysis**: [COMPREHENSIVE_PROFILING_ANALYSIS_20251018.md](COMPREHENSIVE_PROFILING_ANALYSIS_20251018.md)
+- **Quick Start**: [OPTIMIZATION_README.md](OPTIMIZATION_README.md)
 
 ## Architecture Overview
 
@@ -237,9 +234,18 @@ specs/                   # Specification-driven development
 
 This project uses the `.specify/` framework for feature development:
 
-- `/specify` - Create new feature specifications from natural language
-- `/plan` - Transform specifications into implementation plans
-- `/tasks` - Generate detailed task breakdowns for execution
+- `/speckit.specify` - Create new feature specifications from natural language
+- `/speckit.plan` - Transform specifications into implementation plans
+- `/speckit.tasks` - Generate detailed task breakdowns for execution
+- `/speckit.constitution` - Update project constitution (engineering principles)
+
+**Project Constitution**: All development MUST adhere to principles defined in `.specify/memory/constitution.md`:
+- **Zero-Copy First** (NON-NEGOTIABLE): No state cloning in hot paths
+- **Coordinator Efficiency** (NON-NEGOTIABLE): Condition variables, pre-allocated buffers
+- **Python-C++ Boundary Discipline**: Minimal crossings, pinned memory, non-blocking GPU
+- **Threading Saturation**: 8-12 threads, OpenMP verified, <1% lock contention
+- **Legacy Code Discipline**: Focus on `continuous_simulation_runner.*`, not deprecated files
+- **Evidence-Based Gates** (NON-NEGOTIABLE): Profiling validation (100+ trials) for every phase
 
 Implementation follows Test-Driven Development with contract tests that must fail initially before implementation.
 
