@@ -232,6 +232,12 @@ class DLPackInferenceBridge:
         # Will be lazily created on first inference (when we know game dimensions)
         self.buffer_pool: Optional[GPUBufferPool] = None
 
+        # T042-T043: Pre-allocated pinned memory buffers for Phase 2 optimization
+        self.pinned_buffer = None  # Lazy init when dimensions known
+        self.gpu_buffer = None      # Lazy init when dimensions known
+        self.max_batch_size = 64    # Default max batch size
+        self.buffer_initialized = False
+
         # T008d: Initialize CUDA stream pool for non-blocking transfers
         self.stream_pool = []
         self.stream_index = 0
@@ -291,23 +297,72 @@ class DLPackInferenceBridge:
         batch_size = len(features_batch)
 
         try:
-            # Reshape flat features into (C, H, W) tensors
-            tensors = []
-            for i in range(batch_size):
-                features = features_batch[i]
-                planes = num_planes_list[i]
-                board_size = board_sizes[i]
+            # T042-T043: Lazy initialization of pinned memory buffers
+            # Initialize on first call when we know the tensor dimensions
+            if not self.buffer_initialized and self.device.type == 'cuda':
+                # Use first batch to determine dimensions
+                max_planes = max(num_planes_list)
+                max_board_size = max(board_sizes)
 
-                # Reshape from flat vector to (C, H, W)
-                tensor = torch.tensor(features, dtype=torch.float32)
-                tensor = tensor.reshape(planes, board_size, board_size)
-                tensors.append(tensor)
+                # Pre-allocate pinned CPU buffer (T042)
+                self.pinned_buffer = torch.zeros(
+                    (self.max_batch_size, max_planes, max_board_size, max_board_size),
+                    dtype=torch.float32,
+                    pin_memory=True
+                )
 
-            # Stack into batch tensor (N, C, H, W)
-            batch_tensor = torch.stack(tensors)
+                # Pre-allocate GPU buffer (T043)
+                self.gpu_buffer = torch.zeros(
+                    (self.max_batch_size, max_planes, max_board_size, max_board_size),
+                    dtype=torch.float32,
+                    device=self.device
+                )
 
-            # Transfer to GPU if needed
-            features_gpu = batch_tensor.to(self.device, non_blocking=True)
+                # T047: Verify pinned memory
+                assert self.pinned_buffer.is_pinned(), "Pinned buffer allocation failed"
+
+                self.buffer_initialized = True
+                self.logger.info(
+                    f"Initialized pinned memory buffers: "
+                    f"max_batch={self.max_batch_size}, planes={max_planes}, "
+                    f"board={max_board_size}×{max_board_size}"
+                )
+
+            # T045-T046: Use pinned memory for fast H2D transfer
+            if self.buffer_initialized and batch_size <= self.max_batch_size:
+                # Copy features into pinned buffer slice
+                for i in range(batch_size):
+                    features = features_batch[i]
+                    planes = num_planes_list[i]
+                    board_size = board_sizes[i]
+
+                    # Copy flat features into pinned buffer
+                    # TODO: Could optimize this further with memcpy
+                    tensor_view = torch.tensor(features, dtype=torch.float32)
+                    tensor_view = tensor_view.reshape(planes, board_size, board_size)
+                    self.pinned_buffer[i, :planes, :board_size, :board_size].copy_(tensor_view)
+
+                # T046: Non-blocking async transfer to GPU
+                stream = self.stream_pool[self.stream_index] if self.stream_pool else None
+                self.stream_index = (self.stream_index + 1) % len(self.stream_pool) if self.stream_pool else 0
+
+                if stream:
+                    with torch.cuda.stream(stream):
+                        self.gpu_buffer[:batch_size].copy_(self.pinned_buffer[:batch_size], non_blocking=True)
+                        features_gpu = self.gpu_buffer[:batch_size]
+                else:
+                    features_gpu = self.pinned_buffer[:batch_size].to(self.device, non_blocking=True)
+            else:
+                # Fallback for oversized batches or CPU device
+                tensors = []
+                for i in range(batch_size):
+                    features = features_batch[i]
+                    planes = num_planes_list[i]
+                    board_size = board_sizes[i]
+                    tensor = torch.tensor(features, dtype=torch.float32).reshape(planes, board_size, board_size)
+                    tensors.append(tensor)
+                batch_tensor = torch.stack(tensors)
+                features_gpu = batch_tensor.to(self.device, non_blocking=True)
 
             # Run inference with mixed precision if enabled
             with torch.no_grad():

@@ -91,6 +91,23 @@ std::shared_ptr<BackupManager> create_backup_manager(
 PYBIND11_MODULE(mcts_py, m) {
     m.doc() = "MCTS Tree and Virtual Loss Python bindings";
 
+    // T039: OpenMP thread count reporting for Phase 2 validation
+    m.def("get_openmp_threads", []() -> int {
+        #ifdef _OPENMP
+            return omp_get_max_threads();
+        #else
+            return 1;  // No OpenMP support
+        #endif
+    }, "Get maximum number of OpenMP threads available");
+
+    m.def("get_openmp_enabled", []() -> bool {
+        #ifdef _OPENMP
+            return true;
+        #else
+            return false;
+        #endif
+    }, "Check if OpenMP support is compiled in");
+
     // Node index type
     m.attr("NULL_NODE_INDEX") = NULL_NODE_INDEX;
 

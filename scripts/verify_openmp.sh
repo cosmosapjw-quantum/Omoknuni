@@ -1,92 +1,83 @@
 #!/bin/bash
-# Verification script for OpenMP linkage
-# Purpose: Verify OpenMP is correctly linked to mcts_py shared library
-# Expected: libomp.so or libgomp.so linked, runtime thread count >1
+# T040: OpenMP verification script for Phase 2
+# Verifies that OpenMP is properly linked and functional
 
-set -e
+set -e  # Exit on error
 
-echo "=== OpenMP Linkage Verification ==="
+echo "============================================================"
+echo "OPENMP VERIFICATION"
+echo "============================================================"
 echo ""
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
-
-# Find mcts_py shared library
-MCTS_LIB=$(find build/lib.* -name "mcts_py*.so" 2>/dev/null | head -1)
-
+# Check if mcts_py library exists
+MCTS_LIB=$(find build -name "mcts_py*.so" 2>/dev/null | head -1)
 if [ -z "$MCTS_LIB" ]; then
-    echo "❌ mcts_py shared library not found in build/lib.*/"
-    echo "   Build the extension first: pip install -e . --config-settings build-dir=build"
+    echo "❌ ERROR: mcts_py libContinue with Phase 2 (OpenMP + Tensor Pipeline)rary not found in build/"
+    echo "   Run: python -m pip install -e . --force-reinstall --no-deps"
     exit 1
 fi
 
-echo "Found library: $MCTS_LIB"
+echo "✅ Found mcts_py library: $MCTS_LIB"
 echo ""
 
-# Check linkage with ldd
-echo "Checking library dependencies..."
-OPENMP_LINKED=$(ldd "$MCTS_LIB" | grep -i "omp" || echo "")
-
-if [ -z "$OPENMP_LINKED" ]; then
-    echo "❌ OpenMP not linked to $MCTS_LIB"
-    echo ""
-    echo "Fix required:"
-    echo "  1. Verify CMakeLists.txt contains:"
-    echo "     target_link_libraries(mcts_py PRIVATE OpenMP::OpenMP_CXX)"
-    echo "  2. Rebuild: pip install -e . --force-reinstall --no-deps"
-    echo "  3. Re-run this verification script"
-    exit 1
+# Check if OpenMP is linked
+echo "Checking OpenMP linkage..."
+if ldd "$MCTS_LIB" | grep -qi "gomp\|omp"; then
+    OMP_LIB=$(ldd "$MCTS_LIB" | grep -i "gomp\|omp")
+    echo "✅ OpenMP linked: $OMP_LIB"
 else
-    echo "✅ OpenMP linked successfully:"
-    echo "   $OPENMP_LINKED"
+    echo "❌ ERROR: OpenMP not linked to mcts_py"
+    echo "   Check CMakeLists.txt for OpenMP::OpenMP_CXX"
+    exit 1
 fi
-
 echo ""
 
-# Check runtime thread count (requires Python venv)
-if [ ! -d "venv" ]; then
-    echo "⚠️  Virtual environment not found, skipping runtime check"
-    echo "✅ Static linkage verified"
-    exit 0
-fi
-
-echo "Checking runtime OpenMP configuration..."
-source venv/bin/activate 2>/dev/null || true
-
-PYTHON_CHECK=$(python -c "
-import mcts_py
+# Test Python import and OpenMP runtime
+echo "Testing OpenMP runtime from Python..."
+python3 << 'PYTHON'
+import sys
 try:
-    # Try to get OpenMP thread count if exposed
-    if hasattr(mcts_py, 'get_openmp_threads'):
-        count = mcts_py.get_openmp_threads()
-        print(f'OpenMP threads: {count}')
-        if count > 1:
-            print('RUNTIME_OK')
+    import mcts_py
+    
+    # Check if OpenMP is enabled
+    if hasattr(mcts_py, 'get_openmp_enabled'):
+        enabled = mcts_py.get_openmp_enabled()
+        if enabled:
+            print("✅ OpenMP support compiled in")
         else:
-            print('RUNTIME_FAIL')
+            print("❌ OpenMP support NOT compiled in")
+            sys.exit(1)
     else:
-        print('get_openmp_threads() not exposed (non-critical)')
-        print('RUNTIME_SKIP')
+        print("⚠️  Warning: get_openmp_enabled() not available (old build?)")
+    
+    # Check thread count
+    if hasattr(mcts_py, 'get_openmp_threads'):
+        threads = mcts_py.get_openmp_threads()
+        print(f"✅ OpenMP max threads: {threads}")
+        if threads < 2:
+            print(f"⚠️  Warning: Only {threads} OpenMP thread(s) available")
+            print("   Set OMP_NUM_THREADS environment variable for more threads")
+    else:
+        print("⚠️  Warning: get_openmp_threads() not available (old build?)")
+    
+except ImportError as e:
+    print(f"❌ ERROR: Failed to import mcts_py: {e}")
+    sys.exit(1)
 except Exception as e:
-    print(f'Runtime check failed: {e}')
-    print('RUNTIME_SKIP')
-" 2>&1)
+    print(f"❌ ERROR: {e}")
+    sys.exit(1)
+PYTHON
 
-echo "$PYTHON_CHECK"
-echo ""
-
-if echo "$PYTHON_CHECK" | grep -q "RUNTIME_OK"; then
-    echo "✅ Runtime OpenMP thread count >1 (verified)"
-elif echo "$PYTHON_CHECK" | grep -q "RUNTIME_FAIL"; then
-    echo "⚠️  Runtime OpenMP thread count ≤1"
-    echo "   Set OMP_NUM_THREADS environment variable:"
-    echo "   export OMP_NUM_THREADS=8"
-elif echo "$PYTHON_CHECK" | grep -q "RUNTIME_SKIP"; then
-    echo "⚠️  Runtime check skipped (API not exposed yet)"
+if [ $? -eq 0 ]; then
+    echo ""
+    echo "============================================================"
+    echo "✅ OPENMP VERIFICATION PASSED"
+    echo "============================================================"
+    exit 0
+else
+    echo ""
+    echo "============================================================"
+    echo "❌ OPENMP VERIFICATION FAILED"
+    echo "============================================================"
+    exit 1
 fi
-
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "✅ OpenMP linkage verified"
-echo "✅ Phase 2A constitution principle IV satisfied"
-exit 0
