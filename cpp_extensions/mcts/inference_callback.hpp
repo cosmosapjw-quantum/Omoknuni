@@ -180,13 +180,16 @@ public:
         py::gil_scoped_acquire gil;
 
         try {
-            // Convert C++ vectors to Python lists
+            // OPTIMIZATION: Use numpy arrays instead of Python lists (zero-copy via buffer protocol)
             py::list py_features;
             py::list py_board_sizes;
             py::list py_num_planes;
 
+            // Convert features to numpy arrays (zero-copy view of C++ vector data)
             for (const auto& features : features_batch) {
-                py_features.append(py::cast(features));
+                // Create numpy array from C++ vector using buffer protocol (zero-copy!)
+                py::array_t<float> np_array(features.size(), features.data());
+                py_features.append(np_array);
             }
             for (int size : board_sizes) {
                 py_board_sizes.append(size);

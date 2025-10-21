@@ -330,17 +330,21 @@ class DLPackInferenceBridge:
 
             # T045-T046: Use pinned memory for fast H2D transfer
             if self.buffer_initialized and batch_size <= self.max_batch_size:
-                # Copy features into pinned buffer slice
+                # OPTIMIZATION: Features now arrive as numpy arrays from C++ (zero-copy!)
+                # C++ uses buffer protocol to pass vector data directly
                 for i in range(batch_size):
-                    features = features_batch[i]
+                    features = features_batch[i]  # Already a numpy array!
                     planes = num_planes_list[i]
                     board_size = board_sizes[i]
 
-                    # Copy flat features into pinned buffer
-                    # TODO: Could optimize this further with memcpy
-                    tensor_view = torch.tensor(features, dtype=torch.float32)
-                    tensor_view = tensor_view.reshape(planes, board_size, board_size)
-                    self.pinned_buffer[i, :planes, :board_size, :board_size].copy_(tensor_view)
+                    # Reshape numpy array (zero-copy view)
+                    arr = features.reshape(planes, board_size, board_size)
+
+                    # from_numpy() creates zero-copy tensor view
+                    tensor_view = torch.from_numpy(arr)
+
+                    # Direct assignment to pinned buffer
+                    self.pinned_buffer[i, :planes, :board_size, :board_size] = tensor_view
 
                 # T046: Non-blocking async transfer to GPU
                 stream = self.stream_pool[self.stream_index] if self.stream_pool else None
@@ -354,12 +358,16 @@ class DLPackInferenceBridge:
                     features_gpu = self.pinned_buffer[:batch_size].to(self.device, non_blocking=True)
             else:
                 # Fallback for oversized batches or CPU device
+                # OPTIMIZATION: Features already numpy arrays from C++
                 tensors = []
                 for i in range(batch_size):
-                    features = features_batch[i]
+                    features = features_batch[i]  # Already numpy array!
                     planes = num_planes_list[i]
                     board_size = board_sizes[i]
-                    tensor = torch.tensor(features, dtype=torch.float32).reshape(planes, board_size, board_size)
+
+                    # Reshape and convert to tensor (zero-copy)
+                    arr = features.reshape(planes, board_size, board_size)
+                    tensor = torch.from_numpy(arr)
                     tensors.append(tensor)
                 batch_tensor = torch.stack(tensors)
                 features_gpu = batch_tensor.to(self.device, non_blocking=True)
