@@ -298,11 +298,15 @@ private:
      * expensive state cloning (418μs → ~15ns per move).
      */
     struct ThreadLocalState {
-        std::unique_ptr<IGameState> state;      // Persistent state (initialized once)
+        std::unique_ptr<IGameState> state;      // Persistent state (reused across searches)
         std::vector<uint64_t> undo_tokens;      // Undo tokens for current path
         bool initialized = false;                // Initialization flag
 
-        // Initialize state on first use (clone root once per thread)
+        // T011: Pre-allocated feature buffer for zero-copy extraction
+        std::vector<float> feature_buffer;      // Size = max_planes × max_board² (52KB for 36×19×19)
+        bool feature_buffer_initialized = false; // Guard against double-initialization
+
+        // Initialize state on first use, reset to root on subsequent searches
         void ensure_initialized(const IGameState& root) {
             if (!initialized) {
                 // T024f-6: Track thread-local initialization (should happen once per thread)
@@ -313,6 +317,26 @@ private:
                 }
                 undo_tokens.reserve(256);  // Typical max MCTS depth
                 initialized = true;
+            } else {
+                // CRITICAL FIX: Reset state to root for new search
+                // Without this, state accumulates from previous searches causing:
+                // - Memory bloat (3.5 MB → 100 MB)
+                // - Performance degradation (1,396 → 869 sims/sec)
+                PROFILE_SCOPE(profiling::ProfileMetric::StateThreadLocalClone);
+                state->copyFrom(root);
+                undo_tokens.clear();  // Clear any accumulated undo tokens
+            }
+        }
+
+        // T012: Ensure feature buffer is properly sized
+        // Called before each feature extraction to handle moved-from state
+        void initialize_feature_buffer(int max_planes, int max_board_size) {
+            size_t required_size = max_planes * max_board_size * max_board_size;
+
+            // After std::move, buffer is empty - need to resize it
+            if (feature_buffer.size() != required_size) {
+                feature_buffer.resize(required_size);
+                feature_buffer_initialized = true;
             }
         }
     };

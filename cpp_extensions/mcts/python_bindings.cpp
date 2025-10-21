@@ -379,29 +379,34 @@ PYBIND11_MODULE(mcts_py, m) {
              "Create empty async inference queue")
         .def("submit_request",
              [](AsyncInferenceQueue& queue, IGameState* state,
-                NodeIndex node_index, std::vector<NodeIndex> path) -> uint64_t {
-                 // T019: Clone state for batch extraction with OpenMP
-                 // Batch coordinator will extract features from all states in parallel
-                 std::unique_ptr<IGameState> cloned_state = state->clone();
-
+                NodeIndex node_index, std::vector<int16_t> path) -> uint64_t {
+                 // T013-T014: Extract features in-place (ZERO COPY optimization!)
+                 // Features extracted here instead of in coordinator
                  int board_size = state->getBoardSize();
                  int num_feature_planes = state->get_num_feature_planes();
                  int action_space_size = state->getActionSpaceSize();
 
-                 // Submit state for batch extraction (OpenMP parallelization in coordinator)
-                 return queue.submit_request(
-                     std::move(cloned_state),
-                     action_space_size,
-                     board_size,
-                     num_feature_planes,
-                     node_index,
-                     std::move(path)
-                 );
+                 // Extract features into temporary buffer
+                 std::vector<float> features;
+                 features.resize(num_feature_planes * board_size * board_size);
+                 state->extract_features_to_buffer(features.data());
+
+                 // Build request with move semantics
+                 InferenceRequest request;
+                 request.features = std::move(features);  // MOVE, not copy!
+                 request.node_index = node_index;
+                 request.action_space_size = action_space_size;
+                 request.board_size = static_cast<int16_t>(board_size);
+                 request.planes = static_cast<int16_t>(num_feature_planes);
+                 request.path = std::move(path);
+
+                 // Submit request (moves features into queue)
+                 return queue.submit_request(std::move(request));
              },
              py::arg("state"), py::arg("node_index"), py::arg("path"),
-             "Submit inference request with game state (T019 batch extraction)\n\n"
+             "Submit inference request with pre-extracted features (Phase 1 optimization)\n\n"
              "Args:\n"
-             "    state: Game state to evaluate (will be cloned)\n"
+             "    state: Game state to evaluate (features extracted in-place)\n"
              "    node_index: Tree node to expand\n"
              "    path: Path from root to node\n\n"
              "Returns:\n"

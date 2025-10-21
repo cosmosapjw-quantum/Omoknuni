@@ -51,24 +51,24 @@ using IGameState = alphazero::core::IGameState;
  * Represents a single position that needs evaluation. Submitted by
  * simulation threads during tree traversal.
  *
- * **T019 OpenMP Batch Extraction**: Submit game state pointers instead of
- * pre-extracted features. BatchInferenceCoordinator extracts features from
- * the entire batch in parallel using OpenMP, achieving 5-10× speedup on
- * feature extraction (batch of 64 states across 8 threads).
+ * **Phase 1 Zero-Copy Optimization (T015-T016)**: Changed from game state pointer
+ * to pre-extracted features vector. Features are extracted in-place at leaf nodes
+ * using thread-local buffers, then moved (not copied) into the request. This
+ * eliminates the 418μs state cloning bottleneck (86.6% of execution time).
  */
 struct InferenceRequest {
     uint64_t request_id;                        // Unique identifier for this request
-    std::unique_ptr<IGameState> state;          // T019: Game state for batch extraction
-    int action_space_size;                      // Action space size (for fallback policy)
-    int board_size;                             // Board size (for tensor reshaping)
-    int num_feature_planes;                     // Number of feature planes
-    NodeIndex node_index;                       // Tree node to expand
-    std::vector<NodeIndex> path;                // Path from root to this node
+    std::vector<float> features;                // OWNED (moved from thread-local buffer)
+    int32_t node_index;                         // Tree node to expand
+    int32_t action_space_size;                  // Number of legal moves
+    int16_t board_size;                         // Board dimension (8, 9, 15, or 19)
+    int16_t planes;                             // Feature plane count (25-36)
+    std::vector<int16_t> path;                  // Move path from root (for reconstruction fallback)
 
     // Default constructor for container compatibility
-    InferenceRequest() : action_space_size(0), board_size(0), num_feature_planes(0) {}
+    InferenceRequest() : request_id(0), node_index(0), action_space_size(0), board_size(0), planes(0) {}
 
-    // Move-only type (owns state unique_ptr)
+    // Move-only type (enforces zero-copy ownership transfer)
     InferenceRequest(InferenceRequest&&) = default;
     InferenceRequest& operator=(InferenceRequest&&) = default;
     InferenceRequest(const InferenceRequest&) = delete;
@@ -131,29 +131,17 @@ public:
      * Adds request to pending queue and returns immediately. Thread does NOT
      * wait for inference to complete.
      *
-     * **Optimization (T018g)**: Features are pre-extracted in C++ to eliminate
-     * the 418μs clone overhead. This results in 3.7× throughput improvement.
-     *
-     * **T019 OpenMP Batch Extraction**: Now accepts game state pointer instead
-     * of pre-extracted features. BatchInferenceCoordinator extracts features
-     * from entire batch using OpenMP parallelization (5-10× faster on batch).
+     * **Phase 1 Zero-Copy Optimization (T017-T018)**: Accepts rvalue reference
+     * to InferenceRequest with pre-extracted features. Features are extracted
+     * in-place at leaf nodes using thread-local buffers, then moved (not copied)
+     * into the request. This eliminates the 418μs state cloning bottleneck.
      *
      * Thread Safety: Safe to call from multiple threads concurrently
      *
-     * @param state Game state for batch feature extraction (ownership transferred)
-     * @param action_space_size Action space size (for fallback policy)
-     * @param board_size Board size (for tensor reshaping in Python)
-     * @param num_feature_planes Number of feature planes (for reshaping)
-     * @param node_index Tree node to expand with result
-     * @param path Path from root to node (for backup)
+     * @param request Inference request with pre-extracted features (moved, ownership transferred)
      * @return Unique request ID for retrieving result later
      */
-    uint64_t submit_request(std::unique_ptr<IGameState> state,
-                            int action_space_size,
-                            int board_size,
-                            int num_feature_planes,
-                            NodeIndex node_index,
-                            std::vector<NodeIndex> path);
+    uint64_t submit_request(InferenceRequest&& request);
 
     /**
      * @brief Collect batch of pending requests

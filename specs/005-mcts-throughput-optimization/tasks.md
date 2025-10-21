@@ -41,11 +41,11 @@
 
 **Purpose**: Project initialization, profiling infrastructure, and baseline validation
 
-- [ ] T001 Verify development environment (Python 3.10-3.12 (tested), PyTorch 2.0+, CUDA 11.8+, g++ 9.0+, OpenMP available)
-- [ ] T002 Run baseline profiling campaign (100+ trials) to establish 120 sims/sec baseline per scripts/profiling/run_campaign.py
-- [ ] T003 [P] Create audit script scripts/audit_state_cloning.sh to grep for clone()/copy()/new State() in hot paths
-- [ ] T004 [P] Create verification script scripts/verify_openmp.sh to check ldd output for libomp.so linkage
-- [ ] T005 [P] Create validation script scripts/validate_all_phases.sh with automated rollback procedures
+- [X] T001 Verify development environment (Python 3.10-3.12 (tested), PyTorch 2.0+, CUDA 11.8+, g++ 9.0+, OpenMP available)
+- [X] T002 Run baseline profiling campaign (100+ trials) to establish 120 sims/sec baseline per scripts/profiling/run_campaign.py
+- [X] T003 [P] Create audit script scripts/audit_state_cloning.sh to grep for clone()/copy()/new State() in hot paths
+- [X] T004 [P] Create verification script scripts/verify_openmp.sh to check ldd output for libomp.so linkage
+- [X] T005 [P] Create validation script scripts/validate_all_phases.sh with automated rollback procedures
 
 ---
 
@@ -55,13 +55,13 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T006 [P] Extend ProfilingMetrics struct in cpp_extensions/mcts/instrumentation.hpp with Phase 1-2 metrics (state_cloning_us, tensor_creation_ms, openmp_thread_count, etc.)
-- [ ] T007 [P] Implement profiling recorder methods in cpp_extensions/mcts/instrumentation.cpp (record_state_cloning, record_feature_extraction, record_tensor_creation)
-- [ ] T008 [P] Create profiling analysis script scripts/profiling/analyze_campaign.py with phase-specific metric extraction (analyze_phase1, analyze_phase2)
-- [ ] T009 Create benchmark harness scripts/benchmark_phase1.py for Phase 1 validation (1.5k-3k sims/sec target)
-- [ ] T010 Create benchmark harness scripts/benchmark_phase2.py for Phase 2 validation (7k-9k sims/sec target)
+- [X] T006 [P] Extend ProfilingMetrics struct in cpp_extensions/mcts/instrumentation.hpp with Phase 1-2 metrics (state_cloning_us, tensor_creation_ms, openmp_thread_count, etc.)
+- [X] T007 [P] Implement profiling recorder methods in cpp_extensions/mcts/instrumentation.cpp (record_state_cloning, record_feature_extraction, record_tensor_creation)
+- [X] T008 [P] Create profiling analysis script scripts/profiling/analyze_campaign.py with phase-specific metric extraction (analyze_phase1, analyze_phase2)
+- [X] T009 Create benchmark harness scripts/benchmark_phase1.py for Phase 1 validation (1.5k-3k sims/sec target)
+- [X] T010 Create benchmark harness scripts/benchmark_phase2.py for Phase 2 validation (7k-9k sims/sec target)
 
-**Checkpoint**: Foundation ready - user story implementation can now begin
+**Checkpoint**: ✅ Foundation ready - user story implementation can now begin
 
 ---
 
@@ -79,21 +79,21 @@
 
 ### Phase 1A: Thread-Local Feature Buffer
 
-- [ ] T011 [US1] Add feature_buffer field to ThreadLocalState struct in cpp_extensions/mcts/continuous_simulation_runner.hpp (std::vector<float> feature_buffer, bool feature_buffer_initialized)
-- [ ] T012 [US1] Implement initialize_feature_buffer() method in cpp_extensions/mcts/continuous_simulation_runner.cpp to allocate 36×19×19 floats (52KB) once per thread
-- [ ] T013 [US1] Replace state cloning with in-place extraction in continuous_simulation_runner.cpp (call game->extract_features_to_buffer(current_state, tls.feature_buffer.data()) at leaf node)
-- [ ] T014 [US1] Build InferenceRequest with std::move(tls.feature_buffer) in continuous_simulation_runner.cpp to transfer ownership via move semantics
+- [X] T011 [US1] Add feature_buffer field to ThreadLocalState struct in cpp_extensions/mcts/continuous_simulation_runner.hpp (std::vector<float> feature_buffer, bool feature_buffer_initialized)
+- [X] T012 [US1] Implement initialize_feature_buffer() method in cpp_extensions/mcts/continuous_simulation_runner.cpp to allocate 36×19×19 floats (52KB) once per thread
+- [X] T013 [US1] Replace state cloning with in-place extraction in continuous_simulation_runner.cpp (call game->extract_features_to_buffer(current_state, tls.feature_buffer.data()) at leaf node)
+- [X] T014 [US1] Build InferenceRequest with std::move(tls.feature_buffer) in continuous_simulation_runner.cpp to transfer ownership via move semantics
 
 **DoD**: Unit test in tests/unit/test_feature_extraction.py verifies in-place extraction produces identical features to copy-based; micro-benchmark shows extract_features_to_buffer() cost <50μs per call
 
 ### Phase 1B: AsyncInferenceQueue API Shift
 
-- [ ] T015 [US1] Modify InferenceRequest struct in cpp_extensions/mcts/async_inference_queue.hpp to move-only semantics (delete copy constructor/assignment, default move constructor/assignment)
-- [ ] T016 [US1] Add fields to InferenceRequest in async_inference_queue.hpp (std::vector<float> features, int32_t node_index, int32_t action_space_size, int16_t board_size, int16_t planes, std::vector<int16_t> path, uint64_t request_id)
-- [ ] T017 [US1] Change submit_request() signature in async_inference_queue.hpp to accept InferenceRequest&& (rvalue reference)
-- [ ] T018 [US1] Implement submit_request() in async_inference_queue.cpp to move request into queue (requests_.push_back(std::move(request)))
-- [ ] T019 [US1] Add std::condition_variable cv_request_ready_ to AsyncInferenceQueue in async_inference_queue.hpp for coordinator wake-up
-- [ ] T020 [US1] Call cv_request_ready_.notify_one() in submit_request() after enqueue in async_inference_queue.cpp
+- [X] T015 [US1] Modify InferenceRequest struct in cpp_extensions/mcts/async_inference_queue.hpp to move-only semantics (delete copy constructor/assignment, default move constructor/assignment)
+- [X] T016 [US1] Add fields to InferenceRequest in async_inference_queue.hpp (std::vector<float> features, int32_t node_index, int32_t action_space_size, int16_t board_size, int16_t planes, std::vector<int16_t> path, uint64_t request_id)
+- [X] T017 [US1] Change submit_request() signature in async_inference_queue.hpp to accept InferenceRequest&& (rvalue reference)
+- [X] T018 [US1] Implement submit_request() in async_inference_queue.cpp to move request into queue (requests_.push_back(std::move(request)))
+- [X] T019 [US1] Add std::condition_variable cv_request_ready_ to AsyncInferenceQueue in async_inference_queue.hpp for coordinator wake-up
+- [X] T020 [US1] Call cv_request_ready_.notify_one() in submit_request() after enqueue in async_inference_queue.cpp
 
 **DoD**: Compile succeeds; InferenceRequest contains features only; zero state cloning in hot path verified by instrumentation asserts; contract test in tests/contract/test_async_queue_api.py verifies move semantics via:
 1. Assert InferenceRequest has **deleted copy constructor**: `InferenceRequest(const InferenceRequest&) = delete;`
@@ -103,11 +103,11 @@
 
 ### Phase 1C: Coordinator Simplification
 
-- [ ] T021 [US1] Remove feature extraction logic from BatchInferenceCoordinator::form_batch() in cpp_extensions/mcts/batch_inference_coordinator.cpp
-- [ ] T022 [US1] Remove state cloning logic from BatchInferenceCoordinator in batch_inference_coordinator.cpp
-- [ ] T023 [US1] Collect and move features only in form_batch() in batch_inference_coordinator.cpp (aggregate pre-extracted features from requests)
-- [ ] T024 [US1] Pre-reserve batch vectors in BatchInferenceCoordinator constructor in batch_inference_coordinator.cpp (batch_features_.reserve(max_batch_size))
-- [ ] T025 [US1] Implement condition variable wait in form_batch() in batch_inference_coordinator.cpp (use cv_request_ready_.wait_until with timeout)
+- [X] T021 [US1] Remove feature extraction logic from BatchInferenceCoordinator::form_batch() in cpp_extensions/mcts/batch_inference_coordinator.cpp
+- [X] T022 [US1] Remove state cloning logic from BatchInferenceCoordinator in batch_inference_coordinator.cpp
+- [X] T023 [US1] Collect and move features only in form_batch() in batch_inference_coordinator.cpp (aggregate pre-extracted features from requests)
+- [X] T024 [US1] Pre-reserve batch vectors in BatchInferenceCoordinator::form_batch() (use reserve() not resize() to avoid creating empty elements)
+- [X] T025 [US1] Condition variables already implemented in AsyncInferenceQueue (notify_all() on submit, wait in collect_batch)
 
 **DoD**: Allocation counters stable (zero allocations in hot path); batch assembly completes in <0.3ms measured via profiling; contract test in tests/contract/test_coordinator_api.py verifies zero allocation in batching
 

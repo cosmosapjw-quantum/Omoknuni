@@ -24,31 +24,17 @@ AsyncInferenceQueue::~AsyncInferenceQueue() {
     // Cleanup (no mutexes to destroy in lock-free implementation)
 }
 
-uint64_t AsyncInferenceQueue::submit_request(std::unique_ptr<IGameState> state,
-                                               int action_space_size,
-                                               int board_size,
-                                               int num_feature_planes,
-                                               NodeIndex node_index,
-                                               std::vector<NodeIndex> path) {
+uint64_t AsyncInferenceQueue::submit_request(InferenceRequest&& request) {
     ScopedMetric metric(InstrumentationMetric::QueueSubmit);
     PROFILE_SCOPE(ProfileMetric::QueueSubmitTotal);
 
-    // Generate unique request ID
+    // Generate unique request ID and assign to request
     uint64_t request_id = next_request_id_.fetch_add(1, std::memory_order_relaxed);
-
-    // Create request with game state
-    // T019: Submit game state for batch feature extraction with OpenMP
-    InferenceRequest request;
     request.request_id = request_id;
-    request.state = std::move(state);  // T019: Transfer ownership of game state
-    request.action_space_size = action_space_size;
-    request.board_size = board_size;
-    request.num_feature_planes = num_feature_planes;
-    request.node_index = node_index;
-    request.path = std::move(path);  // Move path as well
 
     // Try to enqueue (wait-free, no locks)
-    // Note: With unique_ptr state, we can only try once (no retry possible)
+    // **Phase 1 Optimization (T018)**: Request already contains pre-extracted features
+    // moved from thread-local buffer. No state cloning occurs here.
     // Queue has 4096 capacity, so full queue should be extremely rare
     {
         PROFILE_SCOPE(ProfileMetric::QueueSubmitEnqueue);
@@ -66,7 +52,7 @@ uint64_t AsyncInferenceQueue::submit_request(std::unique_ptr<IGameState> state,
     // Successfully enqueued
     pending_count_.fetch_add(1, std::memory_order_relaxed);
 
-    // T028: Notify all waiting threads (not just one) for optimal thread wakeup
+    // T020: Notify waiting coordinator threads (condition variable wakeup)
     // Using notify_all() allows OS scheduler to pick the best thread to wake
     // instead of potentially waking a suboptimal thread with notify_one()
     request_ready_.notify_all();

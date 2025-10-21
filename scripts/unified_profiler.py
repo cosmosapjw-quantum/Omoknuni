@@ -186,6 +186,7 @@ class UnifiedProfiler:
         """Run profiling with ContinuousSimulationRunner (T024f-6, make/unmake)"""
         import time
         import numpy as np
+        import torch
 
         # Create CONTINUOUS simulation runner (THIS IS THE KEY!)
         runner = mcts_py.ContinuousSimulationRunner(self.tree, selector, backup, vl_manager)
@@ -199,20 +200,66 @@ class UnifiedProfiler:
         queue = mcts_py.AsyncInferenceQueue()
         print(f"✅ Created AsyncInferenceQueue (ring buffer, lock-free)")
 
-        # Create batch inference callback
-        def batch_inference_fn(features_batch, board_sizes, num_planes_list):
-            """Batch inference with pre-extracted features"""
-            results = []
-            for _ in features_batch:
-                # Uniform policy for profiling (focus on MCTS overhead)
-                policy = np.ones(action_space_size, dtype=np.float32) / action_space_size
-                value = 0.0
-                results.append((policy.tolist(), value))
-            return results
+        # ============================================================================
+        # REAL GPU MODEL INFERENCE (instead of dummy callback)
+        # ============================================================================
+        print(f"\n🔥 Creating REAL GPU model for accurate profiling...")
+
+        try:
+            from src.neural.model import create_random_model
+            from src.core.dlpack_inference_bridge import DLPackInferenceBridge
+
+            # Create random model (same as benchmark)
+            model = create_random_model('gomoku', seed=42)
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            model = model.to(device)
+            model.eval()
+
+            # Create DLPack inference bridge with FP16
+            inference_bridge = DLPackInferenceBridge(
+                model=model,
+                device=device,
+                use_mixed_precision=True  # T008f optimization
+            )
+
+            # Warmup GPU
+            inference_bridge.warmup(batch_size=64, game_type='gomoku')
+
+            print(f"✅ Created real GPU model on {device}")
+            print(f"   Model: FastMCTSNet (random weights)")
+            print(f"   FP16 mixed precision: enabled")
+            print(f"   Warmup: complete")
+
+            # Create batch inference callback using REAL model
+            def batch_inference_fn(features_batch, board_sizes, num_planes_list):
+                """REAL GPU batch inference with pre-extracted features (Phase 1 optimization)"""
+                # Call new batch_inference_features API (zero-copy optimization)
+                return inference_bridge.batch_inference_features(
+                    features_batch, board_sizes, num_planes_list
+                )
+
+            use_real_gpu = True
+
+        except Exception as e:
+            print(f"⚠️  Failed to create GPU model: {e}")
+            print(f"   Falling back to dummy callback")
+
+            # Fallback to dummy callback
+            def batch_inference_fn(features_batch, board_sizes, num_planes_list):
+                """Dummy callback (fallback)"""
+                results = []
+                for _ in features_batch:
+                    policy = np.ones(action_space_size, dtype=np.float32) / action_space_size
+                    value = 0.0
+                    results.append((policy.tolist(), value))
+                return results
+
+            use_real_gpu = False
 
         callback = mcts_py.PyBatchInferenceCallback(batch_inference_fn)
         coordinator = mcts_py.BatchInferenceCoordinator()
         print(f"✅ Created BatchInferenceCoordinator")
+        print(f"   Using: {'REAL GPU inference' if use_real_gpu else 'dummy callback'}")
 
         # Start coordinator
         coordinator.start(queue, callback, self.args.batch_size, 5.0)  # timeout=5ms

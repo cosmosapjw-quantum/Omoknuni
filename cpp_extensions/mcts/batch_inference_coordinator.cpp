@@ -132,66 +132,22 @@ void BatchInferenceCoordinator::coordinator_loop() {
         {
             PROFILE_SCOPE(ProfileMetric::CoordinatorFeatureExtraction);
 
-            // Allocate feature buffers
+            // Pre-allocate vectors for metadata and features
             {
                 PROFILE_SCOPE(ProfileMetric::CoordinatorFeatureAllocation);
-                features_batch.resize(batch.size());
+                features_batch.reserve(batch.size());  // Reserve, don't resize!
                 board_sizes.reserve(batch.size());
                 num_planes_list.reserve(batch.size());
             }
 
-            // Collect metadata (serial, fast)
-            for (const auto& request : batch) {
+            // T021-T023: Collect pre-extracted features (ZERO COPY optimization!)
+            // Features were already extracted in-place at leaf nodes, just collect them
+            // This removes ALL feature extraction from coordinator (86.6% bottleneck eliminated)
+            for (auto& request : batch) {
                 board_sizes.push_back(request.board_size);
-                num_planes_list.push_back(request.num_feature_planes);
+                num_planes_list.push_back(request.planes);
+                features_batch.push_back(std::move(request.features));  // MOVE, not copy!
             }
-
-            // T019: Extract features in parallel using OpenMP
-            // Only parallelize if batch size > 8 to avoid threading overhead
-            int batch_size_int = static_cast<int>(batch.size());
-            bool should_parallelize = (batch_size_int > 8);
-
-            #ifdef _OPENMP
-            if (should_parallelize) {
-                PROFILE_SCOPE(ProfileMetric::CoordinatorFeatureExtractionOMP);
-
-                int omp_threads = 0;
-                #pragma omp parallel
-                {
-                    #pragma omp single
-                    {
-                        omp_threads = omp_get_num_threads();
-                    }
-
-                    // Distribute work with static scheduling
-                    #pragma omp for schedule(static)
-                    for (int i = 0; i < batch_size_int; ++i) {
-                        int num_planes = batch[i].num_feature_planes;
-                        int board_size = batch[i].board_size;
-                        size_t features_size = num_planes * board_size * board_size;
-
-                        features_batch[i].resize(features_size);
-                        batch[i].state->extract_features_to_buffer(features_batch[i].data());
-                    }
-                }
-
-                // Track OpenMP thread count
-                PROFILE_GAUGE(ProfileMetric::CoordinatorOMPThreadCount, omp_threads);
-            } else {
-            #endif
-                PROFILE_SCOPE(ProfileMetric::CoordinatorFeatureExtractionSerial);
-                // Serial extraction (batch_size <= 8 or OpenMP disabled)
-                for (int i = 0; i < batch_size_int; ++i) {
-                    int num_planes = batch[i].num_feature_planes;
-                    int board_size = batch[i].board_size;
-                    size_t features_size = num_planes * board_size * board_size;
-
-                    features_batch[i].resize(features_size);
-                    batch[i].state->extract_features_to_buffer(features_batch[i].data());
-                }
-            #ifdef _OPENMP
-            }
-            #endif
         }
 
         // Phase 3: Call Python for GPU inference (GIL ACQUIRED ONCE)
