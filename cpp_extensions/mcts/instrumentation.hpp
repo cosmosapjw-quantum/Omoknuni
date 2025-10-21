@@ -29,6 +29,18 @@ enum class InstrumentationMetric : std::uint8_t {
     BusyEdgeMasked,           // Node skipped due to expanding flag (busy-edge masking)
     UniqueBatchPositions,     // Number of unique positions in each inference batch
     SelectionRetry,           // Selection restarted due to conflicts
+    // Phase 1 Metrics (State Cloning Elimination)
+    StateCloning,             // Time spent in state cloning operations
+    FeatureExtraction,        // Time spent in in-place feature extraction
+    StateCloneCount,          // Counter: number of clone() calls (target: 0)
+    FeatureMoveCount,         // Counter: number of std::move(features) to queue
+    // Phase 2 Metrics (Tensor Pipeline + OpenMP)
+    TensorCreation,           // Time spent creating batch tensors
+    H2DTransfer,              // Time spent in host-to-device transfer
+    OpenMPThreadCount,        // Gauge: actual OpenMP threads used (target: >1)
+    OpenMPEnabled,            // Boolean flag: true if OpenMP linked
+    PinnedBufferReuse,        // Counter: batches using pre-allocated pinned buffer
+    PinnedBufferAllocation,   // Counter: new pinned buffer allocations (target: 0)
     Count
 };
 

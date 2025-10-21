@@ -80,6 +80,15 @@ models/
 tmp/
 temp/
 
+# Environment and secrets
+.env
+.env.*
+*.env
+
+# Logs
+*.log
+*.log.*
+
 # Profiling
 *.prof
 results/

@@ -113,6 +113,28 @@ std::string_view metric_to_string(InstrumentationMetric metric) {
             return "unique_batch_positions";
         case InstrumentationMetric::SelectionRetry:
             return "selection_retry";
+        // Phase 1 Metrics
+        case InstrumentationMetric::StateCloning:
+            return "state_cloning";
+        case InstrumentationMetric::FeatureExtraction:
+            return "feature_extraction";
+        case InstrumentationMetric::StateCloneCount:
+            return "state_clone_count";
+        case InstrumentationMetric::FeatureMoveCount:
+            return "feature_move_count";
+        // Phase 2 Metrics
+        case InstrumentationMetric::TensorCreation:
+            return "tensor_creation";
+        case InstrumentationMetric::H2DTransfer:
+            return "h2d_transfer";
+        case InstrumentationMetric::OpenMPThreadCount:
+            return "openmp_thread_count";
+        case InstrumentationMetric::OpenMPEnabled:
+            return "openmp_enabled";
+        case InstrumentationMetric::PinnedBufferReuse:
+            return "pinned_buffer_reuse";
+        case InstrumentationMetric::PinnedBufferAllocation:
+            return "pinned_buffer_allocation";
         case InstrumentationMetric::Count:
         default:
             return "unknown";
