@@ -32,11 +32,14 @@ class ECA(nn.Module):
     Uses 1D convolution on channel statistics instead of FC layers.
     Provides similar performance to SE with near-zero overhead.
 
+    Reference: ECA-Net (CVPR 2020)
+    https://openaccess.thecvf.com/content_CVPR_2020/papers/Wang_ECA-Net_Efficient_Channel_Attention_for_Deep_Convolutional_Neural_Networks_CVPR_2020_paper.pdf
+
     Args:
         channels: Number of input channels
-        k: Kernel size for 1D conv (default: 5)
+        k: Kernel size for 1D conv (default: 3 for comments.md recommendation)
     """
-    def __init__(self, channels: int, k: int = 5):
+    def __init__(self, channels: int, k: int = 3):
         super().__init__()
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.conv = nn.Conv1d(1, 1, kernel_size=k, padding=k // 2, bias=False)
@@ -49,6 +52,81 @@ class ECA(nn.Module):
         y = self.conv(y)                       # (B,1,C)
         y = self.sig(y).transpose(1, 2).unsqueeze(-1)  # (B,C,1,1)
         return x * y
+
+
+class ResidualBlockECA(nn.Module):
+    """Residual block with ECA attention (comments.md recommendation).
+
+    Clean ResNet block with ECA instead of SE for minimal overhead.
+    This is the building block for ResNet-ECA 128×12 architecture.
+
+    Architecture: Conv-BN-ReLU-Conv-BN-ECA + residual connection
+
+    Args:
+        channels: Number of input/output channels
+        k: ECA kernel size (default: 3)
+    """
+
+    def __init__(self, channels: int, k: int = 3):
+        super().__init__()
+        self.channels = channels
+
+        # First convolution
+        self.conv1 = nn.Conv2d(
+            channels, channels, kernel_size=3, stride=1, padding=1, bias=False
+        )
+        self.bn1 = nn.BatchNorm2d(channels)
+
+        # Second convolution
+        self.conv2 = nn.Conv2d(
+            channels, channels, kernel_size=3, stride=1, padding=1, bias=False
+        )
+        self.bn2 = nn.BatchNorm2d(channels)
+
+        # ECA attention (param-free, negligible overhead)
+        self.eca = ECA(channels, k=k)
+
+        # Initialize weights
+        self._init_weights()
+
+    def _init_weights(self):
+        """Initialize convolution weights using He initialization."""
+        for m in [self.conv1, self.conv2]:
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+
+        # Initialize BatchNorm
+        for m in [self.bn1, self.bn2]:
+            nn.init.constant_(m.weight, 1)
+            nn.init.constant_(m.bias, 0)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through residual block with ECA.
+
+        Args:
+            x: Input tensor (batch_size, channels, height, width)
+
+        Returns:
+            Output tensor with same shape as input
+        """
+        identity = x
+
+        # First conv-bn-relu
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = F.relu(out)
+
+        # Second conv-bn
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        # ECA attention (replaces SE, much lighter)
+        out = self.eca(out)
+
+        # Residual connection
+        out += identity
+        out = F.relu(out)
+
+        return out
 
 
 # ============================================================================
@@ -794,6 +872,339 @@ class AlphaZeroNet(nn.Module):
         optimal_batch = min(512, max(32, 2 ** int(optimal_batch.bit_length() - 1)))
 
         return optimal_batch
+
+
+class AlphaZeroECA(nn.Module):
+    """AlphaZero-style network with ECA attention (comments.md top recommendation).
+
+    Clean ResNet trunk with ECA attention instead of SE for minimal overhead.
+    This is the recommended architecture for Gomoku on RTX 3060 Ti.
+
+    Expected performance (RTX 3060 Ti, FP16):
+    - 128×12: ~28-40k positions/sec (3.7M params)
+    - 96×12:  ~49-70k positions/sec (2.2M params, Ghost variant)
+
+    Reference: comments.md Section 2A
+
+    Args:
+        in_ch: Number of input feature planes
+        C: Channel count (128 for balanced, 96 for ultra-light)
+        B: Number of residual blocks (12 recommended for Gomoku)
+        board: Board size (15 for Gomoku, 19 for Go)
+        num_actions: Number of possible actions
+    """
+    def __init__(self, in_ch: int, C: int, B: int, board: int, num_actions: int):
+        super().__init__()
+        self.in_ch = in_ch
+        self.C = C
+        self.B = B
+        self.board = board
+        self.num_actions = num_actions
+
+        # Stem: Initial 3x3 conv
+        self.stem = nn.Sequential(
+            nn.Conv2d(in_ch, C, 3, padding=1, bias=False),
+            nn.BatchNorm2d(C),
+            nn.ReLU(inplace=True)
+        )
+
+        # Body: Residual blocks with ECA
+        self.body = nn.ModuleList([
+            ResidualBlockECA(C, k=3) for _ in range(B)
+        ])
+
+        # Policy head (2 planes → FC to board²)
+        self.p_head = nn.Conv2d(C, 2, 1, bias=False)
+        self.p_bn = nn.BatchNorm2d(2)
+        self.p_fc = nn.Linear(2 * board * board, num_actions)
+
+        # Value head
+        self.v_head = nn.Conv2d(C, 1, 1, bias=False)
+        self.v_bn = nn.BatchNorm2d(1)
+        self.v_fc1 = nn.Linear(board * board, 256)
+        self.v_fc2 = nn.Linear(256, 1)
+
+        # Initialize weights
+        self._init_weights()
+
+    def _init_weights(self):
+        """Initialize weights."""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass.
+
+        Args:
+            x: Input tensor (batch_size, in_ch, board, board)
+
+        Returns:
+            tuple: (policy_logits, values)
+                policy_logits: (batch_size, num_actions)
+                values: (batch_size, 1) in range [-1, 1]
+        """
+        # Stem
+        z = self.stem(x)
+
+        # Body (residual tower)
+        for block in self.body:
+            z = block(z)
+
+        # Policy head
+        p = F.relu(self.p_bn(self.p_head(z)))
+        p = p.flatten(1)  # (B, 2*board*board)
+        p = self.p_fc(p)  # (B, num_actions)
+
+        # Value head
+        v = F.relu(self.v_bn(self.v_head(z)))
+        v = v.flatten(1)  # (B, board*board)
+        v = F.relu(self.v_fc1(v))
+        v = torch.tanh(self.v_fc2(v))  # (B, 1)
+
+        return p, v
+
+    def get_num_parameters(self) -> int:
+        """Get total number of trainable parameters."""
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+
+class GhostAlphaZeroECA(nn.Module):
+    """Ultra-light AlphaZero with Ghost bottlenecks + ECA (comments.md alternative).
+
+    Uses Ghost modules for efficient feature generation with ECA attention.
+    Expected ~2× faster than standard ResNet-ECA with minimal quality loss.
+
+    Expected performance (RTX 3060 Ti, FP16):
+    - 96×12: ~49-70k positions/sec (2.2M params)
+
+    Reference: comments.md Section 2B
+
+    Args:
+        in_ch: Number of input feature planes
+        C: Channel count (96 recommended for ultra-light)
+        B: Number of blocks (12 recommended)
+        board: Board size
+        num_actions: Number of possible actions
+    """
+    def __init__(self, in_ch: int, C: int, B: int, board: int, num_actions: int):
+        super().__init__()
+        self.in_ch = in_ch
+        self.C = C
+        self.B = B
+        self.board = board
+        self.num_actions = num_actions
+
+        # Stem
+        self.stem = nn.Sequential(
+            nn.Conv2d(in_ch, C, 3, padding=1, bias=False),
+            nn.BatchNorm2d(C),
+            nn.ReLU(inplace=True)
+        )
+
+        # Body: Ghost bottlenecks with ECA
+        self.body = nn.ModuleList([
+            GhostBottleneck(C, hidden_ch=C, out_ch=C, stride=1, use_eca=True)
+            for _ in range(B)
+        ])
+
+        # Policy head
+        self.p_head = nn.Conv2d(C, 2, 1, bias=False)
+        self.p_bn = nn.BatchNorm2d(2)
+        self.p_fc = nn.Linear(2 * board * board, num_actions)
+
+        # Value head
+        self.v_head = nn.Conv2d(C, 1, 1, bias=False)
+        self.v_bn = nn.BatchNorm2d(1)
+        self.v_fc1 = nn.Linear(board * board, 256)
+        self.v_fc2 = nn.Linear(256, 1)
+
+        # Initialize weights
+        self._init_weights()
+
+    def _init_weights(self):
+        """Initialize weights."""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass.
+
+        Args:
+            x: Input tensor (batch_size, in_ch, board, board)
+
+        Returns:
+            tuple: (policy_logits, values)
+        """
+        # Stem
+        z = self.stem(x)
+
+        # Body (ghost bottlenecks)
+        for block in self.body:
+            z = block(z)
+
+        # Policy head
+        p = F.relu(self.p_bn(self.p_head(z)))
+        p = p.flatten(1)
+        p = self.p_fc(p)
+
+        # Value head
+        v = F.relu(self.v_bn(self.v_head(z)))
+        v = v.flatten(1)
+        v = F.relu(self.v_fc1(v))
+        v = torch.tanh(self.v_fc2(v))
+
+        return p, v
+
+    def get_num_parameters(self) -> int:
+        """Get total number of trainable parameters."""
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+
+def create_resnet_eca_model(game: str, size: str = '128x12', **kwargs) -> AlphaZeroECA:
+    """Factory for ResNet-ECA models (comments.md top recommendation).
+
+    Creates clean ResNet architecture with ECA attention for optimal
+    speed/quality trade-off on RTX 3060 Ti.
+
+    Args:
+        game: Game type ('gomoku', 'chess', 'go', 'go9', 'go19')
+        size: Model size - '128x12' (balanced, RECOMMENDED) or '96x12' (fast)
+        **kwargs: Override parameters (in_ch, C, B, board, num_actions)
+
+    Returns:
+        AlphaZeroECA model configured for the game
+
+    Expected Performance (RTX 3060 Ti, FP16):
+        128×12: ~28-40k pps, 3.7M params (comments.md Section 1, Table)
+        96×12:  ~49-70k pps, 2.2M params (ultra-light variant)
+
+    Reference: comments.md Final Recommendations #1
+    """
+    game = game.lower()
+    size = size.lower()
+
+    # Size configurations
+    size_configs = {
+        '128x12': {'C': 128, 'B': 12},  # Balanced (RECOMMENDED)
+        '96x12':  {'C': 96,  'B': 12},  # Fast
+    }
+
+    if size not in size_configs:
+        raise ValueError(f"Invalid size: {size}. Must be '128x12' or '96x12'")
+
+    config = size_configs[size].copy()
+
+    # Game-specific configurations
+    if game == 'gomoku' or game == 'gomoku_freestyle':
+        config.update({
+            'in_ch': 36,        # Enhanced Gomoku planes
+            'board': 15,
+            'num_actions': 225,
+        })
+    elif game == 'gomoku_renju' or game == 'gomoku_omok':
+        config.update({
+            'in_ch': 36,
+            'board': 15,
+            'num_actions': 225,
+        })
+    elif game == 'chess':
+        config.update({
+            'in_ch': 30,        # Enhanced Chess planes
+            'board': 8,
+            'num_actions': 4096,
+        })
+    elif game == 'go' or game == 'go9':
+        config.update({
+            'in_ch': 25,        # Enhanced Go planes
+            'board': 9,
+            'num_actions': 81,
+        })
+    elif game == 'go19':
+        config.update({
+            'in_ch': 25,
+            'board': 19,
+            'num_actions': 361,
+        })
+    else:
+        raise ValueError(f"Unsupported game: {game}")
+
+    # Apply user overrides
+    config.update(kwargs)
+
+    return AlphaZeroECA(**config)
+
+
+def create_ghost_resnet_eca_model(game: str, **kwargs) -> GhostAlphaZeroECA:
+    """Factory for Ghost-ResNet-ECA models (comments.md ultra-light variant).
+
+    Creates ultra-light architecture with Ghost bottlenecks + ECA.
+    ~2× faster than standard ResNet-ECA with minimal quality loss.
+
+    Args:
+        game: Game type
+        **kwargs: Override parameters
+
+    Returns:
+        GhostAlphaZeroECA model (96×12 by default)
+
+    Expected Performance (RTX 3060 Ti, FP16):
+        96×12: ~49-70k pps, 2.2M params
+
+    Reference: comments.md Section 2B
+    """
+    game = game.lower()
+
+    # Default: 96×12 configuration
+    config = {'C': 96, 'B': 12}
+
+    # Game-specific configurations
+    if game == 'gomoku' or game.startswith('gomoku_'):
+        config.update({
+            'in_ch': 36,
+            'board': 15,
+            'num_actions': 225,
+        })
+    elif game == 'chess':
+        config.update({
+            'in_ch': 30,
+            'board': 8,
+            'num_actions': 4096,
+        })
+    elif game == 'go' or game == 'go9':
+        config.update({
+            'in_ch': 25,
+            'board': 9,
+            'num_actions': 81,
+        })
+    elif game == 'go19':
+        config.update({
+            'in_ch': 25,
+            'board': 19,
+            'num_actions': 361,
+        })
+    else:
+        raise ValueError(f"Unsupported game: {game}")
+
+    # Apply user overrides
+    config.update(kwargs)
+
+    return GhostAlphaZeroECA(**config)
 
 
 def create_model_for_game(game: str, use_fast_model: bool = False, model_size: str = 'small', **kwargs) -> nn.Module:

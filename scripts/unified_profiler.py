@@ -522,8 +522,8 @@ def main():
         "--runner-type",
         type=str,
         choices=["simulation", "continuous"],
-        default="simulation",
-        help="Runner type: 'simulation' (baseline, clone-based) or 'continuous' (T024f-6, make/unmake)"
+        default="continuous",
+        help="Runner type: 'simulation' (baseline, clone-based DEPRECATED) or 'continuous' (current, make/unmake with zero-copy)"
     )
 
     args = parser.parse_args()

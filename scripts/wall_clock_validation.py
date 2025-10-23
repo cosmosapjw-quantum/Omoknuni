@@ -181,106 +181,141 @@ class WallClockValidator:
 
     def _single_run(self, warmup: bool = False) -> Dict[str, Any]:
         """Run a single measurement"""
+        import numpy as np
 
         # Setup MCTS components
         state = alphazero_py.GomokuState(board_size=15)
+        action_space_size = state.get_action_space_size()
         tree = mcts_py.create_test_tree(100000)
         selector = mcts_py.create_puct_selector()
         backup = mcts_py.create_backup_manager(tree)
         vl_manager = mcts_py.create_test_virtual_loss_manager(tree)
-        runner = mcts_py.SimulationRunner(tree, selector, backup, vl_manager)
+
+        # Create ContinuousSimulationRunner (correct runner with zero-copy optimization)
+        runner = mcts_py.ContinuousSimulationRunner(tree, selector, backup, vl_manager)
         root = tree.get_root_index()
 
-        # Dummy inference (fast)
-        def dummy_inference(game_state):
-            action_space = game_state.get_action_space_size()
-            policy = [1.0 / action_space] * action_space
-            return (policy, 0.0)
+        # Create AsyncInferenceQueue
+        queue = mcts_py.AsyncInferenceQueue()
 
-        callback = mcts_py.PyInferenceCallback(dummy_inference)
+        # Dummy batch inference (fast)
+        def batch_inference_fn(features_batch, board_sizes, num_planes_list):
+            """Dummy batch callback for wall-clock measurement"""
+            results = []
+            for _ in features_batch:
+                policy = np.ones(action_space_size, dtype=np.float32) / action_space_size
+                value = 0.0
+                results.append((policy.tolist(), value))
+            return results
+
+        callback = mcts_py.PyBatchInferenceCallback(batch_inference_fn)
+
+        # Create and start coordinator
+        coordinator = mcts_py.BatchInferenceCoordinator()
+        coordinator.start(queue, callback, batch_size=64, timeout_ms=5.0)
 
         # Disable profiling for pure wall-clock measurement
         profiler = mcts_py.EnhancedProfiler.instance()
         profiler.set_enabled(False)
 
-        # Wall-clock measurement
-        start_time = time.perf_counter()
+        try:
+            # Wall-clock measurement
+            start_time = time.perf_counter()
 
-        successes = 0
-        for _ in range(self.args.simulations):
-            success = runner.run_simulation(state, root, callback)
-            if success:
-                successes += 1
+            # Run continuous simulations (uses make/unmake pattern)
+            successes = runner.run_continuous(state, root, queue, self.args.simulations)
 
-        end_time = time.perf_counter()
-        wall_clock_time = end_time - start_time
+            end_time = time.perf_counter()
+            wall_clock_time = end_time - start_time
 
-        throughput = successes / wall_clock_time if wall_clock_time > 0 else 0
+            throughput = successes / wall_clock_time if wall_clock_time > 0 else 0
 
-        result = {
-            'simulations': self.args.simulations,
-            'successful': successes,
-            'wall_clock_time': wall_clock_time,
-            'throughput': throughput,
-            'tree_nodes': tree.get_node_count(),
-            'avg_time_per_sim_ms': (wall_clock_time / successes * 1000) if successes > 0 else 0,
-        }
+            result = {
+                'simulations': self.args.simulations,
+                'successful': successes,
+                'wall_clock_time': wall_clock_time,
+                'throughput': throughput,
+                'tree_nodes': tree.get_node_count(),
+                'avg_time_per_sim_ms': (wall_clock_time / successes * 1000) if successes > 0 else 0,
+            }
 
-        return result
+            return result
+
+        finally:
+            # Always stop coordinator
+            coordinator.stop()
 
     def _compare_with_profiling(self, baseline_throughput: float):
         """Compare performance with profiling enabled"""
+        import numpy as np
 
         print("\n🔬 Running with profiling enabled...")
 
         # Setup
         state = alphazero_py.GomokuState(board_size=15)
+        action_space_size = state.get_action_space_size()
         tree = mcts_py.create_test_tree(100000)
         selector = mcts_py.create_puct_selector()
         backup = mcts_py.create_backup_manager(tree)
         vl_manager = mcts_py.create_test_virtual_loss_manager(tree)
-        runner = mcts_py.SimulationRunner(tree, selector, backup, vl_manager)
+
+        # Create ContinuousSimulationRunner
+        runner = mcts_py.ContinuousSimulationRunner(tree, selector, backup, vl_manager)
         root = tree.get_root_index()
 
-        def dummy_inference(game_state):
-            action_space = game_state.get_action_space_size()
-            policy = [1.0 / action_space] * action_space
-            return (policy, 0.0)
+        # Create AsyncInferenceQueue
+        queue = mcts_py.AsyncInferenceQueue()
 
-        callback = mcts_py.PyInferenceCallback(dummy_inference)
+        # Dummy batch inference
+        def batch_inference_fn(features_batch, board_sizes, num_planes_list):
+            """Dummy batch callback"""
+            results = []
+            for _ in features_batch:
+                policy = np.ones(action_space_size, dtype=np.float32) / action_space_size
+                value = 0.0
+                results.append((policy.tolist(), value))
+            return results
+
+        callback = mcts_py.PyBatchInferenceCallback(batch_inference_fn)
+
+        # Create and start coordinator
+        coordinator = mcts_py.BatchInferenceCoordinator()
+        coordinator.start(queue, callback, batch_size=64, timeout_ms=5.0)
 
         # Enable profiling
         profiler = mcts_py.EnhancedProfiler.instance()
         profiler.set_enabled(True)
         profiler.start_session("overhead_test")
 
-        start_time = time.perf_counter()
+        try:
+            start_time = time.perf_counter()
 
-        successes = 0
-        for _ in range(self.args.simulations):
-            success = runner.run_simulation(state, root, callback)
-            if success:
-                successes += 1
+            # Run continuous simulations
+            successes = runner.run_continuous(state, root, queue, self.args.simulations)
 
-        end_time = time.perf_counter()
-        wall_clock_time = end_time - start_time
+            end_time = time.perf_counter()
+            wall_clock_time = end_time - start_time
 
-        profiler.stop_session()
+            profiler.stop_session()
 
-        throughput_with_profiling = successes / wall_clock_time if wall_clock_time > 0 else 0
-        overhead_percent = ((baseline_throughput - throughput_with_profiling) / baseline_throughput) * 100
+            throughput_with_profiling = successes / wall_clock_time if wall_clock_time > 0 else 0
+            overhead_percent = ((baseline_throughput - throughput_with_profiling) / baseline_throughput) * 100
 
-        print(f"\n📊 Profiling Overhead:")
-        print(f"   Baseline:         {baseline_throughput:.1f} sims/sec (profiling OFF)")
-        print(f"   With profiling:   {throughput_with_profiling:.1f} sims/sec (profiling ON)")
-        print(f"   Overhead:         {overhead_percent:.2f}%")
+            print(f"\n📊 Profiling Overhead:")
+            print(f"   Baseline:         {baseline_throughput:.1f} sims/sec (profiling OFF)")
+            print(f"   With profiling:   {throughput_with_profiling:.1f} sims/sec (profiling ON)")
+            print(f"   Overhead:         {overhead_percent:.2f}%")
 
-        if overhead_percent < 5.0:
-            print("   ✅ Low overhead - profiling is efficient")
-        elif overhead_percent < 10.0:
-            print("   ⚠️  Moderate overhead - acceptable for debugging")
-        else:
-            print("   ❌ High overhead - consider reducing profiling level")
+            if overhead_percent < 5.0:
+                print("   ✅ Low overhead - profiling is efficient")
+            elif overhead_percent < 10.0:
+                print("   ⚠️  Moderate overhead - acceptable for debugging")
+            else:
+                print("   ❌ High overhead - consider reducing profiling level")
+
+        finally:
+            # Always stop coordinator
+            coordinator.stop()
 
 
 def main():

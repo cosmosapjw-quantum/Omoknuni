@@ -1,691 +1,259 @@
-# CRITICAL ISSUES (fix these first)
+# 1) Is your current NN size appropriate? How far can we shrink it?
 
-## 1) Wrong hardware facts → breaks your K-coordinator reasoning
+### What you have right now (from your code)
 
-**What’s wrong:** In *REMEDIATION_EDITS.md* you state RTX 3060 Ti has **28 SMs** and argue “SMs per stream” to justify 3 coordinators. That’s incorrect and conceptually off: 3060 Ti has **4864 CUDA cores ⇒ 38 SMs** (Ampere has 128 FP32/SM), and *streams do not partition or reserve SMs*. SM partitioning requires **MPS** and separate processes; within one process, streams are primarily queueing constructs + priorities—**they don’t map to fixed SM slices**.  ([NVIDIA][1])
+* Your **“AlphaZeroNet” default** is a ResNet trunk with `hidden_channels=256, num_blocks=20`, policy/value heads, optional SE/ECA attention. That’s a “256×20” network—very AlphaZero-style and heavy.
+* The same file’s docstring also mentions a **192×15 (~10 M params)** variant as a typical Gomoku-size build.
 
-**Edits:**
+### FLOPs + parameters (15×15 board, 36 input planes)
 
-* **REMEDIATION_EDITS.md** — replace the whole “RTX 3060 Ti Hardware Characteristics” section and remove “SMs/stream” math.
+Rough single-forward estimates (3×3 convs, policy 1×1 + small FC, value 1×1 + tiny FC; attention adds only a small extra):
 
-  ```diff
-  - **RTX 3060 Ti Hardware Characteristics** ... 28 SMs ... SMs/stream ...
-  + **RTX 3060 Ti Hardware Characteristics**
-  + - CUDA Cores: 4864 (Ampere, 128 FP32/SM ⇒ 38 SMs)
-  + - VRAM: 8 GB GDDR6
-  + - Note: CUDA streams do *not* reserve SMs; they queue GPU work. SM partitioning requires MPS (separate processes). [NVIDIA docs & forums]
-  ```
+| Model                   | Params (≈) | FLOPs / fwd (≈) | Max pps on RTX 3060 Ti* |
+| ----------------------- | ---------: | --------------: | ----------------------: |
+| **256×20**              |     23.8 M | **5.35 GFLOPs** |           **4.2–6.1 k** |
+| **192×15**              |     10.2 M | **2.27 GFLOPs** |         **10.0–14.3 k** |
+| **128×12 (proposal)**   |      3.7 M | **0.82 GFLOPs** |         **27.8–39.7 k** |
+| **96×12 (ultra-light)** |      2.2 M | **0.46 GFLOPs** |         **49.1–70.1 k** |
 
-  And reword all “3 = better SMs/stream” arguments to a **purely empirical auto-tune** rule (see Fix #6 below). 
+*Assumes FP16 Tensor Cores at ~**64.8 TFLOPs dense** on RTX 3060 Ti (Wikipedia table; 64.8 dense / 129.6 sparse) and a realistic **35–50%** kernel-level utilization for small 15×15 convs. ([Wikipedia][1])  (Also, FLOPs ≠ speed—memory access and small-kernel launch overheads matter; see ShuffleNetV2 guidelines.) ([arXiv][2])
 
-* **spec.md / tasks.md / plan.md** — keep *“default K=3 on 3060 Ti”* if you want a default, but **delete the SM/stream rationale everywhere** and reference the auto-tuner.
+**Takeaway:**
 
-## 2) Immediate stream synchronization nullifies async copies
-
-**What’s wrong:** In the pinned-buffer bridge, you call `self.stream.synchronize()` immediately after the non-blocking `copy_`. That forces a host-side stall and defeats overlap with compute. 
-
-**Fix (no libtorch required):**
-
-* Don’t sync here. Emit an event and have the **inference call** run on the same stream (or wait on the event).
-
-  ```diff
-  # in DLPackInferenceBridge.create_batch_tensor()
-  - self.stream.synchronize()
-  + event = torch.cuda.Event()
-  + event.record(self.stream)
-  + return (self.gpu_buffer[:batch_size, :planes, :h, :w], event, self.stream)
-  ```
-* In your coordinator’s Python path (or wherever you call the model):
-
-  ```python
-  batch, xfer_done, xfer_stream = bridge.create_batch_tensor(requests)
-  # Ensure the *execution* stream waits on the copy stream, or just run on the copy stream.
-  exec_stream = xfer_stream  # simplest: same stream per coordinator
-  with torch.cuda.stream(exec_stream), torch.cuda.amp.autocast(enabled=fp16):
-      xfer_done.synchronize()  # optional if same stream; otherwise current_stream().wait_event(xfer_done)
-      logits, value = model(batch)
-  ```
-
-  This maintains true async H2D behavior with stream-correct execution; no busy waits. For background on pinned memory & async overlap: NVIDIA best-practices emphasize page-locked (pinned) memory to enable overlap; streams are queues, not SM partitions. ([NVIDIA Docs][2])
-
-## 3) Python version requirements are inconsistent
-
-**What’s wrong:** *tasks.md* asserts **Python 3.12**; *quickstart.md* says **3.9+**; *plan.md D3* mentions **3.12** again. This will confuse users and CI.   
-
-**Edit (unify + test matrix):**
-
-* Support matrix: **3.10–3.12 tested**; pin PyTorch to a CUDA build that matches your driver.
-
-  ```diff
-  - Python 3.9+ required
-  + Python 3.10–3.12 (tested). Recommended: 3.11/3.12 for fastest CPython.
-  ```
-
-  Update the same language in *plan.md*, *tasks.md*, and *quickstart.md*.
-
-## 4) Inference queue memory is undercounted by ~200 MB (worst-case)
-
-**What’s wrong:** *data-model.md* claims the “Inference queue = 1 MB (4096-entry ring buffer)”. But each enqueued request owns a `std::vector<float>` of features (≈ **52 KB** for 36×19×19 float), so at capacity that’s **~212 MB** of feature payloads in the queue alone (plus ring metadata). Your total memory table ignores this. 
-
-**Edits:**
-
-* Update *data-model.md* table; add “worst-case in-flight features (~212 MB @ 4096 entries × 52 KB)”.
-* Add a cap: **either** (a) limit ring depth per game profile, **or** (b) refactor queue to hold *indices/handles* to a shared fixed-size pool (recycling), so the queue footprint stays ~1–4 MB while the pool enforces an upper bound (e.g., 128–256 requests). Provide an “overflow → backpressure” rule (see spec edit in #9).
-
-## 5) Pinned memory “8 MB budget” is arbitrary and unjustified
-
-Pinned memory is great, but over-allocating page-locked memory can degrade system performance; NVIDIA explicitly cautions this. Replace the hardcoded “8 MB budget” with a **configurable cap** and document the tradeoff. ([NVIDIA Developer Forums][3])
-
-**Edit:**
-
-* Add `MCTS_PINNED_BYTES_CAP` (default: **32 MB** on 64 GB RAM; safe for sustained overlap) with a clear warning block pointing to NVIDIA best-practices. Expose `--pinned-mb` CLI override in your runner. ([NVIDIA Docs][2])
-
-## 6) “Default K=3 coordinators” is fine, but the rationale must be empirical
-
-**What’s wrong:** You already wrote an **auto-tuner** to pick K∈{1,2,3,4}, yet some places still bake fixed assumptions (e.g., “run with 4 coordinators” in checklists), and other places justify K with incorrect SM math (see #1). Keep a *default*, but the *authoritative* choice should be auto-tune on startup.  
-
-**Edits:**
-
-* **implementation_checklists.md**: replace hardcoded `--coordinators 4` with **“`--coordinators $(autotune)`; default 3 if autotune cache missing”**. 
-* In *tasks.md*, keep “**default K=3** (3060 Ti)” but explicitly say *“final K is selected by the auto-tuner; default is only a first-run fallback.”* 
-* Remove “SMs/stream” logic everywhere (see #1). 
-
-## 7) “DLPackInferenceBridge” name mismatches the current approach
-
-**What’s wrong:** The class name promises DLPack, but the code path uses **`torch.frombuffer()`** + a copy into a pinned tensor. That’s okay (and fast), but don’t call it “DLPack” unless you actually use `torch.from_dlpack()`. Also, **lifetime is subtle**: `frombuffer()` shares memory with the Python object backing the C++ vector; you must guarantee the vector outlives the copy into the pinned tensor.  ([PyTorch Documentation][4])
-
-**Edits (two options):**
-
-* **A. Rename** to `PinnedTensorBridge` and document the copy-into-pinned contract, plus a rule that `req.features` must remain alive until the copy completes on the host (GIL-protected scope).
-* **B. Actually use DLPack** for a zero-copy view on CPU and *then* copy once into pinned (lifetime encapsulated by capsule). Either way, **immediately issue `copy_`** into the pre-allocated pinned buffer within the same Python scope to avoid dangling views.
-
-*Note:* Recent PyTorch reports show some CUDA paths can still hold the GIL in edge cases—treat your “GIL time = 0.5 ms” target as a **goal**, not a guarantee; keep the p95 assertion but allow investigation leeway. ([GitHub][5])
-
-## 8) Fixed “≤2.0 ms per batch” wording should be p95 and scoped
-
-You standardized many places to “≤2.0 ms per batch (p95)”—good. Ensure *all* references include **p95** and the **batch size** context (64 unless the auto-tuner selects otherwise). I found a few lingering places without the p95 caveat. 
-
-**Edit:** one-line sweep:
-
-```
-grep -R "2.0ms" | sed -n '...'; ensure “p95” + “batch_size=…” everywhere
-```
-
-## 9) Edge-case behavior must become enforceable contracts (buffer overflow, backpressure)
-
-Your *spec.md* lists edge cases, but they’re not fully testable contracts yet. In particular, when batch > pre-allocated max or queue is full. 
-
-**Edits (spec + tasks):**
-
-* **spec.md (US2/US3 acceptance):**
-
-  * “If formed batch would exceed pre-allocated buffer, coordinator **must** (a) split batch and enqueue tail to next cycle **or** (b) block with bounded timeout, never reallocating pinned buffers.”
-  * “If submission queue reaches capacity, **backpressure**: submitting simulation threads block until signaled (condition variable), with metrics for ‘backpressure_wait_ms’.”
-* **tasks.md:** add tests that deliberately overflow batch and saturate queues; assert no reallocations and bounded latencies. (Your *REMEDIATION_EDITS.md* already proposes similar—keep it and wire tests.) 
+* For 15×15 Gomoku, **192×15 is already comfortable** and usually superhuman with decent MCTS.
+* On an **8 GB 3060 Ti**, you can **shrink to 128×12** safely for a *big* speedup with minor strength hit (MCTS recovers a lot).
+* **96×12** is feasible if you really need speed (e.g., big batch, many threads), but I’d start at **128×12** as the “balanced” sweet spot.
 
 ---
 
-# HIGH-IMPACT IMPROVEMENTS (low risk, measurable wins)
+# 2) Lighter NNs with near-same strength (best pick + pseudocode)
 
-## A) Fill the pinned buffer from C++ without libtorch
+Gomoku is pattern-local; MCTS covers long-horizon tactics. You can keep a full-board receptive field with fewer blocks (rf ≈ 1+2B ≥ 21 for B=10+; full board is 15). These two families are excellent on mid-spec GPUs:
 
-**Why:** You currently loop in Python to create 64 `frombuffer()` tensors and copy them into the pinned tensor slice-by-slice. That’s a lot of Python dispatch. You said “no C++ libtorch”—that’s fine. You can still pass a **writable buffer** pointer *from Python to C++* via **pybind11 buffer protocol** and let C++ fill it in one tight loop (OpenMP-vectorized), then do a single `copy_` to GPU on the chosen stream.
+### A) **ResNet-ECA (my top pick)**
 
-**Sketch (no libtorch on C++ side):**
+Replace SE with **ECA** (param-free 1D attention) to keep accuracy with negligible cost; drop channels/blocks to **128×12**. ECA is known to recover SE-like gains with tiny overhead. ([CVF Open Access][3])
+**Why this is best for you:** very simple drop-in; keeps classic AZ training; fast and memory-light; perfect on 8 GB.
 
-```cpp
-// pybind11 signature (C++): fill_pinned(float* dst, size_t stride_nchw, const std::vector<InferenceRequest>& batch)
-// Python: pinned_buffer.data_ptr() gives the pointer; expose via capsule or buffer protocol
-void fill_pinned(float* dst, size_t N, size_t C, size_t H, size_t W,
-                 const std::vector<InferenceRequest>& batch) {
-  // contiguous NCHW destination; each request.features is contiguous [C,H,W]
-  #pragma omp parallel for schedule(static)
-  for (int i = 0; i < (int)batch.size(); ++i) {
-    const float* src = batch[i].features.data();
-    std::memcpy(dst + i * C * H * W, src, C*H*W*sizeof(float));
-  }
-}
-```
-
-Then in Python:
+**Pseudocode (PyTorch-style):**
 
 ```python
-dst = int(self.pinned_buffer.data_ptr())
-cpp.fill_pinned(dst, batch_size, planes, h, w, requests)
-with torch.cuda.stream(self.stream):
-    self.gpu_buffer[:batch_size, :planes, :h, :w].copy_(
-        self.pinned_buffer[:batch_size, :planes, :h, :w], non_blocking=True)
+class ResBlockECA(nn.Module):
+    def __init__(self, C):
+        super().__init__()
+        self.conv1 = nn.Conv2d(C, C, 3, padding=1, bias=False)
+        self.bn1   = nn.BatchNorm2d(C)
+        self.conv2 = nn.Conv2d(C, C, 3, padding=1, bias=False)
+        self.bn2   = nn.BatchNorm2d(C)
+        # ECA: 1D conv over channel descriptor, no FC/reduction
+        self.eca   = ECALayer(C, k=3)   # tiny param count
+
+    def forward(self, x):
+        y = F.relu(self.bn1(self.conv1(x)))
+        y = self.bn2(self.conv2(y))
+        y = self.eca(y) + x
+        return F.relu(y)
+
+class AlphaZeroECA(nn.Module):
+    def __init__(self, in_ch=36, C=128, B=12, board=15):
+        super().__init__()
+        self.stem = nn.Sequential(
+            nn.Conv2d(in_ch, C, 3, padding=1, bias=False),
+            nn.BatchNorm2d(C), nn.ReLU(inplace=True))
+        self.body = nn.Sequential(*[ResBlockECA(C) for _ in range(B)])
+        # Policy head (2 planes -> FC to 225)
+        self.p_head = nn.Conv2d(C, 2, 1, bias=False)
+        self.p_bn   = nn.BatchNorm2d(2)
+        self.p_fc   = nn.Linear(2*board*board, board*board)
+        # Value head
+        self.v_head = nn.Conv2d(C, 1, 1, bias=False)
+        self.v_bn   = nn.BatchNorm2d(1)
+        self.v_fc1  = nn.Linear(board*board, 256)
+        self.v_fc2  = nn.Linear(256, 1)
+
+    def forward(self, x):
+        z = self.body(self.stem(x))
+        p = self.p_fc(F.relu(self.p_bn(self.p_head(z))).flatten(1))
+        v = torch.tanh(self.v_fc2(F.relu(self.v_fc1(
+                F.relu(self.v_bn(self.v_head(z))).flatten(1)))))
+        return p, v
 ```
 
-This removes 64 Python-level `frombuffer()` calls and the per-slice `.copy_()` loop.
+(**Throughput**: ~28–40 k positions/s peak on your 3060 Ti, with batches ≥64. See table above.)
 
-## B) Proper stream handoff (no sync) + FP16 autocast
+### B) **Ghost-ResNet-ECA (ultra-light)**
 
-As above—ensure the **model forward happens on the coordinator’s stream** (or waits on it). Enable `torch.cuda.amp.autocast` for inference on Ampere; Tensor Cores thrive on FP16. (Keep a CLI to disable if accuracy tests require full precision.) 
+Swap each 3×3 conv with a **Ghost bottleneck** (cheap intrinsic conv + linear “ghost” maps), keep shallow depth **96×12** + ECA. GhostNet consistently matches baselines with ~half compute. ([arXiv][4])
 
-## C) Batch-size policy: auto-tune after Phase 2 (not before)
-
-Your documents mostly say this, but a few places still imply a fixed “64 is optimal”. Replace lingering “validate 64” language with **“pre-allocate for 64 by default; *then* run the tuner (32/64/128) after the new pipeline is in.”** This reconciles the (old) profiling where 128 looked best under a 37 ms creation path. 
-
-## D) OpenMP verification
-
-Make sure you’re not just passing `-fopenmp`; you must **link** `OpenMP::OpenMP_CXX` to the actual targets (*mcts_core* at minimum). Your master plan already has the right snippet—ensure it’s applied to **every** C++ target that uses `#pragma omp`. 
-
----
-
-# SPECIFIC TEXTUAL FIXES (by file)
-
-Below, “BEFORE/AFTER” are drop-in replacements or inserts.
-
-## **REMEDIATION_EDITS.md**
-
-1. **Fix 3060 Ti facts + remove SM/stream math** (see Critical #1). 
-
-2. **Coordinator count rationale** — stop referencing SM partitioning; say “default 3 on 3060 Ti; final value selected via auto-tuner @ startup; persisted to `~/.mcts_autotune.json`”. 
-
-## **plan.md**
-
-3. **Remove immediate stream sync**
-
-   ```diff
-   - self.stream.synchronize()
-   + # Return buffer + event + stream; inference will run on the same stream or wait on this event.
-   ```
-
-
-
-4. **Rename bridge** (optional but recommended)
-
-   ```diff
-   - class DLPackInferenceBridge:
-   + class PinnedTensorBridge:
-   ```
-
-   and adjust references accordingly. 
-
-5. **D3 prerequisites** — unify Python version wording to “3.10–3.12 (tested)”. 
-
-## **tasks.md**
-
-6. **Phase 1 setup** — change Python version check.
-
-   ```diff
-   - T001 ... (Python 3.12, PyTorch 2.0+, CUDA 11.8+ ...)
-   + T001 ... (Python 3.10–3.12 tested, PyTorch CUDA build matching driver, CUDA 11.8+ ...)
-   ```
-
-
-
-7. **Phase 2C** — keep “pre-allocate for 64”, but make tuning authoritative post-Phase-2.
-
-   ```diff
-   - T051 ... expect 64 optimal ...
-   + T051 ... run tuner over {32,64,128}; persist best; pre-allocation remains 64 unless --max-batch override is set.
-   ```
-
-
-
-8. **Phase 5 / checklists** — replace fixed `--coordinators 4` benchmark with auto-tune.
-
-   ```diff
-   - python scripts/benchmark_phase3a.py --coordinators 4 --trials 100 ...
-   + python scripts/bench_autotune_coordinators.py --trials 100  # writes ~/.mcts_autotune.json
-   + python scripts/benchmark_phase3a.py --coordinators $(scripts/print_autotuned_k.py) --trials 100 ...
-   ```
-
-
-
-## **quickstart.md**
-
-9. **Python version + driver note**
-
-   ```diff
-   - # Python 3.9+ required
-   + # Python 3.10–3.12 (tested)
-   ...
-   - nvidia-smi  # Should show driver version ≥520.0
-   + nvidia-smi  # Should show driver version ≥520.61.05 for CUDA 11.8
-   ```
-
-   (CUDA 11.8 requires ~520.x drivers).  ([NVIDIA Developer Forums][6])
-
-10. **GPU util troubleshooting** — add a note that async copies need matching streams; if util is low, verify model forward is on the same stream or uses `wait_event`. 
-
-## **spec.md**
-
-11. **Edge cases → contracts** (overflow/backpressure): strengthen acceptance bullets into MUSTs with test IDs, and add “no pinned buffer reallocation” as an assertion. 
-
-## **data-model.md**
-
-12. **Memory table correction**
-
-```diff
-- Inference queue | 1MB | 4096-entry ring buffer
-+ Inference queue | 1MB ring + up to ~212MB in-flight feature payloads (Go 19x19 worst case: 4096 × ~52KB); capped by pool or reduced depth
-```
-
-Also re-sum the “Total” row with a conservative “worst-case during spikes” number. 
-
----
-
-# VALIDATIONS / COMMANDS TO ADD
-
-* **Pinned memory cap visible at runtime:**
-
-  ```
-  python -c "import torch; print('Pinned cap MB:', os.getenv('MCTS_PINNED_BYTES_CAP','32'))"
-  ```
-* **OpenMP actually linked:** (shared libs that include mcts_core)
-
-  ```
-  ldd build/**/*.so | grep -E 'gomp|omp' || echo 'OpenMP not linked'
-  ```
-* **No stray syncs:**
-
-  ```
-  git grep -n "synchronize()" | grep -v "tests" | grep -v "cleanup"
-  ```
-* **Stream usage audit:** ensure model forward happens on returned stream or waits on event.
-
-  ```
-  git grep -n "torch.cuda.stream(" src/ | cat
-  ```
-
----
-
-# A few external confirmations for your doc footnotes
-
-* **Streams ≠ SM reservation; MPS is multi-process** (use if you ever go Phase 3B): NVIDIA engineers and StackOverflow consensus. ([NVIDIA Developer Forums][7])
-* **3060 Ti official cores (→ 38 SMs)**: NVIDIA spec page. ([NVIDIA][1])
-* **Pinned memory + overlap**: CUDA best-practices; also guidance on not over-allocating page-locked memory. ([NVIDIA Docs][2])
-* **`torch.frombuffer` semantics**: shares the Python object’s memory; ensure lifetime until copy is done. ([PyTorch Documentation][4])
-* **Driver ≥ 520.61.05 for CUDA 11.8**: NVIDIA/installer guidance. ([NVIDIA Developer Forums][6])
-
----
-
-## TL;DR (what to change right now)
-
-1. **Remove SM/stream math + fix 3060 Ti facts**; keep K=3 as a *default*, but **auto-tune wins**. 
-2. **Delete `stream.synchronize()`** in the bridge; return `(tensor, event, stream)` and run inference on that stream (or use `wait_event`). 
-3. **Unify Python to 3.10–3.12 tested** across *plan/tasks/quickstart* and bump driver guidance to ≥520.61.05 for CUDA 11.8.  ([NVIDIA Developer Forums][6])
-4. **Fix memory model**: account for in-flight features in the queue and set a real pinned-memory cap with a CLI/env override.  ([NVIDIA Developer Forums][3])
-5. **(Optional but recommended)**: move pinned-buffer filling into C++ (no libtorch) via buffer protocol to remove 64 Python-level copies; keep one async H2D copy.
-
-If you apply the edits above, your SDD will be technically tight and aligned with current CUDA/PyTorch practice—no contradictions, no misleading hardware claims, and a pipeline that can actually overlap CPU prep, H2D transfers, and inference on your 5900X + 3060 Ti.
-
-[1]: https://www.nvidia.com/en-us/geforce/graphics-cards/30-series/rtx-3060-3060ti/?utm_source=chatgpt.com "GeForce RTX 3060 Family"
-[2]: https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/?utm_source=chatgpt.com "CUDA C++ Best Practices Guide"
-[3]: https://forums.developer.nvidia.com/t/advantages-disadvantages-of-using-pinned-memory/34422?utm_source=chatgpt.com "Advantages/Disadvantages of using pinned memory"
-[4]: https://docs.pytorch.org/docs/stable/generated/torch.frombuffer.html?utm_source=chatgpt.com "torch.frombuffer — PyTorch 2.9 documentation"
-[5]: https://github.com/pytorch/pytorch/issues/163062?utm_source=chatgpt.com "GIL is not released when creating a device tensor using ..."
-[6]: https://forums.developer.nvidia.com/t/cant-install-cuda-11-8-on-ubuntu-22-04-lts/263227?utm_source=chatgpt.com "Can't install cuda 11.8 on ubuntu 22.04 lts"
-[7]: https://forums.developer.nvidia.com/t/limit-number-of-or-allocate-sm-on-a-per-stream-basis/70983?utm_source=chatgpt.com "Limit number of (or allocate) SM on a per stream basis"
-
----
-
-# Executive summary (what to fix first)
-
-1. **Encapsulation & correctness:** `AsyncInferenceQueue`’s sample usage locks a **private** mutex; the API requires callers to pass a lock into `wait_for_request`/`dequeue_batch`. This won’t compile and is brittle. Hide the lock; provide blocking `dequeue_batch_blocking(...)` with a predicate. 
-
-2. **Backpressure semantics:** The queue specifies `max_size` but doesn’t define behavior when full (block? drop?). Add a configurable **submit policy** with optional timeout and a second condition variable (`cv_not_full`). 
-
-3. **Spurious wakeups / predicates:** Text implies “condition variable handles spurious wakeups internally”. Not true. The **caller must use a predicate** or you must enforce it inside the queue. Fix the contract and examples.  ([Stack Overflow][1])
-
-4. **Multiple coordinators:** The queue and coordinator docs don’t cleanly specify concurrent consumption. Clarify that **K coordinators** are supported, ensure **notify_one** semantics, and document fairness. (Streams do **not** partition SMs; concurrency must be **empirically tuned**.)  ([NVIDIA Developer Forums][2])
-
-5. **Lifetime / DLPack claims:** `run_inference()` claims zero-copy DLPack but the surrounding text still assumes copies into host buffers; also, DLPack **requires a correct deleter** and lifetime guarantees. Fix the contract (either rename or implement real DLPack with a proper deleter).  ([DMLC][3])
-
-6. **Pinned-memory guidance:** The docs implicitly encourage large pinned pools without caps; NVIDIA explicitly warns against over-pinning. Add a **configurable cap** and rationale.   ([NVIDIA Docs][4])
-
-7. **Profiling realism & structure:** “Zero overhead” claims and “<1 ms for 1M calls” are unrealistic; current collector design (string→atomic in unordered_map) guarantees overhead. Switch to **ID-based counters + TLS buffering** and update acceptance gates (p95 for latencies, p50 for throughput). Also fix tests that reference non-existent fields. 
-
----
-
-# 1) async_inference_queue_api.md — critical issues & fixes 
-
-## A. Encapsulation bug (mutex exposure)
-
-**Problem:** Examples call `std::unique_lock<std::mutex> lock(queue.mutex_);` yet `mutex_` is private in the class definition. This won’t compile and breaks encapsulation.
-
-**Fix:** Hide the lock and fold waiting + dequeue into one API:
-
-```cpp
-// New API: caller does not touch internal locks.
-size_t dequeue_batch_blocking(std::vector<InferenceRequest>& out,
-                              size_t max_batch,
-                              std::chrono::microseconds timeout);
-```
-
-**Spec edits (replace existing “wait_for_request + dequeue_batch”):**
-
-* Remove `wait_for_request(lock, ...)` and `dequeue_batch(..., lock)` signatures.
-* Add `dequeue_batch_blocking(...)` that internally:
-
-  1. Locks `mutex_`
-  2. `cv_request_ready_.wait_for(lock, timeout, [&]{ return shutdown_ || !requests_.empty(); })`  ← **predicate required** ([Stack Overflow][1])
-  3. Moves up to `max_batch` items to `out`
-  4. Unlocks and returns count
-* Keep `try_dequeue(...)` for tests/fallback.
-
-## B. Full-queue behavior undefined
-
-**Problem:** What happens when `requests_` reaches `max_size_`? (Document says “Maximum queue capacity” but no behavior.)
-
-**Fix:** Add a **submit policy**:
-
-```cpp
-enum class SubmitPolicy { Block, BlockWithTimeout, DropOldest, DropNewest };
-
-bool submit_request(InferenceRequest&& req,
-                    SubmitPolicy policy = SubmitPolicy::Block,
-                    std::chrono::microseconds timeout = std::chrono::microseconds{0});
-```
-
-* Maintain a second CV `cv_not_full_`.
-* `Block`: wait on `cv_not_full_` with predicate `requests_.size() < max_size_`.
-* `BlockWithTimeout`: return `false` on timeout.
-* `DropOldest/Newest`: remove an element accordingly and return `true`. Document tradeoffs.
-
-## C. Spurious wakeups wording
-
-**Problem:** “Condition variable handles spurious wakeups internally.” That’s inaccurate; **your code must**. Update text + examples to use predicate form. ([Stack Overflow][1])
-
-**Doc tweak (Performance/Thread Safety sections):**
-
-* Replace with: “All waits use a predicate to defend against spurious wakeups; callers do not manage locks.”
-
-## D. `size()` thread safety and cost
-
-**Problem:** `size()` is marked “thread-safe” but implementation likely reads `requests_.size()` without locking. That’s a data race or stale.
-
-**Fix:** Maintain an **atomic `size_` counter** updated under the lock and return it without locking; mark result “approximate.”
-
-## E. Data structure and complexity notes
-
-The doc’s complexity claims are OK for `std::deque` — `pop_front` and `push_back` are O(1) amortized. Keep deque (fits MPMC with mutex) or **document an optional lock-free** drop-in (moodycamel). ([C++ Reference][5])
-
-## F. Memory bound (feature payload)
-
-Queue elements own `std::vector<float>` feature buffers. A depth of 4096 with ~36×19×19 floats ≈ **~212 MB** payload; the doc should state this and recommend either:
-
-* lower `max_size_` defaults, **or**
-* switch queue to hold **handles** into a fixed-size feature pool.
-
-(Add this note to the API’s Overview.)
-
-## G. Multi-coordinator fairness
-
-**Problem:** Not specified how multiple coordinators interact.
-
-**Fix (doc):** “With K coordinators, `notify_one()` is used to avoid thundering herd. Each coordinator loops: block on `dequeue_batch_blocking`, process, repeat. Fairness is best-effort; sustained imbalance triggers the **autotuner** (K∈{1..4}). Streams do **not** partition SMs; concurrency is empirical.” ([NVIDIA Developer Forums][2])
-
----
-
-# 2) batch_coordinator_api.md — critical issues & fixes 
-
-## A. DLPack wording vs actual behavior
-
-**Problem:** You promise “zero-copy via DLPack” in `run_inference()` but most surrounding text assumes you assemble batches and then copy results into pre-allocated buffers. If you keep copies, **don’t call it DLPack**. If you use DLPack, you **must** provide a correct deleter and lifetime discipline. ([DMLC][3])
-
-**Two acceptable edits:**
-
-* **Rename** to “Pinned Tensor Bridge (copy-in, async H2D)”, or
-* **Implement real DLPack**: allocate a contiguous CPU block, wrap as `DLManagedTensor`, attach a deleter that returns the block to a pool, and ensure PyTorch consumes via `torch.utils.dlpack.from_dlpack`.
-
-> Either way, make the **event/stream handoff explicit** so H2D overlaps with compute (no immediate `stream.synchronize()`; return `(tensor, event, stream)` and run forward on that stream).
-
-## B. Missing constants / undefined identifiers
-
-**Problem:** `distribute_results()` uses `max_action_space` without defining where it comes from; also assumes `tree_` is available but not declared in class state.
-
-**Fix (doc + header):**
-
-* Add `const int max_action_space_` (default 512; configurable per game/profile).
-* Explicitly add `MctsTree* tree_` (non-owned) as a dependency in the class members.
-
-## C. Buffer sizing vs reserve/resize
-
-**Problem:** Constructor `reserve`s, but later code implies direct indexing. `reserve` does not change `size()`. Specify that `batch_policy_` and `batch_value_` are **`resize`d** to the needed size before writes each iteration (or use raw arrays with fixed capacity).
-
-**Edit (constructor & iteration):**
-
-```cpp
-batch_policy_.resize(max_batch_size_ * max_action_space_);
-batch_value_.resize(max_batch_size_);
-```
-
-## D. Multi-coordinator semantics and Python bridge
-
-**Problem:** No crisp rule when K>1. Clarify:
-
-* Each coordinator owns **its CUDA stream** (or pool).
-* Python callback should **execute on the coordinator’s stream** (or wait on an event). Don’t sync the stream inside the creation path; let model forward happen under `torch.cuda.stream(exec_stream)`.
-* GIL: most CUDA ops release the GIL, but **not all Python-level waiting does**; measure p95 callback time. ([PyTorch Forums][6])
-
-**Doc insertion (run_inference):**
-
-* “The Python callback receives a stream token and must either (a) run forward under that stream context, or (b) call `current_stream().wait_event(copy_done)`. No `synchronize()` in hot path.”
-
-## E. Batch policy (min-batch vs timeout)
-
-Add a **min_batch** parameter (e.g., 16) to avoid undersized batches during bursty traffic. Update acceptance gates (avg batch size distribution).
-
-## F. Failure modes
-
-Strengthen error handling:
-
-* On inference error: **re-queue** node with exponential backoff (up to N tries) instead of uniform policy fallback by default; keep fallback behind a flag for robustness testing.
-
----
-
-# 3) profiling_api.md — critical issues & fixes 
-
-## A. “Zero overhead” & unrealistic target
-
-**Problem:** “1M calls < 1 ms” isn’t realistic for function calls + branches; even disabled, you’ll pay call + branch cost.
-
-**Fix:**
-
-* Change the guarantee to “**disabled path executes in ~tens of nanoseconds per call; 1M calls < 100 ms p95** on Ryzen 5900X (O2, LTO).”
-* Make `enable(false)` **compile-time** fast path for hot macros:
-
-  ```cpp
-  #if PROFILING_ENABLED
-    #define PROFILE_SCOPE(name) auto _t = collector.scoped_timer(name)
-  #else
-    #define PROFILE_SCOPE(name) do {} while(0)
-  #endif
-  ```
-* Keep runtime switch for non-macro APIs, but document it as “low overhead”, not “zero”.
-
-## B. Map-of-strings design is expensive
-
-**Problem:** `unordered_map<string, atomic<...>>` guarantees hashing overhead per call.
-
-**Fix:** Switch to **ID-based metrics**:
-
-* Pre-register regions/counters at startup → integer IDs.
-* TLS buffers aggregate (per thread), periodically flushed to global atomics → **low contention**.
-
-## C. Test code references non-existent fields
-
-Example test reads `metrics.timings_["test_sleep"]` — not part of `ProfilingMetrics`. Replace with accessor:
-
-```cpp
-double get_timing_ms(const ProfilingMetrics& m, const char* region);
-```
-
-…and expose named fields you actually compute (e.g., `feature_extraction_us`, `coordinator_inference_us`). Update tests accordingly.
-
-## D. Gates: percentiles
-
-**Problem:** Some latency budgets (tensor creation, H2D) are specified but the acceptance logic uses only **p50** globally.
-
-**Fix:** For **latency** metrics, gate on **p95**; for **throughput**, p50 is fine.
+**Pseudocode (skeleton for a Ghost bottleneck):**
 
 ```python
-acceptance_criteria = {
-    "sims_per_second_p50": (7000, 9000),
-    "tensor_creation_ms_p95": (0.0, 2.0),
-    "h2d_transfer_ms_p95": (0.0, 1.0),
-}
+class GhostModule(nn.Module):
+    def __init__(self, in_c, out_c, ratio=2, kernel_size=1, dw_size=3):
+        super().__init__()
+        init_c = math.ceil(out_c / ratio)
+        new_c  = init_c * (ratio - 1)
+        self.primary = nn.Sequential(
+            nn.Conv2d(in_c, init_c, kernel_size, padding=kernel_size//2, bias=False),
+            nn.BatchNorm2d(init_c), nn.ReLU(inplace=True))
+        self.cheap = nn.Sequential(
+            nn.Conv2d(init_c, new_c, dw_size, padding=dw_size//2,
+                      groups=init_c, bias=False),
+            nn.BatchNorm2d(new_c), nn.ReLU(inplace=True))
+    def forward(self, x):
+        y = self.primary(x)
+        z = self.cheap(y)
+        return torch.cat([y, z], dim=1)[:, :self.out_c, :, :]
+
+class GhostBlockECA(nn.Module):
+    def __init__(self, C):
+        super().__init__()
+        self.g1 = GhostModule(C, C, ratio=2, kernel_size=1, dw_size=3)
+        self.g2 = GhostModule(C, C, ratio=2, kernel_size=1, dw_size=3)
+        self.eca = ECALayer(C, k=3)
+    def forward(self, x):
+        y = self.g2(self.g1(x))
+        return F.relu(self.eca(y) + x)
 ```
 
-## E. OpenMP verification
+(**Throughput**: ~49–70 k positions/s peak.)
 
-Add a specific check to record `openmp_enabled` and `openmp_thread_count>1`. If not, **fail Phase 2**.
+### C) **RepVGG-style “plain” trunk (re-param at inference)**
 
-## F. GPU/streams & utilization
-
-Add a metric for **stream overlap efficiency**: percentage of batches where H2D overlapped compute (via timestamp pairs) and record **GPU utilization**. Gate Phase 3A on `gpu_utilization_pct ≥ 80%`. (Already listed — ensure it’s measured with a supported method.)
+Train with multi-branch blocks; re-param to single 3×3 at inference, giving very fast conv stacks. Good if you want maximum kernel fusion on TensorRT later. ([CVF Open Access][5])
 
 ---
 
-# Drop-in diffs / edits
+# 3) Scrutinizing your async inference worker (what to fix)
 
-## AsyncInferenceQueue — API surface & semantics (replace interface section)
+I read your worker carefully. Highlights:
 
-```diff
- class AsyncInferenceQueue {
- public:
--    void submit_request(InferenceRequest&& request);
--    bool wait_for_request(std::unique_lock<std::mutex>& lock,
--                          std::chrono::microseconds timeout);
--    size_t dequeue_batch(std::vector<InferenceRequest>& output,
--                         size_t max_batch,
--                         std::unique_lock<std::mutex>& lock);
-+    enum class SubmitPolicy { Block, BlockWithTimeout, DropOldest, DropNewest };
-+
-+    // Producer API with backpressure policy
-+    // Returns false only on timeout (BlockWithTimeout) or shutdown.
-+    bool submit_request(InferenceRequest&& request,
-+                        SubmitPolicy policy = SubmitPolicy::Block,
-+                        std::chrono::microseconds timeout = std::chrono::microseconds{0});
-+
-+    // Consumer API (coordinator): blocks until data or shutdown
-+    // Uses a predicate to defend against spurious wakeups.
-+    size_t dequeue_batch_blocking(std::vector<InferenceRequest>& output,
-+                                  size_t max_batch,
-+                                  std::chrono::microseconds timeout);
- 
-     bool try_dequeue(InferenceRequest& request);
--    size_t size() const;
-+    size_t size() const;  // returns atomic size_, approximate
-     void shutdown();
-     bool is_shutdown() const;
- 
- private:
-     std::deque<InferenceRequest> requests_;
-     mutable std::mutex mutex_;
-     std::condition_variable cv_request_ready_;
-+    std::condition_variable cv_not_full_;
-     size_t max_size_;
-     bool shutdown_ = false;
-+    std::atomic<size_t> size_{0};
- };
+* **Dynamic micro-batching**: target ≥32; timeout ≤3 ms; utilization target 80%. Good start. 
+* **Pinned-memory fast paths** for H2D/D2H are implemented. Nice. 
+* **Mixed precision (autocast)** with fallback logic is in place. 
+* **Warmup** (1, 8, 16, 32, ≤64) and **NVML** sampling are present.  
+
+### Critical issues / bottlenecks
+
+1. **Misleading units + too-tight time windows**
+   `timeout_ms` is stored as seconds; `max_timeout_ms` name suggests ms but holds seconds (0.003). Easy to mis-tune. Also, 0.5–3 ms is *very* short for 8+ threads under Python scheduling and can under-fill batches. (Industry dynamic batching uses **microseconds–tens of ms**, tuned by SLA.) Fix the naming and expose a **range like 2–10 ms**, auto-tuned by traffic.  ([NVIDIA Docs][6])
+
+2. **Pinned buffer is hard-coded for Go (361 actions)**
+   For Gomoku it should be **225**, otherwise you waste host RAM and add copy work on D2H. Also, it must support all three types of games - gomoku, chess, go(9*9/19*19)
+
+3. **Pinned input buffer is `float32` but you run FP16**
+   You allocate **fp32** pinned input then cast after H2D/autocast. Sending **fp16** from host halves H2D bandwidth and reduces GPU casting. (PyTorch pinned + `non_blocking=True` is the recipe.)  ([PyTorch Docs][7])
+
+4. **Autocast + tiny batches = launch overhead bound**
+   At 15×15, kernels are small; you’ll be **CPU/launch-overhead bound** without capture/fusion. Use **CUDA Graphs** to eliminate per-launch overhead once the shapes are fixed. PyTorch has first-class support and big wins on small-compute graphs. ([PyTorch][8])
+
+5. **OOM recovery recursion**
+   `batch_inference` recursively retries on OOM; better to loop (tail recursion risk, harder to reason). 
+
+6. **Micro-batch target is fixed at ≥32**
+   Great when traffic is high, but under load variance it may under-utilize the GPU. You already keep a performance deque; extend it to **auto-tune min_batch in [8,64]** based on observed throughput & NVML GPU util.  
+
+### Upgrades that will move the needle (concrete)
+
+**(A) Make shapes truly match Gomoku/Chess/Go**
+
+* Set different **policy buffer** for each game and board size.
+
+**(B) Half-precision I/O path**
+
+```python
+# host: create pinned input as float16 and transfer non_blocking
+batch_data_np = np.stack(positions).astype(np.float16)
+inp = torch.from_numpy(batch_data_np).pin_memory()
+batch_tensor = inp.to(self.device, non_blocking=True)
 ```
 
-**Doc text additions:**
+Use pinned D2H for outputs too; you already have that path.   (Docs & rationale.) ([PyTorch Docs][7])
 
-* Explicitly state **predicate waits** and **spurious wakeups** behavior. ([Stack Overflow][1])
-* Describe **full-queue policy** and **memory** implications.
+**(C) Traffic-aware dynamic batching (2–10 ms window)**
+Replace the hard 3 ms with an adaptive controller (NVML GPU util + recent throughput trend) and a **floor of 8-16** on low traffic; raise to ≥32 when util <70%. You already have perf history—extend it.
 
-## BatchInferenceCoordinator — clarity & safety
+```python
+def choose_batch_window(self):
+    util = self._get_gpu_utilization()   # 0..1
+    # adapt 2–10ms window
+    base = 0.002 + (1.0 - min(util, 0.9)) * 0.008
+    # smooth with recent trend
+    return clamp(smooth(base, hist=self._performance_history), 0.002, 0.010)
 
-```diff
- class BatchInferenceCoordinator {
- public:
--    BatchInferenceCoordinator(
-+    explicit BatchInferenceCoordinator(
-         PyInferenceCallback* callback,
-         AsyncInferenceQueue* queue,
--        int max_batch_size = 64,
-+        int max_batch_size = 64,
-+        int max_action_space = 512,
-+        int min_batch_size = 16,
-         std::chrono::microseconds batch_timeout = std::chrono::microseconds(500)
-     );
- 
-     void run();
-     void shutdown();
-     CoordinatorMetrics get_metrics() const;
- 
- private:
-     bool run_iteration();
--    size_t collect_batch();
--    void run_inference();
--    void distribute_results();
-+    size_t collect_batch();        // uses dequeue_batch_blocking(..)
-+    void run_inference();          // executes on per-coordinator CUDA stream
-+    void distribute_results();     // expand_if_unexpanded + backup + remove_VL
- 
-     PyInferenceCallback* callback_;
-     AsyncInferenceQueue* queue_;
--    int max_batch_size_;
-+    int max_batch_size_, max_action_space_, min_batch_size_;
-     std::chrono::microseconds batch_timeout_;
-     std::vector<InferenceRequest> batch_requests_;
-     std::vector<float> batch_policy_;
-     std::vector<float> batch_value_;
-+    MctsTree* tree_ = nullptr;
- };
+def _collect_batch(...):
+    deadline = now() + self.choose_batch_window()
+    target   = self._get_optimal_batch_size()      # you already compute
+    while len(batch) < target and now() < deadline:
+        try: batch.append(input_queue.get(timeout=deadline-now()))
+        except Empty: break
 ```
 
-**Doc text additions:**
+(Aligns with Triton’s micro-batching idea.) ([NVIDIA Docs][6])
 
-* Detail **stream handoff** and forbid `synchronize()` in hot path (use event/wait or run on same stream).
-* Clarify **DLPack vs pinned** choice and lifetime/deleter responsibilities. ([DMLC][3])
+**(D) Capture with CUDA Graphs**
+For fixed `(C,H,W)` and a small menu of batch sizes (e.g., 8,16,32,64,128,256), **pre-warm** and **graph-capture** the forward to nuke Python/kernel-launch overhead:
 
-## Profiling — realism + structure
+```python
+# once per batch_size choice
+static = torch.zeros(bs, *self.input_shape, device=self.device, dtype=torch.float16)
+g     = torch.cuda.CUDAGraph()
+torch.cuda.synchronize()
+with torch.cuda.graph(g):
+    p_out, v_out = self.model(static)
 
-```diff
-- Zero overhead when profiling disabled
-+ Disabled path: macro-based no-ops (compile-time); runtime APIs short-circuit in ~tens of ns
+# inference path
+static.copy_(batch_tensor)     # non_blocking copy from pinned host
+g.replay()
+# p_out, v_out now hold outputs
 ```
 
-```diff
-- unordered_map<string, atomic<...>>
-+ integer metric IDs with TLS aggregation (per-thread buffers flushed periodically)
-```
+(See PyTorch CUDA Graphs post/docs.) ([PyTorch][8])
 
-```diff
-- Test: 1M calls < 1ms
-+ Test: 1M no-op macro calls < 5ms; 1M runtime short-circuits < 100ms (O2, LTO, 5900X)
-```
+**(E) Try Torch-TensorRT for a free 1.5–2×**
+Once the model stabilizes (especially RepVGG or ResNet-ECA), compile via **Torch-TensorRT**; on Ampere RTX this typically halves latency / doubles throughput versus eager PyTorch. ([NVIDIA Developer][9])
 
-```diff
-- Gates use median (p50) for all metrics
-+ Throughput uses p50; latency budgets use p95 (tensor_creation_ms_p95, h2d_transfer_ms_p95, etc.)
-```
+**(F) Streams + double-buffering (careful!)**
+Overlap H2D copy (pinned, non-blocking) with compute via a dedicated transfer stream and a compute stream, using double-buffers. PyTorch streams can help, but concurrency quirks exist—profile with Nsight. ([PyTorch Docs][10])
+
+**(G) Fix tiny stuff**
+
+* Rename `max_timeout_ms` → `max_timeout_s` to avoid confusion. 
+* Replace recursive OOM retry with a loop. 
+* Make `min_batch_size` adaptive (8–64). 
 
 ---
 
-# Notes supported by external guidance
+## Final recommendations (actionable)
 
-* **Streams do not reserve SMs**; resource provisioning via MPS does not bind to fixed SMs either. Prefer **auto-tuning K** over fixed coordinator counts. ([NVIDIA Developer Forums][2])
-* **Condition variables require predicates**; spurious wakeups are expected. ([Stack Overflow][1])
-* `std::deque` front insert/erase is O(1), fits your batched pop_front pattern. ([C++ Reference][5])
-* **Pinned memory**: benefits with DMA overlap, but **don’t over-allocate**; cap and measure. ([Stack Overflow][7])
-* **PyTorch/GIL**: most CUDA ops release the GIL, but some Python waits don’t — measure p95. ([PyTorch Forums][6])
-* **DLPack**: provide a correct deleter and clear ownership/lifetime semantics. ([DMLC][3])
+1. **Switch trunk to ResNet-ECA 128×12** first. Expect ~**3×** the pps of 256×20 with minimal Elo loss (MCTS will cover it). If you still want more speed, try the **Ghost-ECA 96×12** variant. ([CVF Open Access][3])
+2. **Worker:**
+
+   * Change policy buffer to **225**, input pinned dtype to **fp16**, and **adaptive 2–10 ms** batching.  
+   * **Pre-capture CUDA Graphs** for batch sizes {8,16,32,64,128}. ([PyTorch][8])
+   * Try **Torch-TensorRT** once graphs are stable. ([NVIDIA Developer][9])
+3. **Throughput to expect (3060 Ti):**
+
+   * **256×20**: ~**4–6 k** pps
+   * **192×15**: ~**10–14 k** pps
+   * **128×12 ResNet-ECA (best pick)**: ~**28–40 k** pps
+   * **96×12 Ghost-ECA**: ~**49–70 k** pps
+     (FP16, well-filled batches, graphs on.)
 
 ---
 
-## Final checklist to update your APIs immediately
+### Why I’m confident in the shrink
 
-* [ ] Replace lock-exposing queue methods with **encapsulated blocking dequeue** (predicate wait). 
-* [ ] Specify **full-queue policies** (+ `cv_not_full_`), and update producers to honor backpressure. 
-* [ ] Coordinator: define **`max_action_space_`**, **`tree_`**, **`min_batch_size`**; clarify **stream** usage and forbid `synchronize()` in the hot path. 
-* [ ] Fix DLPack wording vs implementation; **rename or implement** the deleter path. 
-* [ ] Profiling: switch to **ID+TLS** counters; **realistic** “disabled cost” targets; latency gates = **p95**. 
+AlphaGo Zero used 256×20 and 256×40 on 19×19 Go; Leela/KataGo do similar. Gomoku (15×15) is much smaller spatially; you don’t need that trunk width/depth for a superhuman bot once MCTS is strong. (See AlphaGo Zero paper + community engine docs for typical 20b/40b setups.) ([augmentingcognition.com][11])
 
-If you want, I can turn the diffs above into ready PR patches next.
-
-[1]: https://stackoverflow.com/questions/69515015/how-to-avoid-spurious-wakeup-without-a-predicate?utm_source=chatgpt.com "c++ - how to avoid spurious wakeup without a predicate?"
-[2]: https://forums.developer.nvidia.com/t/limit-number-of-or-allocate-sm-on-a-per-stream-basis/70983?utm_source=chatgpt.com "Limit number of (or allocate) SM on a per stream basis"
-[3]: https://dmlc.github.io/dlpack/latest/python_spec.html?utm_source=chatgpt.com "Python Specification for DLPack - DMLC"
-[4]: https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/?utm_source=chatgpt.com "CUDA C++ Best Practices Guide"
-[5]: https://en.cppreference.com/w/cpp/container/deque.html?utm_source=chatgpt.com "std::deque"
-[6]: https://discuss.pytorch.org/t/can-pytorch-by-pass-python-gil/55498?utm_source=chatgpt.com "Can pytorch by-pass python gil?"
-[7]: https://stackoverflow.com/questions/5736968/why-is-cuda-pinned-memory-so-fast?utm_source=chatgpt.com "Why is CUDA pinned memory so fast?"
-
+[1]: https://en.wikipedia.org/wiki/GeForce_RTX_30_series "GeForce RTX 30 series - Wikipedia"
+[2]: https://arxiv.org/abs/1807.11164?utm_source=chatgpt.com "ShuffleNet V2: Practical Guidelines for Efficient CNN Architecture Design"
+[3]: https://openaccess.thecvf.com/content_CVPR_2020/papers/Wang_ECA-Net_Efficient_Channel_Attention_for_Deep_Convolutional_Neural_Networks_CVPR_2020_paper.pdf?utm_source=chatgpt.com "ECA-Net: Efficient Channel Attention for Deep ..."
+[4]: https://arxiv.org/abs/1911.11907?utm_source=chatgpt.com "GhostNet: More Features from Cheap Operations"
+[5]: https://openaccess.thecvf.com/content/CVPR2021/papers/Ding_RepVGG_Making_VGG-Style_ConvNets_Great_Again_CVPR_2021_paper.pdf?utm_source=chatgpt.com "RepVGG: Making VGG-Style ConvNets Great Again"
+[6]: https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/tutorials/Conceptual_Guide/Part_2-improving_resource_utilization/README.html?utm_source=chatgpt.com "Dynamic Batching & Concurrent Model Execution"
+[7]: https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html?utm_source=chatgpt.com "A guide on good usage of non_blocking and pin_memory() ..."
+[8]: https://pytorch.org/blog/accelerating-pytorch-with-cuda-graphs/?utm_source=chatgpt.com "Accelerating PyTorch with CUDA Graphs"
+[9]: https://developer.nvidia.com/blog/double-pytorch-inference-speed-for-diffusion-models-using-torch-tensorrt/?utm_source=chatgpt.com "Double PyTorch Inference Speed for Diffusion Models ..."
+[10]: https://docs.pytorch.org/docs/stable/notes/cuda.html?utm_source=chatgpt.com "CUDA semantics — PyTorch 2.9 documentation"
+[11]: https://augmentingcognition.com/assets/Silver2017a.pdf?utm_source=chatgpt.com "Mastering the game of Go without human knowledge"
