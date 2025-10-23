@@ -148,6 +148,11 @@ class GPUInferenceWorker(InferenceWorker):
     def _load_model(self) -> None:
         """Load and initialize the neural network model."""
         try:
+            # Initialize game type, action space, and board size (will be set after model load)
+            self.game_type = None
+            self.num_actions = None
+            self.board_size = None
+
             if self.model_path is None:
                 self.logger.warning("No model_path provided. Initializing default AlphaZeroNet weights for benchmark use.")
                 game_type = 'gomoku'
@@ -155,6 +160,9 @@ class GPUInferenceWorker(InferenceWorker):
                 self.model = create_model_for_game(game_type)
                 self.model = self.model.to(self.device)
                 self.model.eval()
+                self.game_type = game_type
+                self.num_actions = 225  # Gomoku 15×15
+                self.board_size = 15
             else:
                 if not os.path.exists(self.model_path):
                     raise FileNotFoundError(f"Model not found: {self.model_path}")
@@ -169,7 +177,31 @@ class GPUInferenceWorker(InferenceWorker):
                 if hasattr(model_data, 'state_dict'):
                     self.model = model_data.to(self.device)
                     self.model.eval()
-                    self.logger.info("Model loaded successfully (full model)")
+                    # Detect game type and board size from model attributes
+                    self.num_actions = getattr(self.model, 'num_actions', 225)
+                    self.board_size = None
+
+                    if self.num_actions == 225:
+                        self.game_type = 'gomoku'
+                        self.board_size = 15
+                    elif self.num_actions == 4096:
+                        self.game_type = 'chess'
+                        self.board_size = 8
+                    elif self.num_actions in [82, 170, 362]:
+                        # Go with pass move: 82 (9×9+1), 170 (13×13+1), 362 (19×19+1)
+                        self.game_type = 'go'
+                        if self.num_actions == 82:
+                            self.board_size = 9
+                        elif self.num_actions == 170:
+                            self.board_size = 13
+                        else:
+                            self.board_size = 19
+                    else:
+                        self.game_type = 'unknown'
+                        self.board_size = None
+
+                    board_info = f" (board {self.board_size}×{self.board_size})" if self.board_size else ""
+                    self.logger.info(f"Model loaded successfully (full model, game: {self.game_type}{board_info}, actions: {self.num_actions})")
                 elif isinstance(model_data, dict):
                     first_conv_weight = next((tensor for key, tensor in model_data.items()
                                               if 'conv' in key.lower() and 'weight' in key), None)
@@ -178,32 +210,115 @@ class GPUInferenceWorker(InferenceWorker):
                         if input_channels == 36:
                             game_type = 'gomoku'
                             input_shape = (36, 15, 15)
+                            self.board_size = 15
                         elif input_channels == 30:
                             game_type = 'chess'
                             input_shape = (30, 8, 8)
+                            self.board_size = 8
                         elif input_channels == 25:
+                            # Go: detect board size from spatial dimensions or filename
                             game_type = 'go'
-                            input_shape = (25, 19, 19)
+                            spatial_dim = first_conv_weight.shape[2] if len(first_conv_weight.shape) > 2 else 19
+
+                            # Try to infer from filename first
+                            filename_lower = str(self.model_path).lower()
+                            if 'go9' in filename_lower or '9x9' in filename_lower:
+                                spatial_dim = 9
+                            elif 'go13' in filename_lower or '13x13' in filename_lower:
+                                spatial_dim = 13
+
+                            # Use detected spatial dimension
+                            if spatial_dim == 9:
+                                self.board_size = 9
+                                input_shape = (25, 9, 9)
+                            elif spatial_dim == 13:
+                                self.board_size = 13
+                                input_shape = (25, 13, 13)
+                            else:
+                                self.board_size = 19
+                                input_shape = (25, 19, 19)
                         else:
                             game_type = 'gomoku'
                             input_shape = (36, 15, 15)
+                            self.board_size = 15
                     else:
                         game_type = 'gomoku'
                         input_shape = (36, 15, 15)
+                        self.board_size = 15
 
                     self.model = create_model_for_game(game_type)
                     self.model = self.model.to(self.device)
                     self.model.eval()
                     self._initialize_model_layers(input_shape)
                     self.model.load_state_dict(model_data)
-                    self.logger.info(f"Model loaded successfully (state_dict, game: {game_type})")
+                    self.game_type = game_type
+
+                    # Calculate num_actions from game type and board size
+                    if game_type == 'gomoku':
+                        self.num_actions = 225  # 15×15
+                    elif game_type == 'chess':
+                        self.num_actions = 4096
+                    elif game_type == 'go':
+                        # Go includes pass move: board_size² + 1
+                        self.num_actions = self.board_size * self.board_size + 1
+                    else:
+                        self.num_actions = 225  # Default
+
+                    board_info = f" (board {self.board_size}×{self.board_size})" if self.board_size else ""
+                    self.logger.info(f"Model loaded successfully (state_dict, game: {game_type}{board_info}, actions: {self.num_actions})")
                 else:
                     self.model = model_data.to(self.device)
                     self.model.eval()
-                    self.logger.info("Model loaded successfully (direct model)")
+                    # Detect game type and board size from model attributes
+                    self.num_actions = getattr(self.model, 'num_actions', 225)
+                    self.board_size = None
+
+                    if self.num_actions == 225:
+                        self.game_type = 'gomoku'
+                        self.board_size = 15
+                    elif self.num_actions == 4096:
+                        self.game_type = 'chess'
+                        self.board_size = 8
+                    elif self.num_actions in [82, 170, 362]:
+                        # Go with pass move: 82 (9×9+1), 170 (13×13+1), 362 (19×19+1)
+                        self.game_type = 'go'
+                        if self.num_actions == 82:
+                            self.board_size = 9
+                        elif self.num_actions == 170:
+                            self.board_size = 13
+                        else:
+                            self.board_size = 19
+                    else:
+                        self.game_type = 'unknown'
+                        self.board_size = None
+
+                    board_info = f" (board {self.board_size}×{self.board_size})" if self.board_size else ""
+                    self.logger.info(f"Model loaded successfully (direct model, game: {self.game_type}{board_info}, actions: {self.num_actions})")
+
+            # Ensure num_actions and board_size are set (fallback to 225 for Gomoku)
+            if self.num_actions is None:
+                self.num_actions = 225
+                self.game_type = 'gomoku'
+                self.board_size = 15
+                self.logger.warning(f"Could not detect num_actions, defaulting to {self.num_actions} (Gomoku 15×15)")
+            if self.board_size is None:
+                # Infer board_size from num_actions if possible
+                if self.num_actions == 225:
+                    self.board_size = 15
+                elif self.num_actions == 4096:
+                    self.board_size = 8
+                elif self.num_actions in [82, 170, 362]:
+                    if self.num_actions == 82:
+                        self.board_size = 9
+                    elif self.num_actions == 170:
+                        self.board_size = 13
+                    else:
+                        self.board_size = 19
+                else:
+                    self.board_size = 15  # Default fallback
 
             self._setup_mixed_precision()
-            self.logger.info(f"Model ready on {self.device}")
+            self.logger.info(f"Model ready on {self.device} (game: {self.game_type}, actions: {self.num_actions})")
 
         except Exception as e:
             self.logger.error(f"Failed to load model: {e}")
@@ -389,8 +504,10 @@ class GPUInferenceWorker(InferenceWorker):
             )
 
             # Pre-allocate common output buffer sizes
-            # Policy head output: (batch_size, num_actions) - assume max 361 for Go
-            policy_buffer_shape = (buffer_capacity, 361)
+            # Policy head output: (batch_size, num_actions) - game-specific (Task #4)
+            # Gomoku: 225, Chess: 4096, Go: 361
+            num_actions = getattr(self, 'num_actions', 225)  # Use detected num_actions or default
+            policy_buffer_shape = (buffer_capacity, num_actions)
             self._pinned_output_buffers['policy'] = torch.empty(
                 policy_buffer_shape,
                 dtype=torch.float32,
@@ -406,7 +523,11 @@ class GPUInferenceWorker(InferenceWorker):
             )
 
             self._current_buffer_capacity = buffer_capacity
-            self.logger.info(f"Pinned memory buffers allocated for batch capacity: {buffer_capacity}")
+            game_info = getattr(self, 'game_type', 'unknown')
+            self.logger.info(
+                f"Pinned memory buffers allocated for batch capacity: {buffer_capacity} "
+                f"(game: {game_info}, policy size: {num_actions})"
+            )
 
         except Exception as e:
             self.logger.warning(f"Failed to allocate pinned memory buffers: {e}")
@@ -1040,9 +1161,10 @@ class GPUInferenceWorker(InferenceWorker):
                 return result
             except Exception as fallback_error:
                 self.logger.error(f"CPU fallback also failed: {fallback_error}")
-                # Return safe default values as last resort (Gomoku 15x15 = 225 actions)
+                # Return safe default values as last resort
                 batch_size = len(positions)
-                policies_np = np.ones((batch_size, 225)) / 225  # Uniform distribution
+                num_actions = getattr(self, 'num_actions', 225)  # Game-specific action space
+                policies_np = np.ones((batch_size, num_actions)) / num_actions  # Uniform distribution
                 values_np = np.zeros(batch_size)
                 # Update metrics even for fallback (T015)
                 inference_time = time.time() - start_time

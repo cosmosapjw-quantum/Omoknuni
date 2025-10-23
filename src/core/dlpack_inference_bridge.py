@@ -23,6 +23,16 @@ try:
 except ImportError:
     HAS_MCTS_PY = False
 
+# Task #7: CUDA graph optimization (comments.md #3D)
+try:
+    from src.core.cuda_graph_manager import CUDAGraphManager, create_graph_manager_for_model
+    HAS_CUDA_GRAPHS = True
+except ImportError:
+    HAS_CUDA_GRAPHS = False
+
+# TensorRT compilation deferred (runtime compatibility issues)
+HAS_TENSORRT = False
+
 
 class GPUBufferPool:
     """GPU tensor buffer pool for reducing allocation overhead (T008c).
@@ -204,7 +214,9 @@ class DLPackInferenceBridge:
         warmup_iterations: int = 5,
         use_mixed_precision: bool = True,
         enable_buffer_pool: bool = True,  # T008c: GPU buffer pooling
-        stream_pool_size: int = 2  # T008d: CUDA stream pool
+        stream_pool_size: int = 2,  # T008d: CUDA stream pool
+        use_cuda_graphs: bool = True,  # Task #7: CUDA graph capture (comments.md #3D)
+        graph_batch_sizes: Optional[List[int]] = None  # Batch sizes to pre-capture
     ):
         if not HAS_MCTS_PY:
             raise ImportError(
@@ -262,10 +274,21 @@ class DLPackInferenceBridge:
         self._d2h_transfer_time_ms = 0.0
         self._inference_time_ms = 0.0
 
+        # Task #7: CUDA graph capture (comments.md #3D)
+        # Graph manager will be lazily initialized on first batch (when we know game dimensions)
+        self.graph_manager = None
+        self.use_cuda_graphs = use_cuda_graphs and HAS_CUDA_GRAPHS and self.device.type == 'cuda'
+        self.graph_batch_sizes = graph_batch_sizes or [8, 16, 32, 64, 128, 256]
+
+        if self.use_cuda_graphs and not HAS_CUDA_GRAPHS:
+            self.logger.warning("CUDA graphs requested but cuda_graph_manager not available. Disabling.")
+            self.use_cuda_graphs = False
+
         self.logger.info(
             f"DLPackInferenceBridge initialized: device={device}, "
             f"fallback={enable_fallback}, mixed_precision={self.use_mixed_precision}, "
-            f"buffer_pool={enable_buffer_pool}, stream_pool_size={stream_pool_size}"
+            f"buffer_pool={enable_buffer_pool}, stream_pool_size={stream_pool_size}, "
+            f"cuda_graphs={self.use_cuda_graphs}"
         )
 
     def batch_inference_features(
@@ -299,22 +322,24 @@ class DLPackInferenceBridge:
         try:
             # T042-T043: Lazy initialization of pinned memory buffers
             # Initialize on first call when we know the tensor dimensions
+            # OPTIMIZATION (comments.md #3B): Use FP16 pinned memory to halve H2D bandwidth
             if not self.buffer_initialized and self.device.type == 'cuda':
                 # Use first batch to determine dimensions
                 max_planes = max(num_planes_list)
                 max_board_size = max(board_sizes)
 
                 # Pre-allocate pinned CPU buffer (T042)
+                # FP16 I/O path: halves H2D transfer time (comments.md #3B)
                 self.pinned_buffer = torch.zeros(
                     (self.max_batch_size, max_planes, max_board_size, max_board_size),
-                    dtype=torch.float32,
+                    dtype=torch.float16,  # FP16 for faster H2D transfer
                     pin_memory=True
                 )
 
                 # Pre-allocate GPU buffer (T043)
                 self.gpu_buffer = torch.zeros(
                     (self.max_batch_size, max_planes, max_board_size, max_board_size),
-                    dtype=torch.float32,
+                    dtype=torch.float16,  # Match pinned buffer dtype
                     device=self.device
                 )
 
@@ -323,12 +348,46 @@ class DLPackInferenceBridge:
 
                 self.buffer_initialized = True
                 self.logger.info(
-                    f"Initialized pinned memory buffers: "
+                    f"Initialized FP16 pinned memory buffers (comments.md #3B): "
                     f"max_batch={self.max_batch_size}, planes={max_planes}, "
-                    f"board={max_board_size}×{max_board_size}"
+                    f"board={max_board_size}×{max_board_size}, "
+                    f"H2D bandwidth: ~{(self.max_batch_size * max_planes * max_board_size * max_board_size * 2 / 1024 / 1024):.1f}MB"
                 )
 
+                # Task #7: Lazy CUDA graph initialization (comments.md #3D)
+                # Initialize graph manager on first batch when we know input dimensions
+                if self.use_cuda_graphs and self.graph_manager is None:
+                    # Infer game type from board dimensions
+                    if max_board_size == 15:
+                        game = 'gomoku'
+                    elif max_board_size == 8:
+                        game = 'chess'
+                    elif max_board_size == 9:
+                        game = 'go9'
+                    elif max_board_size == 19:
+                        game = 'go19'
+                    else:
+                        game = 'gomoku'  # fallback
+                        self.logger.warning(
+                            f"Unknown board size {max_board_size}, assuming Gomoku for CUDA graphs"
+                        )
+
+                    try:
+                        self.graph_manager = create_graph_manager_for_model(
+                            self.model, game, batch_sizes=self.graph_batch_sizes
+                        )
+                        self.graph_manager.warmup_and_capture()
+                        self.logger.info(
+                            f"✅ CUDA graphs captured for {game} (board={max_board_size}×{max_board_size}, "
+                            f"batch_sizes={self.graph_batch_sizes})"
+                        )
+                    except Exception as e:
+                        self.logger.error(f"CUDA graph capture failed: {e}. Disabling CUDA graphs.")
+                        self.use_cuda_graphs = False
+                        self.graph_manager = None
+
             # T045-T046: Use pinned memory for fast H2D transfer
+            # OPTIMIZATION (comments.md #3B): FP16 I/O path
             if self.buffer_initialized and batch_size <= self.max_batch_size:
                 # OPTIMIZATION: Features now arrive as numpy arrays from C++ (zero-copy!)
                 # C++ uses buffer protocol to pass vector data directly
@@ -343,8 +402,9 @@ class DLPackInferenceBridge:
                     # from_numpy() creates zero-copy tensor view
                     tensor_view = torch.from_numpy(arr)
 
-                    # Direct assignment to pinned buffer
-                    self.pinned_buffer[i, :planes, :board_size, :board_size] = tensor_view
+                    # Convert to FP16 and copy to pinned buffer (comments.md #3B)
+                    # This halves H2D bandwidth compared to FP32
+                    self.pinned_buffer[i, :planes, :board_size, :board_size] = tensor_view.to(torch.float16)
 
                 # T046: Non-blocking async transfer to GPU
                 stream = self.stream_pool[self.stream_index] if self.stream_pool else None
@@ -372,16 +432,25 @@ class DLPackInferenceBridge:
                 batch_tensor = torch.stack(tensors)
                 features_gpu = batch_tensor.to(self.device, non_blocking=True)
 
-            # Run inference with mixed precision if enabled
-            with torch.no_grad():
-                if self.use_mixed_precision and self.device.type == 'cuda':
-                    with torch.amp.autocast('cuda'):
+            # Task #7: Run inference with CUDA graphs if available (comments.md #3D)
+            # Expected improvement: 2-3× for small batches (launch overhead reduction)
+            if self.graph_manager is not None:
+                # Fast path: Use pre-captured CUDA graph
+                # Graph manager handles mixed precision internally
+                policy_logits, value = self.graph_manager.infer(features_gpu, return_logits=True)
+                # Apply softmax to get probabilities
+                policy = torch.softmax(policy_logits.float(), dim=1)
+            else:
+                # Fallback: Regular inference with mixed precision if enabled
+                with torch.no_grad():
+                    if self.use_mixed_precision and self.device.type == 'cuda':
+                        with torch.amp.autocast('cuda'):
+                            policy_logits, value = self.model(features_gpu)
+                    else:
                         policy_logits, value = self.model(features_gpu)
-                else:
-                    policy_logits, value = self.model(features_gpu)
 
-            # Apply softmax to get probabilities
-            policy = torch.softmax(policy_logits.float(), dim=1)
+                # Apply softmax to get probabilities
+                policy = torch.softmax(policy_logits.float(), dim=1)
 
             # Transfer results back to CPU
             policy_cpu = policy.cpu()

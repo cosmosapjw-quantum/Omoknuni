@@ -94,6 +94,45 @@ public:
         return running_.load(std::memory_order_acquire);
     }
 
+    /**
+     * @brief Update batch timeout dynamically (for adaptive batching)
+     *
+     * Allows updating the timeout while coordinator is running.
+     * Thread-safe: double assignment is atomic on x86-64.
+     *
+     * Use case: Adaptive batching based on GPU utilization.
+     * - High GPU util → shorter timeout (keep GPU fed)
+     * - Low GPU util → longer timeout (fill batches better)
+     *
+     * @param timeout_ms New timeout in milliseconds (e.g., 2.0-10.0)
+     */
+    void set_timeout(double timeout_ms) {
+        timeout_ms_ = timeout_ms;
+    }
+
+    /**
+     * @brief Get current batch timeout
+     */
+    double get_timeout() const {
+        return timeout_ms_;
+    }
+
+    /**
+     * @brief Update batch size dynamically (for adaptive batching)
+     *
+     * @param batch_size New minimum batch size
+     */
+    void set_batch_size(size_t batch_size) {
+        batch_size_ = batch_size;
+    }
+
+    /**
+     * @brief Get current batch size
+     */
+    size_t get_batch_size() const {
+        return batch_size_;
+    }
+
 private:
     /**
      * @brief Main coordinator loop (runs in background thread)

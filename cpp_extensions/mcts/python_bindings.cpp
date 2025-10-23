@@ -566,7 +566,30 @@ PYBIND11_MODULE(mcts_py, m) {
              &BatchInferenceCoordinator::is_running,
              "Check if coordinator is running\n\n"
              "Returns:\n"
-             "    bool: True if coordinator thread is active");
+             "    bool: True if coordinator thread is active")
+        .def("set_timeout",
+             &BatchInferenceCoordinator::set_timeout,
+             py::arg("timeout_ms"),
+             "Update batch timeout dynamically (for adaptive batching)\n\n"
+             "Args:\n"
+             "    timeout_ms: New timeout in milliseconds (e.g., 2.0-10.0)\n\n"
+             "Thread-safe: Can be called while coordinator is running.")
+        .def("get_timeout",
+             &BatchInferenceCoordinator::get_timeout,
+             "Get current batch timeout\n\n"
+             "Returns:\n"
+             "    float: Current timeout in milliseconds")
+        .def("set_batch_size",
+             &BatchInferenceCoordinator::set_batch_size,
+             py::arg("batch_size"),
+             "Update minimum batch size dynamically\n\n"
+             "Args:\n"
+             "    batch_size: New minimum batch size")
+        .def("get_batch_size",
+             &BatchInferenceCoordinator::get_batch_size,
+             "Get current minimum batch size\n\n"
+             "Returns:\n"
+             "    int: Current batch size");
 
     // PinnedBuffer - CUDA pinned memory buffer with reference counting (T007b)
     py::class_<PinnedBuffer, std::shared_ptr<PinnedBuffer>>(m, "PinnedBuffer",
