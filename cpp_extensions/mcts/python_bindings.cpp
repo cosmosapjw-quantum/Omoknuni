@@ -472,7 +472,53 @@ PYBIND11_MODULE(mcts_py, m) {
              &AsyncInferenceQueue::get_memory_usage,
              "Get memory usage estimate in bytes\n\n"
              "Returns:\n"
-             "    int: Estimated memory usage");
+             "    int: Estimated memory usage")
+        .def("submit_request_with_backpressure",
+             [](AsyncInferenceQueue& queue, IGameState* state,
+                NodeIndex node_index, std::vector<int16_t> path, double timeout_ms) -> uint64_t {
+                 // T060: Phase 5 backpressure-enabled submission
+                 int board_size = state->getBoardSize();
+                 int num_feature_planes = state->get_num_feature_planes();
+                 int action_space_size = state->getActionSpaceSize();
+
+                 // Extract features into temporary buffer
+                 std::vector<float> features;
+                 features.resize(num_feature_planes * board_size * board_size);
+                 state->extract_features_to_buffer(features.data());
+
+                 // Build request with move semantics
+                 InferenceRequest request;
+                 request.features = std::move(features);
+                 request.node_index = node_index;
+                 request.action_space_size = action_space_size;
+                 request.board_size = static_cast<int16_t>(board_size);
+                 request.planes = static_cast<int16_t>(num_feature_planes);
+                 request.path = std::move(path);
+
+                 // Submit request with backpressure (blocks if queue full)
+                 return queue.submit_request_with_backpressure(std::move(request), timeout_ms);
+             },
+             py::arg("state"), py::arg("node_index"), py::arg("path"), py::arg("timeout_ms") = 0.0,
+             "Submit inference request with backpressure (Phase 5 multi-coordinator optimization)\n\n"
+             "Blocks when queue is full (4096 entries) until space becomes available.\n"
+             "Essential for multi-coordinator scenarios to prevent queue overflow.\n\n"
+             "Args:\n"
+             "    state: Game state to evaluate (features extracted in-place)\n"
+             "    node_index: Tree node to expand\n"
+             "    path: Path from root to node\n"
+             "    timeout_ms: Maximum wait time in milliseconds (0 = infinite)\n\n"
+             "Returns:\n"
+             "    int: Unique request ID for retrieving result\n\n"
+             "Raises:\n"
+             "    RuntimeError: If timeout expires without space becoming available")
+        .def("notify_dequeued",
+             &AsyncInferenceQueue::notify_dequeued,
+             "Notify waiting threads that queue space is available (Phase 5)\n\n"
+             "Called after collect_batch() to wake simulation threads blocked in\n"
+             "submit_request_with_backpressure(). Enables backpressure mechanism.")
+        .def("shutdown",
+             &AsyncInferenceQueue::shutdown,
+             "Wake up threads waiting in collect_batch() for clean shutdown");
 
     // Instrumentation controls
     m.def("set_instrumentation_enabled",

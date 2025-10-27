@@ -12,6 +12,7 @@ import logging
 import time
 from typing import List, Tuple, Dict, Any, Optional
 from threading import Lock
+import ctypes
 
 import numpy as np
 import torch
@@ -434,29 +435,60 @@ class DLPackInferenceBridge:
 
             # Task #7: Run inference with CUDA graphs if available (comments.md #3D)
             # Expected improvement: 2-3× for small batches (launch overhead reduction)
-            if self.graph_manager is not None:
-                # Fast path: Use pre-captured CUDA graph
-                # Graph manager handles mixed precision internally
-                policy_logits, value = self.graph_manager.infer(features_gpu, return_logits=True)
-                # Apply softmax to get probabilities
-                policy = torch.softmax(policy_logits.float(), dim=1)
-            else:
-                # Fallback: Regular inference with mixed precision if enabled
-                with torch.no_grad():
-                    if self.use_mixed_precision and self.device.type == 'cuda':
-                        with torch.amp.autocast('cuda'):
-                            policy_logits, value = self.model(features_gpu)
+            #
+            # CRITICAL OPTIMIZATION: Use CUDA streams for TRUE async inference with GIL release!
+            # Without streams, GPU operations are synchronous and GIL is never released.
+            if self.device.type == 'cuda':
+                # Select stream from pool (round-robin)
+                stream = self.stream_pool[self.stream_index] if self.stream_pool else torch.cuda.current_stream()
+                self.stream_index = (self.stream_index + 1) % len(self.stream_pool) if self.stream_pool else 0
+
+                # Execute ALL GPU work on this stream (releases GIL!)
+                with torch.cuda.stream(stream):
+                    if self.graph_manager is not None:
+                        # Fast path: Use pre-captured CUDA graph
+                        # Graph manager handles mixed precision internally
+                        policy_logits, value = self.graph_manager.infer(features_gpu, return_logits=True)
+                        # Apply softmax to get probabilities
+                        policy = torch.softmax(policy_logits.float(), dim=1)
                     else:
-                        policy_logits, value = self.model(features_gpu)
+                        # Fallback: Regular inference with mixed precision if enabled
+                        with torch.no_grad():
+                            if self.use_mixed_precision:
+                                with torch.amp.autocast('cuda'):
+                                    policy_logits, value = self.model(features_gpu)
+                            else:
+                                policy_logits, value = self.model(features_gpu)
 
-                # Apply softmax to get probabilities
-                policy = torch.softmax(policy_logits.float(), dim=1)
+                        # Apply softmax to get probabilities
+                        policy = torch.softmax(policy_logits.float(), dim=1)
 
-            # Transfer results back to CPU
-            policy_cpu = policy.cpu()
-            value_cpu = value.cpu()
+                    # Queue D2H transfer on same stream (non-blocking!)
+                    policy_cpu = policy.to('cpu', non_blocking=True)
+                    value_cpu = value.to('cpu', non_blocking=True)
 
-            # Convert to list format
+                # GIL IS RELEASED HERE! C++ threads can continue working!
+                # Synchronize on the stream (NOT device) to wait for THIS batch only
+                stream.synchronize()  # PyTorch releases GIL during synchronize()
+
+            else:
+                # CPU path: No streams needed
+                if self.graph_manager is not None:
+                    policy_logits, value = self.graph_manager.infer(features_gpu, return_logits=True)
+                    policy = torch.softmax(policy_logits.float(), dim=1)
+                else:
+                    with torch.no_grad():
+                        if self.use_mixed_precision:
+                            with torch.amp.autocast('cuda'):
+                                policy_logits, value = self.model(features_gpu)
+                        else:
+                            policy_logits, value = self.model(features_gpu)
+                    policy = torch.softmax(policy_logits.float(), dim=1)
+
+                policy_cpu = policy
+                value_cpu = value
+
+            # Convert to list format (fast, <1ms, GIL held but very brief)
             results = []
             for i in range(batch_size):
                 policy_list = policy_cpu[i].numpy().tolist()
@@ -631,13 +663,14 @@ class DLPackInferenceBridge:
                 # T008d: Profile D2H transfer time
                 d2h_start = time.perf_counter()
 
-                # D2H transfer on same stream
-                policy_cpu = policy.cpu()
-                value_cpu = value.cpu()
+                # D2H transfer on same stream (non-blocking!)
+                policy_cpu = policy.to('cpu', non_blocking=True)
+                value_cpu = value.to('cpu', non_blocking=True)
 
                 d2h_elapsed = (time.perf_counter() - d2h_start) * 1000.0
 
-            # Single synchronization point at the end
+            # GIL IS RELEASED HERE! C++ threads can continue working!
+            # Single synchronization point at the end - PyTorch releases GIL during sync
             stream.synchronize()
 
         elif self.device.type == 'cuda':
@@ -657,8 +690,11 @@ class DLPackInferenceBridge:
             inference_elapsed = (time.perf_counter() - inference_start) * 1000.0
 
             d2h_start = time.perf_counter()
-            policy_cpu = policy.cpu()
-            value_cpu = value.cpu()
+            # Use non-blocking transfer even without stream pool
+            policy_cpu = policy.to('cpu', non_blocking=True)
+            value_cpu = value.to('cpu', non_blocking=True)
+            # Synchronize to ensure transfer completes (GIL released during sync)
+            torch.cuda.synchronize()
             d2h_elapsed = (time.perf_counter() - d2h_start) * 1000.0
 
         else:

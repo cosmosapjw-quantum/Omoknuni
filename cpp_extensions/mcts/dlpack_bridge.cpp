@@ -319,14 +319,13 @@ DLManagedTensor* create_dlpack_tensor(
     dl_tensor.strides = nullptr;  // Row-major
     dl_tensor.byte_offset = 0;
 
-    // Device: CPU, CUDA host pinned, or CUDA managed
-    if (use_cuda && buffer->is_cuda_pinned()) {
-        dl_tensor.device.device_type = kDLCUDAHost;  // CUDA pinned memory
-        dl_tensor.device.device_id = 0;              // Default GPU
-    } else {
-        dl_tensor.device.device_type = kDLCPU;       // Regular CPU memory
-        dl_tensor.device.device_id = 0;
-    }
+    // Device: CPU (always use kDLCPU for CPU-side memory)
+    // NOTE: Even for CUDA pinned memory, use kDLCPU since PyTorch's from_dlpack()
+    // doesn't properly support kDLCUDAHost (device_type=3) in some versions.
+    // Pinned memory is still on the host (CPU), so kDLCPU is technically correct.
+    // PyTorch will detect it's pinned and use fast H2D transfers automatically.
+    dl_tensor.device.device_type = kDLCPU;
+    dl_tensor.device.device_id = 0;
 
     // Data type: float32
     dl_tensor.dtype.code = kDLFloat;

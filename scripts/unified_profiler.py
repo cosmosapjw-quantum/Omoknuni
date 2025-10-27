@@ -74,13 +74,14 @@ class UnifiedProfiler:
         print("="*60)
 
         self.cpp_profiler = mcts_py.EnhancedProfiler.instance()
+        # Enable C++ profiling with FULL level for comprehensive metrics
         self.cpp_profiler.set_enabled(True)
         self.cpp_profiler.set_level(mcts_py.ProfileLevel.FULL)
         self.cpp_profiler.start_session(f"unified_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
 
         print("✅ C++ profiler enabled (FULL level)")
-        print(f"   - 295 metrics active (240 base + 55 bottleneck-specific)")
-        print(f"   - Tracking: state cloning, OpenMP, thread idle, CAS retries, mutex wait")
+        print(f"   - Timer metrics + hardware counters + memory tracking")
+        print(f"   - Tracking: core MCTS operations (selection, expansion, backup, coordinator)")
 
     def setup_python_profiling(self) -> ProfilingSession:
         """Setup Python profiler"""
@@ -89,19 +90,23 @@ class UnifiedProfiler:
         print("="*60)
 
         config = ProfilerConfig(
+            # Enable ALL profiling features for comprehensive metrics
             enable_gil_profiling=True,
             enable_inference_profiling=True,
             enable_cpp_instrumentation=True,
-            enable_thread_profiling=True
+            enable_thread_profiling=True,
+            enable_memory_profiling=True
         )
 
         session = ProfilingSession(config)
         session.__enter__()
 
-        print("✅ Python profiler enabled")
-        print(f"   - GIL tracking enabled")
-        print(f"   - Inference profiling enabled")
-        print(f"   - Thread profiling enabled")
+        print("✅ Python profiler enabled (ALL features)")
+        print(f"   - GIL tracking: ENABLED")
+        print(f"   - Inference profiling: ENABLED")
+        print(f"   - C++ instrumentation: ENABLED")
+        print(f"   - Thread profiling: ENABLED")
+        print(f"   - Memory profiling: ENABLED")
 
         return session
 
@@ -216,10 +221,12 @@ class UnifiedProfiler:
             model.eval()
 
             # Create DLPack inference bridge with FP16
+            # CRITICAL: Disable CUDA graphs to avoid 13× fallback slowdown from partial batches
             inference_bridge = DLPackInferenceBridge(
                 model=model,
                 device=device,
-                use_mixed_precision=True  # T008f optimization
+                use_mixed_precision=True,  # T008f optimization
+                use_cuda_graphs=False  # Disable to avoid fallback on non-standard batch sizes
             )
 
             # Warmup GPU
@@ -261,9 +268,9 @@ class UnifiedProfiler:
         print(f"✅ Created BatchInferenceCoordinator")
         print(f"   Using: {'REAL GPU inference' if use_real_gpu else 'dummy callback'}")
 
-        # Start coordinator
-        coordinator.start(queue, callback, self.args.batch_size, 5.0)  # timeout=5ms
-        print(f"✅ Coordinator started (batch_size={self.args.batch_size}, timeout=5ms)")
+        # Start coordinator with longer timeout to avoid partial batches
+        coordinator.start(queue, callback, self.args.batch_size, 100.0)  # timeout=100ms (avoid partial batches!)
+        print(f"✅ Coordinator started (batch_size={self.args.batch_size}, timeout=100ms)")
 
         try:
             # Get root node (tree already has root from create_test_tree)
@@ -275,6 +282,8 @@ class UnifiedProfiler:
             print(f"   Thread count: {self.args.threads} (OpenMP)")
             print(f"   Batch size: {self.args.batch_size}")
 
+            # CRITICAL FIX: Measure ONLY simulation loop (same as wall-clock validation)
+            # This excludes setup/teardown overhead for accurate comparison
             start = time.perf_counter()
             completed = runner.run_continuous(state, root_idx, queue, self.args.simulations)
             elapsed = time.perf_counter() - start
@@ -282,16 +291,17 @@ class UnifiedProfiler:
             # Store metrics
             self.tree_node_count = self.tree.get_node_count()
             self.root_visits = self.tree.get_visit_count(root_idx)
-            self.wall_clock_time = elapsed
+            self.wall_clock_time = elapsed  # Pure simulation time (no setup/export)
             self.throughput = completed / elapsed if elapsed > 0 else 0
             self.time_per_sim_us = (elapsed / completed) * 1e6 if completed > 0 else 0
 
             print(f"✅ Completed {completed}/{self.args.simulations} simulations")
-            print(f"   Wall-clock: {elapsed:.3f}s")
+            print(f"   Wall-clock: {elapsed:.3f}s (simulation loop only)")
             print(f"   Throughput: {self.throughput:.1f} sims/sec")
             print(f"   Time per sim: {self.time_per_sim_us:.1f} μs")
             print(f"   Tree nodes: {self.tree_node_count}")
             print(f"   Root visits: {self.root_visits}")
+            print(f"   Note: Profiler overhead NOT included in this timing")
 
         except Exception as e:
             print(f"⚠️  Error during simulation: {e}")

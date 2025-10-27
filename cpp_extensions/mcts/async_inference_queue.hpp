@@ -144,6 +144,26 @@ public:
     uint64_t submit_request(InferenceRequest&& request);
 
     /**
+     * @brief Submit inference request with backpressure (blocking when full)
+     *
+     * **Phase 5 Multi-Coordinator Optimization (T060)**: Adds backpressure mechanism
+     * to prevent queue overflow when multiple coordinators drain at different rates.
+     * Blocks when queue is full (4096 entries) until space becomes available.
+     *
+     * This is essential for multi-coordinator scenarios where K coordinators may
+     * temporarily fall behind submission rate, causing queue buildup. Backpressure
+     * prevents memory exhaustion and ensures fair scheduling.
+     *
+     * Thread Safety: Safe to call from multiple threads concurrently
+     *
+     * @param request Inference request with pre-extracted features (moved, ownership transferred)
+     * @param timeout_ms Maximum wait time in milliseconds (0 = infinite wait)
+     * @return Unique request ID for retrieving result later
+     * @throws std::runtime_error if timeout expires without space becoming available
+     */
+    uint64_t submit_request_with_backpressure(InferenceRequest&& request, double timeout_ms = 0.0);
+
+    /**
      * @brief Collect batch of pending requests
      *
      * Returns when EITHER:
@@ -249,6 +269,20 @@ public:
     void shutdown();
 
     /**
+     * @brief Notify waiting threads that queue space is available (T062)
+     *
+     * **Phase 5 Multi-Coordinator Optimization**: Called after batch dequeue to wake
+     * simulation threads blocked in submit_request_with_backpressure(). Enables
+     * backpressure mechanism for multi-coordinator scenarios.
+     *
+     * This should be called immediately after collect_batch() completes to minimize
+     * wait time for blocked submission threads.
+     *
+     * Thread Safety: Safe to call from any thread (typically coordinator thread)
+     */
+    void notify_dequeued();
+
+    /**
      * @brief Snapshot the request IDs with completed inference results.
      *
      * Thread Safety: Safe to call from any thread.
@@ -270,6 +304,10 @@ private:
     std::mutex cv_mutex_;
     std::condition_variable request_ready_;
     std::atomic<bool> shutting_down_{false};
+
+    // Backpressure mechanism for multi-coordinator (T061 - Phase 5)
+    std::mutex backpressure_mutex_;
+    std::condition_variable space_available_;  // Wakes threads waiting for queue space
 
     // Lock-free completed results ring buffer (T006b)
     static constexpr size_t RESULTS_BUFFER_CAPACITY = 8192;

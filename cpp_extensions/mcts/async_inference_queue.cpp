@@ -60,6 +60,78 @@ uint64_t AsyncInferenceQueue::submit_request(InferenceRequest&& request) {
     return request_id;
 }
 
+uint64_t AsyncInferenceQueue::submit_request_with_backpressure(InferenceRequest&& request,
+                                                                 double timeout_ms) {
+    // T060: Phase 5 backpressure mechanism for multi-coordinator scenarios
+    ScopedMetric metric(InstrumentationMetric::QueueSubmit);
+    PROFILE_SCOPE(ProfileMetric::QueueSubmitTotal);
+    using namespace std::chrono;
+
+    // Generate unique request ID
+    uint64_t request_id = next_request_id_.fetch_add(1, std::memory_order_relaxed);
+    request.request_id = request_id;
+
+    // Try to enqueue (wait-free, no locks)
+    bool enqueued = false;
+    auto start_time = steady_clock::now();
+
+    while (!enqueued && !shutting_down_.load(std::memory_order_relaxed)) {
+        // Try non-blocking enqueue first
+        {
+            PROFILE_SCOPE(ProfileMetric::QueueSubmitEnqueue);
+            if (pending_requests_.try_enqueue(std::move(request))) {
+                enqueued = true;
+                PROFILE_COUNTER(ProfileMetric::CAS_SuccessCount, 1);
+                break;
+            }
+            PROFILE_COUNTER(ProfileMetric::CAS_FailureCount, 1);
+        }
+
+        // Queue full - wait for space to become available
+        // Check timeout
+        auto elapsed = steady_clock::now() - start_time;
+        if (timeout_ms > 0.0) {
+            auto elapsed_ms = duration_cast<milliseconds>(elapsed).count();
+            if (elapsed_ms >= timeout_ms) {
+                throw std::runtime_error("AsyncInferenceQueue: Timeout waiting for queue space");
+            }
+        }
+
+        // Wait on condition variable for space to become available
+        {
+            PROFILE_SCOPE(ProfileMetric::ThreadWaitingForResults);
+
+            auto remaining = (timeout_ms > 0.0)
+                ? milliseconds(static_cast<int64_t>(timeout_ms)) - duration_cast<milliseconds>(elapsed)
+                : milliseconds(100);  // 100ms poll interval for infinite wait
+
+            std::unique_lock<std::mutex> lock(backpressure_mutex_);
+            space_available_.wait_for(lock, remaining, [this] {
+                // Wake up if: shutdown requested, or queue has space
+                return shutting_down_.load(std::memory_order_relaxed) ||
+                       pending_count_.load(std::memory_order_relaxed) < 4000;  // Leave 96-entry margin
+            });
+        }
+
+        // Check shutdown
+        if (shutting_down_.load(std::memory_order_relaxed)) {
+            throw std::runtime_error("AsyncInferenceQueue: Shutdown during backpressure wait");
+        }
+    }
+
+    if (!enqueued) {
+        throw std::runtime_error("AsyncInferenceQueue: Failed to enqueue (shutdown or internal error)");
+    }
+
+    // Successfully enqueued
+    pending_count_.fetch_add(1, std::memory_order_relaxed);
+
+    // Notify waiting coordinator threads
+    request_ready_.notify_all();
+
+    return request_id;
+}
+
 std::vector<InferenceRequest> AsyncInferenceQueue::collect_batch(size_t min_batch_size,
                                                                    double timeout_ms) {
     ScopedMetric metric(InstrumentationMetric::QueueCollect);
@@ -244,6 +316,15 @@ void AsyncInferenceQueue::shutdown() {
     // T006c: Set shutdown flag and wake up all waiting threads
     shutting_down_.store(true, std::memory_order_relaxed);
     request_ready_.notify_all();
+
+    // T062: Also wake threads waiting for queue space (Phase 5 backpressure)
+    space_available_.notify_all();
+}
+
+void AsyncInferenceQueue::notify_dequeued() {
+    // T062: Phase 5 - Wake threads waiting for queue space after batch dequeue
+    // Called immediately after collect_batch() to minimize wait time for blocked submissions
+    space_available_.notify_all();
 }
 
 std::vector<uint64_t> AsyncInferenceQueue::get_ready_request_ids() const {

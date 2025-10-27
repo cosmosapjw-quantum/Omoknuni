@@ -182,6 +182,9 @@ class WallClockValidator:
     def _single_run(self, warmup: bool = False) -> Dict[str, Any]:
         """Run a single measurement"""
         import numpy as np
+        import torch
+        from src.neural.model import create_random_model
+        from src.core.dlpack_inference_bridge import DLPackInferenceBridge
 
         # Setup MCTS components
         state = alphazero_py.GomokuState(board_size=15)
@@ -198,15 +201,26 @@ class WallClockValidator:
         # Create AsyncInferenceQueue
         queue = mcts_py.AsyncInferenceQueue()
 
-        # Dummy batch inference (fast)
+        # REAL GPU inference (like unified profiler)
+        model = create_random_model('gomoku', seed=42)
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+        inference_bridge = DLPackInferenceBridge(
+            model=model,
+            device=device,
+            use_mixed_precision=True,
+            use_cuda_graphs=False  # Disable to avoid fallback on partial batches
+        )
+
+        if not warmup:
+            # Warmup GPU on first run
+            inference_bridge.warmup(batch_size=64, game_type='gomoku')
+
         def batch_inference_fn(features_batch, board_sizes, num_planes_list):
-            """Dummy batch callback for wall-clock measurement"""
-            results = []
-            for _ in features_batch:
-                policy = np.ones(action_space_size, dtype=np.float32) / action_space_size
-                value = 0.0
-                results.append((policy.tolist(), value))
-            return results
+            """Real GPU batch callback"""
+            return inference_bridge.batch_inference_features(
+                features_batch, board_sizes, num_planes_list
+            )
 
         callback = mcts_py.PyBatchInferenceCallback(batch_inference_fn)
 
